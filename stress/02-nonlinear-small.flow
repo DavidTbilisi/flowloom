@@ -1,0 +1,11 @@
+# Damped oscillator (2 stocks)
+# (generated stress model — see stress/README.md)
+stock x = 1
+stock v = 0
+param w2 = 4
+param damp = 0.2
+flow accel = -w2 * x - damp * v
+d(x) = v
+d(v) = accel
+sim dt=0.02 to=40 method=rk4
+plot x v

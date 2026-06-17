@@ -14,7 +14,8 @@
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "test:all": "vitest run && playwright test",
-    "gen:examples": "vite-node scripts/gen-examples.ts"
+    "gen:examples": "vite-node scripts/gen-examples.ts",
+    "gen:stress": "vite-node scripts/gen-stress.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",

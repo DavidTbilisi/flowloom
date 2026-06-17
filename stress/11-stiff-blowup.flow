@@ -1,0 +1,8 @@
+# Stiff blow-up (dt too large)
+# (generated stress model — see stress/README.md)
+stock X = 1
+param r = 5
+flow boom = r * X * X
+d(X) = boom
+sim dt=0.5 to=50 method=euler
+plot X
