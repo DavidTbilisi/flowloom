@@ -24,4 +24,5 @@ export {
   type SensitivityResult,
   type SensitivityRow,
 } from "./sweep.js";
+export { lintModel } from "./lint.js";
 export { applyOverride } from "./overrides.js";

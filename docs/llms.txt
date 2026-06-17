@@ -115,7 +115,8 @@ plot Population
   flowloom explain model.flow                      plain-language summary
   flowloom describe model.flow --json              structure (stocks/rates/vars/loops) as JSON
   flowloom loops model.flow --json                 feedback loops with R/B polarity
-  flowloom check model.flow                        validate; non-zero exit on error
+  flowloom check model.flow                        parse + lint; non-zero exit on parse error
+  flowloom lint model.flow [--json]                non-fatal warnings (unused params, dead vars, bad τ)
   flowloom reference --json                         this catalog as JSON
 
 Prefer `summary` over `run` when you only need to know *what the model did*
@@ -126,7 +127,12 @@ or "at:<t>:<series>" (e.g. final:Cash, max:Infected, at:50:Inventory). `sweep`
 turns one knob across a range; `sensitivity` bumps every param ±frac and ranks
 them — both read that SPEC and return compact rows, never raw series.
 
+When a name is misspelled, the parse error carries a "did you mean 'X'?" hint
+(case included — birthrate vs birthRate). `check`/`lint` (and flow_check's
+`lint` field) also flag unused params, computed-but-unused vars, stocks with no
+rate, and non-positive smooth/delay time constants — none of which stop a run.
+
 MCP: the `flowloom-mcp` server exposes the same engine as tools — flow_run,
-flow_summary, flow_sweep, flow_sensitivity, flow_check, flow_loops, flow_describe,
-flow_explain, flow_examples — plus a flow://reference resource carrying this
-guide. Each tool takes the model as text.
+flow_summary, flow_sweep, flow_sensitivity, flow_check, flow_lint, flow_loops,
+flow_describe, flow_explain, flow_examples — plus a flow://reference resource
+carrying this guide. Each tool takes the model as text.

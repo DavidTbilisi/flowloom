@@ -24,6 +24,7 @@ import {
   summarizeRun,
   sweepParam,
   sensitivity,
+  lintModel,
   REFERENCE,
 } from "./engine/index.js";
 import { EXAMPLES } from "./examples/index.js";
@@ -56,11 +57,15 @@ export const handlers = {
     try {
       const m = parseModel(model);
       const warnings = m.diagnostics.filter((d) => d.severity === "warning").map(diag);
-      return text({ ok: true, stocks: m.stocks.length, vars: m.vars.length, loops: analyzeLoops(m).loops.length, warnings });
+      return text({ ok: true, stocks: m.stocks.length, vars: m.vars.length, loops: analyzeLoops(m).loops.length, warnings, lint: lintModel(m).map(diag) });
     } catch (e) {
       if (e instanceof ModelError) return text({ ok: false, diagnostics: e.diagnostics.map(diag) });
       throw e;
     }
+  },
+
+  flow_lint({ model }: { model: string }): ToolResult {
+    return text({ warnings: lintModel(parseModel(model)).map(diag) });
   },
 
   async flow_run({ model, plot, set }: { model: string; plot?: string[]; set?: string[] }): Promise<ToolResult> {
@@ -221,8 +226,14 @@ export function buildServer(): McpServer {
 
   server.registerTool(
     "flow_check",
-    { title: "Validate a model", description: "Parse a .flow model; report ok with counts, or structured parse diagnostics ({line, col, message}).", inputSchema: { model: modelArg } },
+    { title: "Validate a model", description: "Parse a .flow model; report ok with counts and lint warnings, or structured parse diagnostics ({line, col, message}, with a 'did you mean' hint on a misspelled name).", inputSchema: { model: modelArg } },
     guard(handlers.flow_check),
+  );
+
+  server.registerTool(
+    "flow_lint",
+    { title: "Lint a model", description: "Non-fatal warnings a parse won't raise: unused params, dead (computed-but-unused) vars, stocks with no rate, non-positive smooth/delay time constants.", inputSchema: { model: modelArg } },
+    guard(handlers.flow_lint),
   );
 
   server.registerTool(

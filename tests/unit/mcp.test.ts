@@ -27,6 +27,17 @@ describe("mcp handlers", () => {
     expect(r.diagnostics[0]).toHaveProperty("message");
   });
 
+  it("flow_check includes lint warnings on an ok model", () => {
+    const r = parse(handlers.flow_check({ model: "stock X = 1\nparam unused = 9\nd(X) = 1" }));
+    expect(r.ok).toBe(true);
+    expect(r.lint.some((d: { message: string }) => /never used/.test(d.message))).toBe(true);
+  });
+
+  it("flow_lint reports non-fatal warnings", () => {
+    const r = parse(handlers.flow_lint({ model: "stock X = 1\nstock Frozen = 5\nd(X) = 1" }));
+    expect(r.warnings.some((d: { message: string }) => /has no d\(Frozen\) rate/.test(d.message))).toBe(true);
+  });
+
   it("flow_run returns t and the requested series", async () => {
     const r = parse(await handlers.flow_run({ model: SRC, plot: ["Population"] }));
     expect(r.t.length).toBeGreaterThan(1);

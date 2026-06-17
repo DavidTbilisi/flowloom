@@ -26,6 +26,7 @@ import {
   summarizeRun,
   sweepParam,
   sensitivity,
+  lintModel,
   REFERENCE,
   type SimResult,
   type RunSummary,
@@ -246,6 +247,18 @@ function cmdCheck(args: Args): void {
   const model = load(args); // exits non-zero on parse error
   const loops = analyzeLoops(model).loops.length;
   out(`ok: ${model.stocks.length} stock${plural(model.stocks.length)}, ${model.vars.length} variable${plural(model.vars.length)}, ${loops} loop${plural(loops)}`);
+  for (const d of lintModel(model)) warn(`line ${d.loc.line}: ${d.message}`);
+}
+
+function cmdLint(args: Args): void {
+  const model = load(args);
+  const warnings = lintModel(model);
+  if (args.format === "json") {
+    out(JSON.stringify(warnings.map((d) => ({ line: d.loc.line, col: d.loc.col, severity: d.severity, message: d.message })), null, 2));
+    return;
+  }
+  if (!warnings.length) { out("no lint warnings"); return; }
+  for (const d of warnings) out(`line ${String(d.loc.line).padStart(3)}: ${d.message}`);
 }
 
 function cmdDescribe(args: Args): void {
@@ -365,7 +378,8 @@ const HELP = `flowloom ${VERSION} — run text-first systems models from the she
 usage:
   flowloom run      <model.flow> [options]   simulate and print results
   flowloom loops    <model.flow> [--json]    list reinforcing/balancing loops
-  flowloom check    <model.flow>             parse only; non-zero exit on error
+  flowloom check    <model.flow>             parse + lint; non-zero exit on parse error
+  flowloom lint     <model.flow> [--json]    non-fatal warnings (unused params, dead vars, bad τ)
   flowloom describe <model.flow> [--json]    dump model structure (stocks/rates/vars/loops)
   flowloom explain  <model.flow>             plain-language summary of the model
   flowloom summary  <model.flow> [--json]    classify each series' dynamics (no raw arrays)
@@ -407,6 +421,7 @@ async function main(): Promise<void> {
     case "run": await cmdRun(args); break;
     case "loops": cmdLoops(args); break;
     case "check": cmdCheck(args); break;
+    case "lint": cmdLint(args); break;
     case "describe": cmdDescribe(args); break;
     case "explain": cmdExplain(args); break;
     case "summary": await cmdSummary(args); break;
