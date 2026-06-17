@@ -22,6 +22,8 @@ import {
   describeModel,
   explainModel,
   summarizeRun,
+  sweepParam,
+  sensitivity,
   REFERENCE,
 } from "./engine/index.js";
 import { EXAMPLES } from "./examples/index.js";
@@ -78,6 +80,22 @@ export const handlers = {
     return text(summarizeRun(res, plot));
   },
 
+  async flow_sweep(
+    { model, param, from, to, steps, metric, set }:
+      { model: string; param: string; from: number; to: number; steps?: number; metric: string; set?: string[] },
+  ): Promise<ToolResult> {
+    const r = await sweepParam(loadModel(model, set), param, { from, to, steps: steps ?? 11 }, metric);
+    return text(r);
+  },
+
+  async flow_sensitivity(
+    { model, metric, params, frac, set }:
+      { model: string; metric: string; params?: string[]; frac?: number; set?: string[] },
+  ): Promise<ToolResult> {
+    const r = await sensitivity(loadModel(model, set), params ?? [], metric, frac ?? 0.1);
+    return text(r);
+  },
+
   flow_loops({ model }: { model: string }): ToolResult {
     const rep = analyzeLoops(loadModel(model));
     return text({ counts: rep.counts, capped: rep.capped, loops: rep.loops.map((l) => ({ polarity: l.polarity, nodes: l.nodes })) });
@@ -129,6 +147,9 @@ function referenceGuide(): string {
 // ── server wiring ────────────────────────────────────────────────────────────
 const modelArg = z.string().describe("The .flow model as text (the canonical representation).");
 const setArg = z.array(z.string()).optional().describe('Overrides as "key=value": a param, a stock init, or dt/to/start/method. Applied before the run.');
+const metricArg = z
+  .string()
+  .describe('A scalar read from a run: "<op>:<series>" where op is final|max|min|mean|time-to-peak|settle-time, or "at:<t>:<series>". E.g. "final:Cash", "max:Infected", "at:50:Inventory".');
 
 export function buildServer(): McpServer {
   const server = new McpServer({ name: "flowloom", version: VERSION });
@@ -160,6 +181,42 @@ export function buildServer(): McpServer {
       },
     },
     guard(handlers.flow_summary),
+  );
+
+  server.registerTool(
+    "flow_sweep",
+    {
+      title: "Sweep a knob",
+      description:
+        "Vary one param (or stock init) across an inclusive range and report a scalar metric per run — a response curve, without raw series. metric: final:|max:|min:|mean:|at:<t>:|time-to-peak:|settle-time: + a series name.",
+      inputSchema: {
+        model: modelArg,
+        param: z.string().describe("The param (or stock init) to vary."),
+        from: z.number().describe("Range start (inclusive)."),
+        to: z.number().describe("Range end (inclusive)."),
+        steps: z.number().optional().describe("Number of samples across [from, to] (default 11)."),
+        metric: metricArg,
+        set: setArg,
+      },
+    },
+    guard(handlers.flow_sweep),
+  );
+
+  server.registerTool(
+    "flow_sensitivity",
+    {
+      title: "Rank knob sensitivity",
+      description:
+        "One-factor-at-a-time: bump each param by ±frac of its base value and rank by how much the metric moves (a tornado ordering of what matters). Defaults to every param.",
+      inputSchema: {
+        model: modelArg,
+        metric: metricArg,
+        params: z.array(z.string()).optional().describe("Params to vary (default: all params in the model)."),
+        frac: z.number().optional().describe("± fraction of each param's base value to bump (default 0.1)."),
+        set: setArg,
+      },
+    },
+    guard(handlers.flow_sensitivity),
   );
 
   server.registerTool(

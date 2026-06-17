@@ -24,9 +24,13 @@ import {
   describeModel,
   explainModel,
   summarizeRun,
+  sweepParam,
+  sensitivity,
   REFERENCE,
   type SimResult,
   type RunSummary,
+  type SweepResult,
+  type SensitivityResult,
   type LoopReport,
 } from "./engine/index.js";
 
@@ -41,10 +45,14 @@ interface Args {
   sets: string[]; // raw "key=value" overrides, applied in order
   rows: number; // sampled rows for the table view
   chart: boolean; // render sparklines after the table
+  params: string[]; // --param: a knob (sweep) or a list (sensitivity)
+  range?: string; // --range FROM..TO[/STEPS] for sweep
+  metric?: string; // --metric SPEC (e.g. final:Stock) for sweep/sensitivity
+  frac: number; // --frac: ± fraction for sensitivity
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", format: "table", plot: [], sets: [], rows: 21, chart: false };
+  const a: Args = { cmd: "", format: "table", plot: [], sets: [], rows: 21, chart: false, params: [], frac: 0.1 };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -57,10 +65,18 @@ function parseArgs(argv: string[]): Args {
       case "-s":
       case "--set": a.sets.push(need(argv, ++i, arg)); break;
       case "--rows": a.rows = Math.max(2, Math.floor(Number(need(argv, ++i, arg)))); break;
+      case "--param": a.params.push(...splitList(need(argv, ++i, arg))); break;
+      case "--range": a.range = need(argv, ++i, arg); break;
+      case "--metric": a.metric = need(argv, ++i, arg); break;
+      case "--frac": a.frac = Number(need(argv, ++i, arg)); break;
       default:
         if (arg.startsWith("--plot=")) a.plot.push(...splitList(arg.slice(7)));
         else if (arg.startsWith("--set=")) a.sets.push(arg.slice(6));
         else if (arg.startsWith("--rows=")) a.rows = Math.max(2, Math.floor(Number(arg.slice(7))));
+        else if (arg.startsWith("--param=")) a.params.push(...splitList(arg.slice(8)));
+        else if (arg.startsWith("--range=")) a.range = arg.slice(8);
+        else if (arg.startsWith("--metric=")) a.metric = arg.slice(9);
+        else if (arg.startsWith("--frac=")) a.frac = Number(arg.slice(7));
         else if (arg !== "-" && arg.startsWith("-")) die(`unknown flag: ${arg}`);
         else rest.push(arg); // positional, including "-" for stdin
     }
@@ -255,6 +271,69 @@ async function cmdSummary(args: Args): Promise<void> {
   out(args.format === "json" ? JSON.stringify(sum, null, 2) : renderSummary(sum));
 }
 
+/** Parse `FROM..TO[/STEPS]` (e.g. "0..0.1/20") into a sweep range. */
+function parseRange(raw: string): { from: number; to: number; steps: number } {
+  const [span, stepsStr] = raw.split("/");
+  const ends = span!.split(/\.\./);
+  if (ends.length !== 2) die(`--range expects FROM..TO[/STEPS], got "${raw}"`);
+  const from = Number(ends[0]), to = Number(ends[1]);
+  const steps = stepsStr !== undefined ? Math.floor(Number(stepsStr)) : 11;
+  if (![from, to, steps].every(Number.isFinite)) die(`--range has a non-numeric part: "${raw}"`);
+  if (steps < 1) die(`--range steps must be ≥ 1, got ${steps}`);
+  return { from, to, steps };
+}
+
+function renderSweep(r: SweepResult): string {
+  const head = `sweep ${r.param} → ${r.metric}${r.base !== undefined ? `   (base ${r.param}=${fmt(r.base)})` : ""}`;
+  const wv = Math.max(...r.points.map((p) => fmt(p.value).length));
+  const wm = Math.max(...r.points.map((p) => fmt(p.metric).length));
+  const ms = r.points.map((p) => p.metric).filter(Number.isFinite);
+  const lo = Math.min(...ms), hi = Math.max(...ms), span = hi - lo || 1;
+  const lines = r.points.map((p) => {
+    const bar = Number.isFinite(p.metric) ? BARS[Math.min(7, Math.floor(((p.metric - lo) / span) * 8))] : "·";
+    return `  ${fmt(p.value).padStart(wv)}  ${fmt(p.metric).padStart(wm)}  ${bar}${p.note ? `  (${p.note})` : ""}`;
+  });
+  return [head, ...lines].join("\n");
+}
+
+function renderSensitivity(r: SensitivityResult): string {
+  const head = `sensitivity of ${r.metric} to ±${fmt(r.frac * 100)}% (one factor at a time, by |Δ|)`;
+  if (!r.rows.length) return `${head}\n  (no numeric params to vary)`;
+  const wp = Math.max(...r.rows.map((x) => x.param.length));
+  const maxAbs = Math.max(...r.rows.map((x) => Math.abs(x.delta))) || 1;
+  const lines = r.rows.map((x) => {
+    const bar = "█".repeat(Math.round((Math.abs(x.delta) / maxAbs) * 24)) || "·";
+    return `  ${x.param.padEnd(wp)}  ${fmt(x.low)} → ${fmt(x.high)}   Δ=${fmt(x.delta).padStart(10)}  ${bar}`;
+  });
+  return [head, ...lines].join("\n");
+}
+
+async function cmdSweep(args: Args): Promise<void> {
+  const model = load(args);
+  if (!args.params.length) die("sweep needs --param NAME");
+  if (!args.range) die("sweep needs --range FROM..TO[/STEPS]");
+  if (!args.metric) die("sweep needs --metric SPEC (e.g. final:Stock, max:Infected)");
+  let r: SweepResult;
+  try {
+    r = await sweepParam(model, args.params[0]!, parseRange(args.range), args.metric);
+  } catch (e) {
+    die((e as Error).message);
+  }
+  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderSweep(r));
+}
+
+async function cmdSensitivity(args: Args): Promise<void> {
+  const model = load(args);
+  if (!args.metric) die("sensitivity needs --metric SPEC (e.g. max:Infected)");
+  let r: SensitivityResult;
+  try {
+    r = await sensitivity(model, args.params, args.metric, args.frac);
+  } catch (e) {
+    die((e as Error).message);
+  }
+  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderSensitivity(r));
+}
+
 function cmdReference(args: Args): void {
   if (args.format === "json") { out(JSON.stringify(REFERENCE, null, 2)); return; }
   const groups: Array<[string, typeof REFERENCE[number]["kind"]]> = [
@@ -290,6 +369,8 @@ usage:
   flowloom describe <model.flow> [--json]    dump model structure (stocks/rates/vars/loops)
   flowloom explain  <model.flow>             plain-language summary of the model
   flowloom summary  <model.flow> [--json]    classify each series' dynamics (no raw arrays)
+  flowloom sweep    <model.flow> --param P --range A..B[/N] --metric SPEC [--json]
+  flowloom sensitivity <model.flow> --metric SPEC [--param a,b] [--frac F] [--json]
   flowloom reference [--json]                the .flow language + builtins catalog
   flowloom <model.flow>                       shorthand for: run
 
@@ -301,11 +382,20 @@ run options:
   --set k=v                override a param, stock init, or dt/to/start/method
                            repeatable; applied before the run
 
+sweep / sensitivity options:
+  --param P[,Q]            knob to sweep (sweep), or params to vary (sensitivity; default: all)
+  --range A..B[/N]         inclusive range with N samples (default 11) for sweep
+  --metric SPEC            scalar to read per run: final:|max:|min:|mean:|at:<t>:|
+                           time-to-peak:|settle-time: followed by a series name
+  --frac F                 ± fraction for sensitivity bumps (default 0.1)
+
 examples:
   flowloom run examples/coffee-cooling.flow
   flowloom explain examples/sir-epidemic.flow
-  flowloom describe examples/logistic-growth.flow --json
-  flowloom run model.flow --set yield=0.03 --set to=240 --csv > sweep.csv
+  flowloom summary examples/predator-prey.flow
+  flowloom sweep examples/logistic-growth.flow --param carrying --range 500..2000/7 --metric final:Population
+  flowloom sensitivity examples/sir-epidemic.flow --metric max:I
+  flowloom run model.flow --set yield=0.03 --set to=240 --csv > out.csv
   cat model.flow | flowloom loops -`;
 
 async function main(): Promise<void> {
@@ -320,6 +410,8 @@ async function main(): Promise<void> {
     case "describe": cmdDescribe(args); break;
     case "explain": cmdExplain(args); break;
     case "summary": await cmdSummary(args); break;
+    case "sweep": await cmdSweep(args); break;
+    case "sensitivity": await cmdSensitivity(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");
     default: die(`unknown command "${args.cmd}" — try `+"`flowloom --help`");

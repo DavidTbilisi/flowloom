@@ -75,6 +75,8 @@ ${example!.source.replace(/\s*$/, "")}
 
   flowloom run model.flow [--json|--csv|--chart]   simulate; --json for all series
   flowloom summary model.flow [--json]             classify each series (s-shaped/decay/oscillation, settling) — no raw arrays
+  flowloom sweep model.flow --param P --range A..B[/N] --metric SPEC   response curve of one knob
+  flowloom sensitivity model.flow --metric SPEC    rank params by how much they move the metric
   flowloom explain model.flow                      plain-language summary
   flowloom describe model.flow --json              structure (stocks/rates/vars/loops) as JSON
   flowloom loops model.flow --json                 feedback loops with R/B polarity
@@ -83,12 +85,16 @@ ${example!.source.replace(/\s*$/, "")}
 
 Prefer \`summary\` over \`run\` when you only need to know *what the model did*
 (did it grow, settle, oscillate, overshoot?) — it returns a few labelled numbers
-per series instead of the full time series.
+per series instead of the full time series. A metric SPEC reduces a run to one
+number — "<op>:<series>" with op = final|max|min|mean|time-to-peak|settle-time,
+or "at:<t>:<series>" (e.g. final:Cash, max:Infected, at:50:Inventory). \`sweep\`
+turns one knob across a range; \`sensitivity\` bumps every param ±frac and ranks
+them — both read that SPEC and return compact rows, never raw series.
 
 MCP: the \`flowloom-mcp\` server exposes the same engine as tools — flow_run,
-flow_summary, flow_check, flow_loops, flow_describe, flow_explain, flow_examples
-— plus a flow://reference resource carrying this guide. Each tool takes the model
-as text.
+flow_summary, flow_sweep, flow_sensitivity, flow_check, flow_loops, flow_describe,
+flow_explain, flow_examples — plus a flow://reference resource carrying this
+guide. Each tool takes the model as text.
 `;
 }
 

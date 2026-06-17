@@ -48,6 +48,20 @@ describe("mcp handlers", () => {
     expect(r.series[0]).not.toHaveProperty("t");
   });
 
+  it("flow_sweep returns a response curve of one knob", async () => {
+    const r = parse(await handlers.flow_sweep({ model: SRC, param: "birthRate", from: 0.1, to: 0.5, steps: 3, metric: "final:Population" }));
+    expect(r.points).toHaveLength(3);
+    expect(r.points[0].value).toBeCloseTo(0.1, 9);
+    // higher growth rate ⇒ larger final population
+    expect(r.points[2].metric).toBeGreaterThan(r.points[0].metric);
+  });
+
+  it("flow_sensitivity ranks params", async () => {
+    const r = parse(await handlers.flow_sensitivity({ model: SRC, metric: "final:Population" }));
+    expect(r.rows[0].param).toBe("birthRate");
+    expect(r.rows[0]).toHaveProperty("delta");
+  });
+
   it("flow_describe returns the model structure", () => {
     const r = parse(handlers.flow_describe({ model: SRC }));
     expect(r.stocks[0].name).toBe("Population");

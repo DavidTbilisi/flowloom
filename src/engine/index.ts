@@ -16,4 +16,12 @@ export { BUILTINS, ARITY, STATEFUL, lookupTable } from "./builtins.js";
 export { REFERENCE, REFERENCE_BY_NAME, CALLABLE_NAMES, type RefEntry, type RefKind } from "./reference.js";
 export { describeModel, explainModel, type ModelDescription } from "./introspect.js";
 export { summarizeRun, resolveMetric, type RunSummary, type SeriesSummary, type Behavior } from "./summarize.js";
+export {
+  sweepParam,
+  sensitivity,
+  type SweepResult,
+  type SweepPoint,
+  type SensitivityResult,
+  type SensitivityRow,
+} from "./sweep.js";
 export { applyOverride } from "./overrides.js";
