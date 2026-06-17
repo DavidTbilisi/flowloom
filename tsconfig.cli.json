@@ -1,0 +1,19 @@
+{
+  // Emit config for the installable `flowloom` bin. Compiles src/cli.ts and the
+  // DOM-free engine/lang graph it imports (ui is never reached) to real Node ESM
+  // under dist-cli/. NodeNext + the .js import extensions already in source mean
+  // the output resolves at runtime with no bundler. `npm run build:cli`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": "dist-cli",
+    "rootDir": "src",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["src/cli.ts"],
+  "exclude": ["node_modules", "dist", "dist-cli", "tests"]
+}
