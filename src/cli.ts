@@ -27,11 +27,14 @@ import {
   sweepParam,
   sensitivity,
   lintModel,
+  solveParam,
   REFERENCE,
   type SimResult,
   type RunSummary,
   type SweepResult,
   type SensitivityResult,
+  type SolveResult,
+  type SolveOptions,
   type LoopReport,
 } from "./engine/index.js";
 
@@ -46,10 +49,13 @@ interface Args {
   sets: string[]; // raw "key=value" overrides, applied in order
   rows: number; // sampled rows for the table view
   chart: boolean; // render sparklines after the table
-  params: string[]; // --param: a knob (sweep) or a list (sensitivity)
+  params: string[]; // --param: a knob (sweep/solve) or a list (sensitivity)
   range?: string; // --range FROM..TO[/STEPS] for sweep
-  metric?: string; // --metric SPEC (e.g. final:Stock) for sweep/sensitivity
+  metric?: string; // --metric SPEC (e.g. final:Stock) for sweep/sensitivity/solve
   frac: number; // --frac: ± fraction for sensitivity
+  target?: number; // --target N for solve
+  bracket?: string; // --bracket A..B for solve
+  tol?: number; // --tol T for solve
 }
 
 function parseArgs(argv: string[]): Args {
@@ -70,6 +76,9 @@ function parseArgs(argv: string[]): Args {
       case "--range": a.range = need(argv, ++i, arg); break;
       case "--metric": a.metric = need(argv, ++i, arg); break;
       case "--frac": a.frac = Number(need(argv, ++i, arg)); break;
+      case "--target": a.target = Number(need(argv, ++i, arg)); break;
+      case "--bracket": a.bracket = need(argv, ++i, arg); break;
+      case "--tol": a.tol = Number(need(argv, ++i, arg)); break;
       default:
         if (arg.startsWith("--plot=")) a.plot.push(...splitList(arg.slice(7)));
         else if (arg.startsWith("--set=")) a.sets.push(arg.slice(6));
@@ -78,6 +87,9 @@ function parseArgs(argv: string[]): Args {
         else if (arg.startsWith("--range=")) a.range = arg.slice(8);
         else if (arg.startsWith("--metric=")) a.metric = arg.slice(9);
         else if (arg.startsWith("--frac=")) a.frac = Number(arg.slice(7));
+        else if (arg.startsWith("--target=")) a.target = Number(arg.slice(9));
+        else if (arg.startsWith("--bracket=")) a.bracket = arg.slice(10);
+        else if (arg.startsWith("--tol=")) a.tol = Number(arg.slice(6));
         else if (arg !== "-" && arg.startsWith("-")) die(`unknown flag: ${arg}`);
         else rest.push(arg); // positional, including "-" for stdin
     }
@@ -347,6 +359,38 @@ async function cmdSensitivity(args: Args): Promise<void> {
   out(args.format === "json" ? JSON.stringify(r, null, 2) : renderSensitivity(r));
 }
 
+function renderSolve(r: SolveResult): string {
+  const head = `solve ${r.param} for ${r.metric} = ${fmt(r.target)}`;
+  const hit = `  ${r.param} = ${fmt(r.value)}   (${r.metric} = ${fmt(r.achieved)}, |error| = ${fmt(r.error)})`;
+  const status = r.converged
+    ? `  converged in ${r.iters} run${plural(r.iters)}`
+    : `  did NOT converge in ${r.iters} run${plural(r.iters)}${r.note ? ` — ${r.note}` : ""}`;
+  return [head, hit, status].join("\n");
+}
+
+async function cmdSolve(args: Args): Promise<void> {
+  const model = load(args);
+  if (!args.params.length) die("solve needs --param NAME");
+  if (!args.metric) die("solve needs --metric SPEC (e.g. settle-time:Inventory)");
+  if (args.target === undefined || !Number.isFinite(args.target)) die("solve needs --target N");
+  const opts: SolveOptions = {};
+  if (args.bracket) {
+    const ends = args.bracket.split(/\.\./);
+    if (ends.length !== 2) die(`--bracket expects LO..HI, got "${args.bracket}"`);
+    const lo = Number(ends[0]), hi = Number(ends[1]);
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) die(`--bracket has a non-numeric part: "${args.bracket}"`);
+    opts.bracket = [lo, hi];
+  }
+  if (args.tol !== undefined && Number.isFinite(args.tol)) opts.tol = args.tol;
+  let r: SolveResult;
+  try {
+    r = await solveParam(model, args.params[0]!, args.metric, args.target, opts);
+  } catch (e) {
+    die((e as Error).message);
+  }
+  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderSolve(r));
+}
+
 function cmdReference(args: Args): void {
   if (args.format === "json") { out(JSON.stringify(REFERENCE, null, 2)); return; }
   const groups: Array<[string, typeof REFERENCE[number]["kind"]]> = [
@@ -385,6 +429,7 @@ usage:
   flowloom summary  <model.flow> [--json]    classify each series' dynamics (no raw arrays)
   flowloom sweep    <model.flow> --param P --range A..B[/N] --metric SPEC [--json]
   flowloom sensitivity <model.flow> --metric SPEC [--param a,b] [--frac F] [--json]
+  flowloom solve    <model.flow> --param P --metric SPEC --target N [--bracket A..B] [--json]
   flowloom reference [--json]                the .flow language + builtins catalog
   flowloom <model.flow>                       shorthand for: run
 
@@ -402,6 +447,9 @@ sweep / sensitivity options:
   --metric SPEC            scalar to read per run: final:|max:|min:|mean:|at:<t>:|
                            time-to-peak:|settle-time: followed by a series name
   --frac F                 ± fraction for sensitivity bumps (default 0.1)
+  --target N               value the metric should hit (solve)
+  --bracket A..B           search interval for solve (default: auto-bracket from base)
+  --tol T                  convergence tolerance on |metric − target| (solve)
 
 examples:
   flowloom run examples/coffee-cooling.flow
@@ -409,6 +457,7 @@ examples:
   flowloom summary examples/predator-prey.flow
   flowloom sweep examples/logistic-growth.flow --param carrying --range 500..2000/7 --metric final:Population
   flowloom sensitivity examples/sir-epidemic.flow --metric max:I
+  flowloom solve examples/sir-epidemic.flow --param beta --metric max:I --target 300
   flowloom run model.flow --set yield=0.03 --set to=240 --csv > out.csv
   cat model.flow | flowloom loops -`;
 
@@ -427,6 +476,7 @@ async function main(): Promise<void> {
     case "summary": await cmdSummary(args); break;
     case "sweep": await cmdSweep(args); break;
     case "sensitivity": await cmdSensitivity(args); break;
+    case "solve": await cmdSolve(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");
     default: die(`unknown command "${args.cmd}" — try `+"`flowloom --help`");

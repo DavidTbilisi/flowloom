@@ -73,6 +73,14 @@ describe("mcp handlers", () => {
     expect(r.rows[0]).toHaveProperty("delta");
   });
 
+  it("flow_solve finds the knob value that hits a target", async () => {
+    // final:Population grows with birthRate; solve for a reachable target.
+    const r = parse(await handlers.flow_solve({ model: SRC, param: "birthRate", metric: "final:Population", target: 20 }));
+    expect(r.converged).toBe(true);
+    expect(r.achieved).toBeCloseTo(20, 2);
+    expect(r).toHaveProperty("value");
+  });
+
   it("flow_describe returns the model structure", () => {
     const r = parse(handlers.flow_describe({ model: SRC }));
     expect(r.stocks[0].name).toBe("Population");

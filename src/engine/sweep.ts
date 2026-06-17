@@ -57,7 +57,7 @@ function baseValue(model: Model, name: string): number | undefined {
 }
 
 /** Run a clone with one override applied, reduced to a single metric. */
-async function metricWith(model: Model, spec: string, metric: string): Promise<{ metric: number; note?: string }> {
+export async function metricWith(model: Model, spec: string, metric: string): Promise<{ metric: number; note?: string }> {
   const m = structuredClone(model);
   applyOverride(m, spec);
   const res = await simulateAsync(m);

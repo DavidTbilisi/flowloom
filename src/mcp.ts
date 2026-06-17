@@ -25,6 +25,7 @@ import {
   sweepParam,
   sensitivity,
   lintModel,
+  solveParam,
   REFERENCE,
 } from "./engine/index.js";
 import { EXAMPLES } from "./examples/index.js";
@@ -98,6 +99,17 @@ export const handlers = {
       { model: string; metric: string; params?: string[]; frac?: number; set?: string[] },
   ): Promise<ToolResult> {
     const r = await sensitivity(loadModel(model, set), params ?? [], metric, frac ?? 0.1);
+    return text(r);
+  },
+
+  async flow_solve(
+    { model, param, metric, target, bracket, tol, set }:
+      { model: string; param: string; metric: string; target: number; bracket?: [number, number]; tol?: number; set?: string[] },
+  ): Promise<ToolResult> {
+    const r = await solveParam(loadModel(model, set), param, metric, target, {
+      ...(bracket ? { bracket } : {}),
+      ...(tol !== undefined ? { tol } : {}),
+    });
     return text(r);
   },
 
@@ -222,6 +234,25 @@ export function buildServer(): McpServer {
       },
     },
     guard(handlers.flow_sensitivity),
+  );
+
+  server.registerTool(
+    "flow_solve",
+    {
+      title: "Solve for a knob",
+      description:
+        "Goal-seek: find the param value that makes a metric equal a target, by bisection (auto-brackets outward from the base value). Returns the value, the achieved metric, and whether it converged.",
+      inputSchema: {
+        model: modelArg,
+        param: z.string().describe("The param (or stock init) to solve for."),
+        metric: metricArg,
+        target: z.number().describe("The value the metric should reach."),
+        bracket: z.tuple([z.number(), z.number()]).optional().describe("Search interval [lo, hi]; omit to auto-bracket from the base value."),
+        tol: z.number().optional().describe("Convergence tolerance on |metric − target| (default 1e-6·max(1,|target|))."),
+        set: setArg,
+      },
+    },
+    guard(handlers.flow_solve),
   );
 
   server.registerTool(
