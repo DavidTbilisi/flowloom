@@ -60,13 +60,14 @@ SIR epidemic, compound savings, Newton's-law cooling. Each is a `.flow` text fil
 
 ## Keyboard
 - **⌘/Ctrl + Enter** — run
-- Tabs: Plot · Diagram · Table · Format
+- Tabs: Plot · Diagram · Table · Loops · Format
+- On the **Diagram** tab, hover a loop chip to trace that loop and read its R/B label.
 
 ## Roadmap
 - [x] R/B loop polarity auto-detection and labeling (Loops tab)
+- [x] causal-graph diagram with interactive loop overlay (Diagram tab)
 - [ ] save/load `.flow` files (drag-drop) and shareable URL state
 - [ ] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing the same parser
-- [ ] richer diagram layout (causal-loop view)
 
 ## License
 MIT (see LICENSE).

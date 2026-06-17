@@ -70,6 +70,11 @@
   .loop .node{color:var(--accent)}
   .loop .lnk sup{font-size:11px}
   .loop .lnk.pos{color:var(--green)} .loop .lnk.neg{color:var(--red)} .loop .lnk.amb{color:var(--dim)}
+  .loopchips{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+  .chip{display:flex;align-items:center;gap:7px;padding:5px 10px;border:1px solid var(--line);
+    border-radius:20px;background:var(--panel);cursor:default;font:12px var(--mono);color:var(--dim)}
+  .chip:hover{border-color:var(--accent);color:var(--ink)}
+  .chip .badge{min-width:18px;height:18px;font-size:11px}
 </style>
 </head>
 <body>
@@ -110,9 +115,11 @@
     </div>
 
     <div class="view hidden" id="view-diagram">
-      <p class="hint">Auto-derived from each <code>d(stock) = …</code> line. Green = inflow, red = outflow.
-        Only clean single-name flow terms are drawn as arrows; mixed expressions are listed under each stock.</p>
-      <svg id="diagram" height="420"></svg>
+      <p class="hint">Causal graph from the model's equations. <b style="color:var(--accent)">Boxes</b> are stocks,
+        <b>pills</b> are flows/aux; <span style="color:var(--green)">green</span> links push the same direction,
+        <span style="color:var(--red)">red</span> the opposite. <b>Hover a loop</b> to trace it and read its R/B label.</p>
+      <svg id="diagram" height="440"></svg>
+      <div class="loopchips" id="loopChips"></div>
     </div>
 
     <div class="view hidden" id="view-loops">
@@ -489,55 +496,104 @@ function drawLegend(){
   });
 }
 
-// ---- rendering: diagram ----------------------------------------------------
+// ---- rendering: diagram (causal graph + loop overlay) ----------------------
+let DIAGRAM=null;
+
 function drawDiagram(m){
-  const svg=document.getElementById("diagram");
-  const W=svg.clientWidth||700;
-  const cx=W/2, boxW=150, boxH=46;
-  let y=24; const rows=[];
+  let graph, loops, kinds;
+  try{
+    graph=influenceGraph(m); loops=findLoops(graph).loops; kinds=loops.map(classifyLoop);
+  }catch(e){
+    document.getElementById("diagram").innerHTML=`<text x="20" y="30" fill="#f0746a" font-size="12">${escapeXml(e.message)}</text>`;
+    document.getElementById("loopChips").innerHTML=""; DIAGRAM=null; return;
+  }
+  // node order: place each stock then the flows/aux it touches, so loop members cluster
+  const isStock=new Set(m.stocks.map(s=>s.name));
+  const order=[], seen=new Set();
+  const nbrs=n=>{const r=new Set();graph.edges.forEach(e=>{if(e.from===n)r.add(e.to);if(e.to===n)r.add(e.from);});return [...r];};
   for(const s of m.stocks){
-    const r=m.rates[s.name];
-    const f = r ? flowsOfRate(m, r.expr) : {inflows:[],outflows:[],leftover:[]};
-    const n=Math.max(1, f.inflows.length, f.outflows.length);
-    rows.push({s, f, top:y, h:n*24+boxH});
-    y += n*24+boxH+30;
+    if(!seen.has(s.name)){order.push(s.name);seen.add(s.name);}
+    for(const nb of nbrs(s.name)) if(!seen.has(nb)){order.push(nb);seen.add(nb);}
   }
-  const H=Math.max(140, y);
-  svg.setAttribute("height", H);
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const arrow = (x1,y1,x2,y2,color)=>`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="2" marker-end="url(#ah-${color.slice(1)})"/>`;
-  const markers = [...new Set(["#5fd17a","#f0746a"])].map(c=>
-    `<marker id="ah-${c.slice(1)}" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
-       <path d="M0,0 L8,3 L0,6 Z" fill="${c}"/></marker>`).join("");
+  for(const n of graph.nodes) if(!seen.has(n)){order.push(n);seen.add(n);}
+  DIAGRAM={graph,loops,kinds,order,isStock};
+
+  // loop chips below the svg — hovering one traces it on the diagram
+  const chips=document.getElementById("loopChips");
+  if(!loops.length){ chips.innerHTML=`<span class="hint" style="margin:0">no feedback loops (open-loop model)</span>`; }
+  else{
+    chips.innerHTML="";
+    loops.map((lp,i)=>({lp,kind:kinds[i],i}))
+      .sort((a,b)=>({R:0,B:1,"?":2}[a.kind]-{R:0,B:1,"?":2}[b.kind]) || a.lp.length-b.lp.length)
+      .forEach(({lp,kind,i})=>{
+        const el=document.createElement("span"); el.className="chip";
+        const path=lp[0].from+lp.map(e=>" → "+e.to).join("");
+        el.innerHTML=`<span class="badge ${kind==='?'?'Q':kind}">${kind}</span>${escapeXml(path)}`;
+        el.onmouseenter=()=>renderDiagramSVG(i);
+        el.onmouseleave=()=>renderDiagramSVG(null);
+        chips.appendChild(el);
+      });
+  }
+  renderDiagramSVG(null);
+}
+
+function renderDiagramSVG(hi){
+  if(!DIAGRAM) return;
+  const svg=document.getElementById("diagram");
+  const W=svg.clientWidth||700, H=440;
+  svg.setAttribute("viewBox",`0 0 ${W} ${H}`); svg.setAttribute("height",H);
+  const {graph,order,isStock,loops,kinds}=DIAGRAM;
+  const N=Math.max(1,order.length);
+  const cx=W/2, cy=H/2, R=Math.max(60, Math.min(W,H)/2-60);
+  const pos={};
+  order.forEach((n,i)=>{ const a=-Math.PI/2 + i*2*Math.PI/N; pos[n]={x:cx+R*Math.cos(a), y:cy+R*Math.sin(a)}; });
+  const rOf=n=>isStock.has(n)?41:34;
+  const idx=Object.fromEntries(order.map((n,i)=>[n,i]));
+  const hlSet = hi!=null ? new Set(loops[hi].map(e=>e.from+"|"+e.to)) : null;
+  const loopNodes = hi!=null ? new Set(loops[hi].flatMap(e=>[e.from,e.to])) : null;
+  const col=s=> s>0?"#5fd17a" : s<0?"#f0746a" : "#7a8294";
   let body="";
-  for(const r of rows){
-    const midY=r.top + r.h/2;
-    // stock box
-    body += `<rect x="${cx-boxW/2}" y="${midY-boxH/2}" width="${boxW}" height="${boxH}" rx="8"
-      fill="#1d212b" stroke="#6ad1c7" stroke-width="1.5"/>
-      <text x="${cx}" y="${midY-3}" fill="#e6e9ef" font-size="13" font-weight="600" text-anchor="middle">${r.s.name}</text>
-      <text x="${cx}" y="${midY+13}" fill="#9aa3b2" font-size="10" text-anchor="middle" font-family="monospace">init ${escapeXml(r.s.initExpr)}</text>`;
-    // inflows (left, green)
-    r.f.inflows.forEach((nm,i)=>{
-      const yy=r.top+18+i*24;
-      body += arrow(70, yy, cx-boxW/2-4, midY-10+ (i-(r.f.inflows.length-1)/2)*6, "#5fd17a");
-      body += `<circle cx="60" cy="${yy}" r="3" fill="#5fd17a"/>
-        <text x="74" y="${yy-4}" fill="#5fd17a" font-size="11" font-family="monospace">${nm}</text>`;
-    });
-    // outflows (right, red)
-    r.f.outflows.forEach((nm,i)=>{
-      const yy=r.top+18+i*24;
-      body += arrow(cx+boxW/2+4, midY-10+ (i-(r.f.outflows.length-1)/2)*6, W-70, yy, "#f0746a");
-      body += `<text x="${W-78}" y="${yy-4}" fill="#f0746a" font-size="11" text-anchor="end" font-family="monospace">${nm}</text>
-        <circle cx="${W-60}" cy="${yy}" r="3" fill="#f0746a"/>`;
-    });
-    // leftover expression terms
-    if(r.f.leftover.length){
-      body += `<text x="${cx}" y="${midY+boxH/2+15}" fill="#f0c14b" font-size="10" text-anchor="middle" font-family="monospace">d = ${escapeXml(r.f.leftover.join(" "))}${(r.f.inflows.length||r.f.outflows.length)?" + flows":""}</text>`;
+
+  graph.edges.forEach(e=>{
+    const on = hlSet ? hlSet.has(e.from+"|"+e.to) : true;
+    const c=col(e.sign);
+    const op = hlSet ? (on?1:0.10) : 0.8;
+    const w  = (hlSet&&on) ? 3.2 : 1.6;
+    if(e.from===e.to){                                  // self-loop arc above node
+      const p=pos[e.from], r=rOf(e.from);
+      body+=`<path d="M ${p.x-9} ${p.y-r+3} A 15 15 0 1 1 ${p.x+9} ${p.y-r+3}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" marker-end="url(#fa-${c.slice(1)})"/>`;
+      return;
     }
+    const A=pos[e.from], B=pos[e.to];
+    const dx=B.x-A.x, dy=B.y-A.y, len=Math.hypot(dx,dy)||1, ux=dx/len, uy=dy/len;
+    const sx=A.x+ux*rOf(e.from), sy=A.y+uy*rOf(e.from);
+    const ex=B.x-ux*rOf(e.to),   ey=B.y-uy*rOf(e.to);
+    const dir = idx[e.from]<idx[e.to] ? 1 : -1;          // bow reciprocal edges apart
+    const off = 0.16*len*dir;
+    const mx=(sx+ex)/2 - uy*off, my=(sy+ey)/2 + ux*off;
+    body+=`<path d="M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" marker-end="url(#fa-${c.slice(1)})"/>`;
+  });
+
+  order.forEach(n=>{
+    const p=pos[n], dim = loopNodes ? (loopNodes.has(n)?1:0.28) : 1;
+    if(isStock.has(n))
+      body+=`<rect x="${p.x-41}" y="${p.y-17}" width="82" height="34" rx="7" fill="#1d212b" stroke="#6ad1c7" stroke-width="1.6" opacity="${dim}"/>`;
+    else
+      body+=`<rect x="${p.x-37}" y="${p.y-14}" width="74" height="28" rx="14" fill="#141821" stroke="#3a4150" stroke-width="1.3" opacity="${dim}"/>`;
+    body+=`<text x="${p.x}" y="${p.y+4}" text-anchor="middle" font-size="11" fill="#e6e9ef" opacity="${dim}" font-family="monospace">${escapeXml(n.length>11?n.slice(0,10)+"…":n)}</text>`;
+  });
+
+  if(hi!=null){                                          // R/B badge at loop centroid
+    const ns=[...loopNodes];
+    const c2=ns.reduce((a,n)=>({x:a.x+pos[n].x,y:a.y+pos[n].y}),{x:0,y:0});
+    c2.x/=ns.length; c2.y/=ns.length;
+    const k=kinds[hi], kc = k==='R'?'#5fd17a':k==='B'?'#f0c14b':'#9aa3b2';
+    body+=`<circle cx="${c2.x}" cy="${c2.y}" r="16" fill="${kc}"/><text x="${c2.x}" y="${c2.y+6}" text-anchor="middle" font-size="16" font-weight="700" fill="#06231f">${k}</text>`;
   }
-  if(!rows.length) body=`<text x="${cx}" y="60" fill="#9aa3b2" text-anchor="middle">no stocks</text>`;
-  svg.innerHTML = `<defs>${markers}</defs>${body}`;
+
+  const cols=["#5fd17a","#f0746a","#7a8294"];
+  const defs=cols.map(c=>`<marker id="fa-${c.slice(1)}" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${c}"/></marker>`).join("");
+  svg.innerHTML=`<defs>${defs}</defs>${body}`;
 }
 function escapeXml(s){return s.replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));}
 
