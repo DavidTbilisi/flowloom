@@ -88,6 +88,29 @@ test("switching examples loads a different model", async ({ page }) => {
   expect(names).toEqual(expect.arrayContaining(["S", "I", "R"]));
 });
 
+test("a shared URL hash reconstructs the exact model", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  // author a distinctive model, then copy the share link
+  await page.locator("#src").fill("stock Widget = 3\nparam g = 1\nd(Widget) = g\nsim to=5");
+  await page.locator("#run").click();
+  await page.locator("#share").click();
+  const url = await page.evaluate(() => navigator.clipboard.readText());
+  expect(url).toContain("#m=");
+
+  // open the link in a fresh page — the model must come back verbatim
+  const fresh = await context.newPage();
+  await fresh.goto(url);
+  await fresh.waitForFunction(() => (window as any).flowloom?.run?.ok === true);
+  await expect(fresh.locator("#src")).toHaveValue(/stock Widget = 3/);
+  await fresh.close();
+});
+
+test("editing the model writes it into the URL hash", async ({ page }) => {
+  await page.locator("#src").fill("stock Z = 9\nd(Z) = 0\nsim to=3");
+  await page.locator("#run").click();
+  await expect.poll(() => page.evaluate(() => location.hash.startsWith("#m="))).toBe(true);
+});
+
 test("table tab shows sampled series with the playback cursor", async ({ page }) => {
   await page.getByRole("button", { name: "Table" }).click();
   await expect(page.locator("#tableWrap table")).toBeVisible();

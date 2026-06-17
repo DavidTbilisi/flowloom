@@ -96,7 +96,7 @@ canonical source so they never drift.)
 - [x] animated causal diagram with interactive loop overlay
 - [x] AST language with delays, lookups, and test inputs
 - [x] contract tests (Vitest) + e2e tests (Playwright)
-- [ ] save/load `.flow` files (drag-drop) and shareable URL state
+- [x] save/load `.flow` files (drag-drop) and shareable URL state
 - [ ] units checking from the `[unit]` annotations
 - [ ] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
 

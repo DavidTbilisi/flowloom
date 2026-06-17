@@ -4,6 +4,7 @@ import { Diagram } from "./diagram.js";
 import { EXAMPLES, DEFAULT_EXAMPLE } from "../examples/index.js";
 import { setSimSetting } from "./model-edit.js";
 import { renderHelp } from "./help.js";
+import { readHash, writeHash, shareUrl, downloadFlow, enableDropLoad } from "./persist.js";
 
 // ── App shell ────────────────────────────────────────────────────────────────
 // Wires the editor, toolbar, tabbed views, and the playback transport to a
@@ -52,6 +53,7 @@ export function mountApp(root: HTMLElement): Store {
     reflectSettings();
     renderStructure();
     syncFrameUI();
+    writeHash(src.value);
   }
   function scheduleRebuild() {
     window.clearTimeout(buildTimer);
@@ -76,7 +78,27 @@ export function mountApp(root: HTMLElement): Store {
     }
   });
   $<HTMLButtonElement>("#run").onclick = rebuild;
-  $<HTMLButtonElement>("#copy").onclick = () => navigator.clipboard?.writeText(src.value);
+
+  const flash = (btn: HTMLButtonElement, label: string) => {
+    const prev = btn.textContent;
+    btn.textContent = label;
+    window.setTimeout(() => (btn.textContent = prev), 1100);
+  };
+  const copyBtn = $<HTMLButtonElement>("#copy");
+  copyBtn.onclick = () => { navigator.clipboard?.writeText(src.value); flash(copyBtn, "✓ Copied"); };
+  const shareBtn = $<HTMLButtonElement>("#share");
+  shareBtn.onclick = () => { navigator.clipboard?.writeText(shareUrl(src.value)); flash(shareBtn, "✓ Link copied"); };
+  $<HTMLButtonElement>("#download").onclick = () => downloadFlow(src.value);
+
+  // open a .flow file (button + drag-and-drop onto the editor)
+  const fileInput = $<HTMLInputElement>("#fileInput");
+  $<HTMLButtonElement>("#open").onclick = () => fileInput.click();
+  fileInput.onchange = () => {
+    const f = fileInput.files?.[0];
+    if (f) f.text().then((text) => { src.value = text; rebuild(); });
+    fileInput.value = "";
+  };
+  enableDropLoad($<HTMLElement>(".editor-wrap"), (text) => { src.value = text; rebuild(); });
 
   exampleSel.onchange = () => {
     const ex = EXAMPLES.find((e) => e.name === exampleSel.value);
@@ -271,9 +293,10 @@ export function mountApp(root: HTMLElement): Store {
     if (store.tab === "diagram") diagram.render(store);
   });
 
-  // boot
-  src.value = DEFAULT_EXAMPLE.source;
-  exampleSel.value = DEFAULT_EXAMPLE.name;
+  // boot — a model in the URL hash (a shared link) wins over the default example
+  const shared = readHash();
+  src.value = shared ?? DEFAULT_EXAMPLE.source;
+  exampleSel.value = shared ? "" : DEFAULT_EXAMPLE.name;
   rebuild();
   store.setTab("plot");
 
@@ -336,6 +359,10 @@ const SHELL = `
       <label>method</label>
       <select id="method"><option value="rk4">RK4</option><option value="euler">Euler</option></select>
       <button id="copy" class="ghost" title="copy model text">⧉ Copy</button>
+      <button id="share" class="ghost" title="copy a shareable link">🔗 Share</button>
+      <button id="download" class="ghost" title="download .flow">⤓</button>
+      <button id="open" class="ghost" title="open a .flow file">📂</button>
+      <input id="fileInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />
     </div>
     <div class="editor-wrap"><textarea id="src" spellcheck="false"></textarea></div>
     <div id="err" class="err"></div>
