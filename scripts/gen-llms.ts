@@ -74,15 +74,21 @@ ${example!.source.replace(/\s*$/, "")}
 ## Running headlessly
 
   flowloom run model.flow [--json|--csv|--chart]   simulate; --json for all series
+  flowloom summary model.flow [--json]             classify each series (s-shaped/decay/oscillation, settling) — no raw arrays
   flowloom explain model.flow                      plain-language summary
   flowloom describe model.flow --json              structure (stocks/rates/vars/loops) as JSON
   flowloom loops model.flow --json                 feedback loops with R/B polarity
   flowloom check model.flow                        validate; non-zero exit on error
   flowloom reference --json                         this catalog as JSON
 
+Prefer \`summary\` over \`run\` when you only need to know *what the model did*
+(did it grow, settle, oscillate, overshoot?) — it returns a few labelled numbers
+per series instead of the full time series.
+
 MCP: the \`flowloom-mcp\` server exposes the same engine as tools — flow_run,
-flow_check, flow_loops, flow_describe, flow_explain, flow_examples — plus a
-flow://reference resource carrying this guide. Each tool takes the model as text.
+flow_summary, flow_check, flow_loops, flow_describe, flow_explain, flow_examples
+— plus a flow://reference resource carrying this guide. Each tool takes the model
+as text.
 `;
 }
 

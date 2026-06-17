@@ -21,6 +21,7 @@ import {
   applyOverride,
   describeModel,
   explainModel,
+  summarizeRun,
   REFERENCE,
 } from "./engine/index.js";
 import { EXAMPLES } from "./examples/index.js";
@@ -70,6 +71,11 @@ export const handlers = {
       series[c] = arr;
     }
     return text({ dt: res.dt, method: res.method, steps: res.t.length, note: res.note, t: res.t, series });
+  },
+
+  async flow_summary({ model, plot, set }: { model: string; plot?: string[]; set?: string[] }): Promise<ToolResult> {
+    const res = await simulateAsync(loadModel(model, set));
+    return text(summarizeRun(res, plot));
   },
 
   flow_loops({ model }: { model: string }): ToolResult {
@@ -139,6 +145,21 @@ export function buildServer(): McpServer {
       },
     },
     guard(handlers.flow_run),
+  );
+
+  server.registerTool(
+    "flow_summary",
+    {
+      title: "Summarize a run",
+      description:
+        "Run a .flow model and return a compact, classified summary per series (start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settling time) instead of the raw time series.",
+      inputSchema: {
+        model: modelArg,
+        plot: z.array(z.string()).optional().describe("Series to summarize (default: stocks then aux/flows)."),
+        set: setArg,
+      },
+    },
+    guard(handlers.flow_summary),
   );
 
   server.registerTool(

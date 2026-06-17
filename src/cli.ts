@@ -23,8 +23,10 @@ import {
   applyOverride,
   describeModel,
   explainModel,
+  summarizeRun,
   REFERENCE,
   type SimResult,
+  type RunSummary,
   type LoopReport,
 } from "./engine/index.js";
 
@@ -180,6 +182,23 @@ function renderChart(res: SimResult, cols: string[], width = 60): string {
     .join("\n");
 }
 
+/** One compact line per series: name, behaviour, span, and settling/oscillation. */
+function renderSummary(sum: RunSummary): string {
+  const wName = Math.max(...sum.series.map((s) => s.name.length));
+  const wBeh = Math.max(...sum.series.map((s) => s.behavior.length));
+  const lines = sum.series.map((s) => {
+    const span = `${fmt(s.start)} → ${fmt(s.final)}`;
+    const extent = `[${fmt(s.min.value)} … ${fmt(s.max.value)}]`;
+    const settle = s.settled ? `  settles t=${fmt(s.settleTime!)}` : "";
+    const osc = s.peaks ? `  ${s.peaks} peak${plural(s.peaks)}${s.period !== undefined ? ` ~T=${fmt(s.period)}` : ""}` : "";
+    return `${s.name.padEnd(wName)}  ${s.behavior.padEnd(wBeh)}  ${span}  ${extent}${settle}${osc}`;
+  });
+  const head = `${sum.steps} steps over t=[${fmt(sum.tStart)} … ${fmt(sum.tEnd)}], ${sum.method}`;
+  const out = [head, ...lines];
+  if (sum.note) out.push(`note: ${sum.note}`);
+  return out.join("\n");
+}
+
 // ── commands ───────────────────────────────────────────────────────────────────
 async function cmdRun(args: Args): Promise<void> {
   const model = load(args);
@@ -228,6 +247,14 @@ function cmdExplain(args: Args): void {
   out(explainModel(load(args)));
 }
 
+async function cmdSummary(args: Args): Promise<void> {
+  const model = load(args);
+  const res = await simulateAsync(model);
+  const cols = columns(args, res);
+  const sum = summarizeRun(res, cols);
+  out(args.format === "json" ? JSON.stringify(sum, null, 2) : renderSummary(sum));
+}
+
 function cmdReference(args: Args): void {
   if (args.format === "json") { out(JSON.stringify(REFERENCE, null, 2)); return; }
   const groups: Array<[string, typeof REFERENCE[number]["kind"]]> = [
@@ -262,6 +289,7 @@ usage:
   flowloom check    <model.flow>             parse only; non-zero exit on error
   flowloom describe <model.flow> [--json]    dump model structure (stocks/rates/vars/loops)
   flowloom explain  <model.flow>             plain-language summary of the model
+  flowloom summary  <model.flow> [--json]    classify each series' dynamics (no raw arrays)
   flowloom reference [--json]                the .flow language + builtins catalog
   flowloom <model.flow>                       shorthand for: run
 
@@ -291,6 +319,7 @@ async function main(): Promise<void> {
     case "check": cmdCheck(args); break;
     case "describe": cmdDescribe(args); break;
     case "explain": cmdExplain(args); break;
+    case "summary": await cmdSummary(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");
     default: die(`unknown command "${args.cmd}" — try `+"`flowloom --help`");

@@ -41,6 +41,13 @@ describe("mcp handlers", () => {
     expect(set.series.Population[0]).not.toBe(base.series.Population[0]);
   });
 
+  it("flow_summary classifies each series instead of dumping arrays", async () => {
+    const r = parse(await handlers.flow_summary({ model: SRC, plot: ["Population"] }));
+    expect(r.series[0].name).toBe("Population");
+    expect(r.series[0].behavior).toBe("growth");
+    expect(r.series[0]).not.toHaveProperty("t");
+  });
+
   it("flow_describe returns the model structure", () => {
     const r = parse(handlers.flow_describe({ model: SRC }));
     expect(r.stocks[0].name).toBe("Population");
