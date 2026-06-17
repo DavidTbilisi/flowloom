@@ -30,11 +30,16 @@ reads is always what ran.
   safe AST interpreter (no `eval`). See [`docs/language.md`](docs/language.md).
 - **A proper engine** — Euler and classical **RK4** integration; `step`/`pulse`/
   `ramp` test inputs; graphical **lookup tables**; first- and third-order
-  **delays and smoothing** (`smooth`, `delay1`, `delay3`, …).
+  **delays and smoothing** (`smooth`, `delay1`, `delay3`, …). Expressions compile
+  to slots in a reused typed array (no `eval`), and **very large models run in a
+  Web Worker with a generated WebAssembly backend** so the UI never blocks.
 - **Automatic feedback-loop analysis** — a signed influence graph finds every
   loop and labels it **R** (reinforcing) or **B** (balancing).
-- **An animated diagram** — press play and watch stocks fill to their level
-  while signed causal links march; hover a loop to trace it with its R/B badge.
+- **An animated diagram on an infinite canvas** — press play and watch stocks
+  fill to their level while signed causal links march; hover a loop to trace it
+  with its R/B badge. **Scroll to zoom, drag to pan, Fit to frame** — large
+  models lay out on a scalable grid (and degrade to a navigable dot-map) so even
+  a thousand-node graph stays explorable.
 - **Plots, a data table, and a time scrubber**, all synchronized to one clock.
 - **Learn-as-you-go** — a syntax-highlighted editor, a contextual-help bar that
   explains whatever the mouse is over, and a **Learn** button with a guided tour,
@@ -104,6 +109,8 @@ canonical source so they never drift.)
 - [x] AST language with delays, lookups, and test inputs
 - [x] contract tests (Vitest) + e2e tests (Playwright)
 - [x] save/load `.flow` files (drag-drop) and shareable URL state
+- [x] compiled (slot-based) evaluator + a generated **WASM** backend for large
+      models, run off-thread in a Web Worker
 - [ ] units checking from the `[unit]` annotations
 - [ ] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
 

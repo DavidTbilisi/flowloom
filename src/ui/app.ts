@@ -41,6 +41,18 @@ export function mountApp(root: HTMLElement): Store {
   const statusbar = mountStatusBar(root, store, () => store.setTab("help"));
   const editor = mountEditor($<HTMLElement>(".editor-wrap"), src, store, statusbar.setHelp);
 
+  // infinite-canvas controls for the diagram (zoom / pan / fit)
+  const zoomLbl = $<HTMLElement>(".zoomlbl");
+  diagram.setOnView((k) => { zoomLbl.textContent = `${Math.round(k * 100)}%`; });
+  root.querySelectorAll<HTMLButtonElement>(".canvas-ctrls [data-cv]").forEach((b) => {
+    b.onclick = () => {
+      const act = b.dataset.cv;
+      if (act === "fit") diagram.fit();
+      else if (act === "in") diagram.zoomBy(1.3);
+      else if (act === "out") diagram.zoomBy(1 / 1.3);
+    };
+  });
+
   // examples dropdown
   for (const ex of EXAMPLES) {
     const o = document.createElement("option");
@@ -55,12 +67,13 @@ export function mountApp(root: HTMLElement): Store {
   );
 
   // ── build/run ──
+  // store.build() may finish asynchronously (large models simulate in a worker),
+  // so structural rendering is driven by a result-change check in the store
+  // subscription below rather than inline here.
   let buildTimer: number | undefined;
   function rebuild() {
     store.build(src.value);
     reflectSettings();
-    renderStructure();
-    syncFrameUI();
     writeHash(src.value);
   }
   function scheduleRebuild() {
@@ -282,8 +295,20 @@ export function mountApp(root: HTMLElement): Store {
     });
   }
 
-  // ── tab visibility ──
+  // ── structural changes + tab visibility ──
+  // Re-render structure (diagram/loops/table/legend/error) only when a new
+  // result lands or the computing flag flips — not on every tab switch.
+  let lastResult: object | undefined;
+  let lastComputing: boolean | undefined;
+  const busyEl = $<HTMLElement>("#busy");
   store.subscribe(() => {
+    if (store.run.result !== lastResult || store.computing !== lastComputing) {
+      lastResult = store.run.result;
+      lastComputing = store.computing;
+      busyEl.hidden = !store.computing;
+      renderStructure();
+      syncFrameUI();
+    }
     root.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((b) =>
       b.classList.toggle("active", b.dataset.tab === store.tab),
     );
@@ -298,7 +323,7 @@ export function mountApp(root: HTMLElement): Store {
   function syncFrameUI() {
     for (const t of transports) t.sync();
     if (store.tab === "plot") drawPlot(plotCanvas, store);
-    if (store.tab === "diagram") diagram.render(store);
+    if (store.tab === "diagram") diagram.tick(store); // animates only small graphs
     updateLegendValues();
     highlightTableRow();
   }
@@ -428,6 +453,7 @@ const SHELL = `
     <div id="err" class="err"></div>
   </section>
   <section class="right">
+    <div id="busy" class="busy" hidden><span class="spin"></span> simulating large model in a worker…</div>
     <div class="tabs">
       <button data-tab="plot" class="active" data-help="ui:tab-plot">Plot</button>
       <button data-tab="diagram" data-help="ui:tab-diagram">Diagram</button>
@@ -443,8 +469,16 @@ const SHELL = `
     <div class="view hidden" id="view-diagram">
       <p class="hint">Causal graph from the model's equations. <b style="color:var(--accent)">Boxes</b> are stocks (filling to their level),
         <b>pills</b> are flows/aux; <span style="color:var(--green)">green</span> links push the same direction,
-        <span style="color:var(--red)">red</span> the opposite. <b>Press play</b> to animate, or hover a loop to trace it.</p>
-      <svg id="diagram" height="460"></svg>
+        <span style="color:var(--red)">red</span> the opposite. <b>Scroll to zoom · drag to pan.</b></p>
+      <div class="canvas-wrap">
+        <svg id="diagram" height="460"></svg>
+        <div class="canvas-ctrls">
+          <button data-cv="fit" title="fit graph to view">⊡ Fit</button>
+          <button data-cv="in" title="zoom in">＋</button>
+          <button data-cv="out" title="zoom out">－</button>
+          <span class="zoomlbl">100%</span>
+        </div>
+      </div>
       <div class="transport" id="transport-diagram" data-help="ui:transport"></div>
       <div class="loopchips" id="loopChips"></div>
     </div>

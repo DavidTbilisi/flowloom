@@ -94,6 +94,17 @@ textarea#src.transparent-text { color: transparent; }
 .view { flex: 1; overflow: auto; padding: 12px; }
 .view.hidden { display: none; }
 
+.busy {
+  display: flex; align-items: center; gap: 8px; padding: 7px 12px;
+  background: #14202b; color: var(--accent); font-size: 12px; border-bottom: 1px solid var(--line);
+}
+.busy[hidden] { display: none; }
+.busy .spin {
+  width: 12px; height: 12px; border: 2px solid var(--line); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 canvas { width: 100%; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
@@ -121,6 +132,22 @@ td.num { text-align: right; }
 tr.cursor td { background: #1b2530; }
 
 svg { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+#diagram { touch-action: none; cursor: grab; display: block; }
+
+/* ── diagram infinite canvas controls ─────────────────────────────────── */
+.canvas-wrap { position: relative; }
+.canvas-ctrls {
+  position: absolute; top: 10px; right: 10px; display: flex; align-items: center; gap: 6px;
+  padding: 5px 7px; background: rgba(15,17,21,.82); border: 1px solid var(--line);
+  border-radius: 8px; backdrop-filter: blur(3px);
+}
+.canvas-ctrls button {
+  min-width: 30px; padding: 3px 8px; font-size: 13px; background: var(--panel2);
+}
+.canvas-ctrls button:hover { border-color: var(--accent); }
+.canvas-ctrls .zoomlbl {
+  font: 11px var(--mono); color: var(--dim); min-width: 40px; text-align: right;
+}
 
 .hint { color: var(--dim); font-size: 12px; margin: 0 0 10px; }
 .kv { color: var(--accent); }

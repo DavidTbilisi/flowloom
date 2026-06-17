@@ -39,7 +39,9 @@ test("hovering an R/B badge explains loop polarity", async ({ page }) => {
 test("a Learn more link appears and opens the Format tab", async ({ page }) => {
   // a stock node resolves to identifier help, which carries a doc anchor
   await page.getByRole("button", { name: "Diagram" }).click();
-  await page.locator("#diagram g[data-help='ui:node-stock']").first().hover();
+  const node = page.locator("#diagram g[data-help='ui:node-stock']").first();
+  await expect(node).toBeVisible();
+  await node.hover();
   const more = page.locator("#statusbar .sb-more");
   await expect(more).toBeVisible();
   await more.click();

@@ -10,4 +10,9 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: true,
   },
+  // the simulation worker dynamically imports the WASM backend (code-splitting),
+  // which requires the ES module worker format.
+  worker: {
+    format: "es",
+  },
 });

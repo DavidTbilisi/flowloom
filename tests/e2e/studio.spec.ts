@@ -48,6 +48,19 @@ test("diagram tab renders nodes and loop chips", async ({ page }) => {
   await expect(page.locator("#loopChips .chip .badge")).toHaveText("R");
 });
 
+test("diagram is a pan/zoom canvas (zoom controls + fit)", async ({ page }) => {
+  await page.getByRole("button", { name: "Diagram" }).click();
+  const zoom = page.locator(".zoomlbl");
+  await expect(zoom).toHaveText(/%$/);
+  const before = await zoom.textContent();
+  await page.locator(".canvas-ctrls [data-cv='in']").click();
+  await expect(zoom).not.toHaveText(before!); // zooming changed the scale
+  // the viewport <g> carries the pan/zoom transform
+  await expect(page.locator("#diagram .vp")).toHaveAttribute("transform", /scale/);
+  await page.locator(".canvas-ctrls [data-cv='fit']").click();
+  await expect(zoom).toHaveText(/%$/);
+});
+
 test("loops tab classifies the cooling model as balancing", async ({ page }) => {
   await page.locator("#src").fill(
     "stock Temp = 90\nparam room = 20\nparam k = 0.3\nflow cooling = k*(Temp-room)\nd(Temp) = -cooling\nsim to=20",
