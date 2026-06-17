@@ -36,6 +36,10 @@ reads is always what ran.
 - **An animated diagram** — press play and watch stocks fill to their level
   while signed causal links march; hover a loop to trace it with its R/B badge.
 - **Plots, a data table, and a time scrubber**, all synchronized to one clock.
+- **Learn-as-you-go** — a syntax-highlighted editor, a contextual-help bar that
+  explains whatever the mouse is over, and a **Learn** button with a guided tour,
+  interactive lessons, and example walkthroughs. See
+  [`docs/ui-guide.md`](docs/ui-guide.md).
 
 ## Run it
 
@@ -89,6 +93,9 @@ canonical source so they never drift.)
 - **⌘/Ctrl + Enter** — run
 - Tabs: Plot · Diagram · Loops · Table · Format
 - On Plot/Diagram, use the transport bar to play, pause, or scrub time.
+- The editor highlights syntax as you type; hover any keyword, node, or control
+  to see it explained in the status bar at the bottom. The **Learn** button opens
+  a tour, lessons, and walkthroughs.
 
 ## Roadmap
 

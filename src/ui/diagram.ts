@@ -86,26 +86,34 @@ export class Diagram {
       const p = L.pos.get(n)!;
       const dim = hlNodes ? (hlNodes.has(n) ? 1 : 0.25) : 1;
       const value = result.series.get(n)?.[frame];
+      let g = "";
+      let helpKey: string;
       if (L.isStock.has(n)) {
+        helpKey = "ui:node-stock";
         const r = L.range.get(n)!;
         const frac = value != null && Number.isFinite(value) ? clamp01((value - r.lo) / (r.hi - r.lo || 1)) : 0;
         const bw = 84, bh = 36, bx = p.x - bw / 2, by = p.y - bh / 2;
-        body += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="#11161e" stroke="#6ad1c7" stroke-width="1.6" opacity="${dim}"/>`;
+        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="#11161e" stroke="#6ad1c7" stroke-width="1.6" opacity="${dim}"/>`;
         // fill level (from the bottom)
         const fh = bh * frac;
-        body += `<clipPath id="clip-${cssId(n)}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7"/></clipPath>`;
-        body += `<rect clip-path="url(#clip-${cssId(n)})" x="${bx}" y="${by + bh - fh}" width="${bw}" height="${fh}" fill="#6ad1c7" opacity="${0.22 * dim}"/>`;
-        body += `<text x="${p.x}" y="${by - 5}" text-anchor="middle" font-size="11" fill="#e6e9ef" opacity="${dim}" font-family="monospace">${esc(short(n))}</text>`;
-        body += `<text x="${p.x}" y="${p.y + 5}" text-anchor="middle" font-size="12" fill="#6ad1c7" opacity="${dim}" font-family="monospace">${value != null ? fmtShort(value) : ""}</text>`;
+        g += `<clipPath id="clip-${cssId(n)}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7"/></clipPath>`;
+        g += `<rect clip-path="url(#clip-${cssId(n)})" x="${bx}" y="${by + bh - fh}" width="${bw}" height="${fh}" fill="#6ad1c7" opacity="${0.22 * dim}"/>`;
+        g += `<text x="${p.x}" y="${by - 5}" text-anchor="middle" font-size="11" fill="#e6e9ef" opacity="${dim}" font-family="monospace">${esc(short(n))}</text>`;
+        g += `<text x="${p.x}" y="${p.y + 5}" text-anchor="middle" font-size="12" fill="#6ad1c7" opacity="${dim}" font-family="monospace">${value != null ? fmtShort(value) : ""}</text>`;
       } else {
         const internal = L.isInternal.has(n);
+        helpKey = internal ? "ui:node-internal" : "ui:node-flow";
         const stroke = internal ? "#3a4150" : "#4a5566";
         const bw = 78, bh = 30, bx = p.x - bw / 2, by = p.y - bh / 2;
-        body += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="15" fill="#141821" stroke="${stroke}" stroke-width="1.3" opacity="${dim}"/>`;
-        body += `<text x="${p.x}" y="${p.y - 1}" text-anchor="middle" font-size="10.5" fill="#cdd3df" opacity="${dim}" font-family="monospace">${esc(short(internal ? "delay" : n))}</text>`;
+        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="15" fill="#141821" stroke="${stroke}" stroke-width="1.3" opacity="${dim}"/>`;
+        g += `<text x="${p.x}" y="${p.y - 1}" text-anchor="middle" font-size="10.5" fill="#cdd3df" opacity="${dim}" font-family="monospace">${esc(short(internal ? "delay" : n))}</text>`;
         if (value != null && Number.isFinite(value))
-          body += `<text x="${p.x}" y="${p.y + 11}" text-anchor="middle" font-size="10" fill="#8b93a3" opacity="${dim}" font-family="monospace">${fmtShort(value)}</text>`;
+          g += `<text x="${p.x}" y="${p.y + 11}" text-anchor="middle" font-size="10" fill="#8b93a3" opacity="${dim}" font-family="monospace">${fmtShort(value)}</text>`;
       }
+      // wrap so the contextual-help delegation can explain this node (and, via
+      // data-name, show the underlying variable's live value)
+      const named = L.isInternal.has(n) ? "" : ` data-name="${esc(n)}"`;
+      body += `<g data-help="${helpKey}"${named}>${g}</g>`;
     }
 
     // R/B badge at the highlighted loop's centroid

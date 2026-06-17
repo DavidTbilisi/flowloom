@@ -5,6 +5,10 @@ import { EXAMPLES, DEFAULT_EXAMPLE } from "../examples/index.js";
 import { setSimSetting } from "./model-edit.js";
 import { renderHelp } from "./help.js";
 import { readHash, writeHash, shareUrl, downloadFlow, enableDropLoad } from "./persist.js";
+import { mountEditor } from "./editor.js";
+import { mountStatusBar } from "./statusbar.js";
+import { startTour, type TourCtx, type Tour } from "./tour.js";
+import { UI_TOUR, LESSONS, WALKTHROUGHS } from "./tutorials.js";
 
 // ── App shell ────────────────────────────────────────────────────────────────
 // Wires the editor, toolbar, tabbed views, and the playback transport to a
@@ -32,6 +36,10 @@ export function mountApp(root: HTMLElement): Store {
 
   const diagram = new Diagram(diagramSvg);
   helpWrap.innerHTML = renderHelp();
+
+  // contextual-help status bar + the editor's highlight overlay (which feeds it)
+  const statusbar = mountStatusBar(root, store, () => store.setTab("help"));
+  const editor = mountEditor($<HTMLElement>(".editor-wrap"), src, store, statusbar.setHelp);
 
   // examples dropdown
   for (const ex of EXAMPLES) {
@@ -95,14 +103,14 @@ export function mountApp(root: HTMLElement): Store {
   $<HTMLButtonElement>("#open").onclick = () => fileInput.click();
   fileInput.onchange = () => {
     const f = fileInput.files?.[0];
-    if (f) f.text().then((text) => { src.value = text; rebuild(); });
+    if (f) f.text().then((text) => { editor.setValue(text); rebuild(); });
     fileInput.value = "";
   };
-  enableDropLoad($<HTMLElement>(".editor-wrap"), (text) => { src.value = text; rebuild(); });
+  enableDropLoad($<HTMLElement>(".editor-wrap"), (text) => { editor.setValue(text); rebuild(); });
 
   exampleSel.onchange = () => {
     const ex = EXAMPLES.find((e) => e.name === exampleSel.value);
-    if (ex) { src.value = ex.source; rebuild(); store.setFrame(store.frameCount - 1); }
+    if (ex) { editor.setValue(ex.source); rebuild(); store.setFrame(store.frameCount - 1); }
   };
 
   // toolbar settings rewrite the canonical `sim` line so the text stays the source of truth
@@ -118,6 +126,41 @@ export function mountApp(root: HTMLElement): Store {
   root.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((b) => {
     b.onclick = () => store.setTab(b.dataset.tab as Tab);
   });
+
+  // ── guided learning: the tour controller + Learn menu ──
+  const ctx: TourCtx = {
+    store,
+    setEditor: (text) => { editor.setValue(text); rebuild(); },
+    selectLines: (from, to) => editor.selectLines(from, to),
+    gotoTab: (tab) => store.setTab(tab),
+    setFrame: (frame) => store.setFrame(frame),
+    loadExample: (name) => {
+      const ex = EXAMPLES.find((e) => e.name === name);
+      if (ex) { exampleSel.value = name; editor.setValue(ex.source); rebuild(); }
+    },
+  };
+  let activeTour: { close(): void } | null = null;
+  const launch = (tour: Tour) => { activeTour?.close(); activeTour = startTour(tour, ctx); };
+
+  const learnBtn = $<HTMLButtonElement>("#learn");
+  const learnMenu = $<HTMLDivElement>("#learnMenu");
+  learnMenu.innerHTML =
+    `<button class="lm-item" data-kind="tour">▶ Take the tour</button>` +
+    `<div class="lm-sep">Lessons</div>` +
+    LESSONS.map((l, i) => `<button class="lm-item" data-kind="lesson" data-i="${i}">${escapeHtml(l.name)}</button>`).join("") +
+    `<div class="lm-sep">Example walkthroughs</div>` +
+    WALKTHROUGHS.map((w, i) => `<button class="lm-item" data-kind="walk" data-i="${i}">${escapeHtml(w.name)}</button>`).join("");
+  const toggleMenu = (show?: boolean) => learnMenu.classList.toggle("open", show);
+  learnBtn.onclick = (e) => { e.stopPropagation(); toggleMenu(); };
+  document.addEventListener("click", () => toggleMenu(false));
+  learnMenu.onclick = (e) => {
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>(".lm-item");
+    if (!b) return;
+    toggleMenu(false);
+    if (b.dataset.kind === "tour") launch(UI_TOUR);
+    else if (b.dataset.kind === "lesson") launch(LESSONS[Number(b.dataset.i)]!.tour);
+    else if (b.dataset.kind === "walk") launch(WALKTHROUGHS[Number(b.dataset.i)]!.tour);
+  };
 
   // ── render: structural (on rebuild) ──
   function renderStructure() {
@@ -158,9 +201,11 @@ export function mountApp(root: HTMLElement): Store {
       .forEach(({ lp, i }) => {
         const el = document.createElement("span");
         el.className = "chip";
+        el.dataset.help = "ui:loop";
         const k = lp.polarity;
         const path = lp.nodes.join(" → ");
-        el.innerHTML = `<span class="badge ${k === "?" ? "Q" : k}">${k}</span>${escapeHtml(path)}`;
+        const bk = k === "?" ? "Q" : k;
+        el.innerHTML = `<span class="badge ${bk}" data-help="ui:badge-${bk}">${k}</span>${escapeHtml(path)}`;
         el.onmouseenter = () => { diagram.highlight = i; diagram.render(store); };
         el.onmouseleave = () => { diagram.highlight = null; diagram.render(store); };
         loopChips.appendChild(el);
@@ -187,7 +232,8 @@ export function mountApp(root: HTMLElement): Store {
         path += ` <span class="lnk ${cls}">→<sup>${sym}</sup></span> <span class="node">${escapeHtml(e.to)}</span>`;
       }
       const label = lp.polarity === "R" ? "reinforcing" : lp.polarity === "B" ? "balancing" : "indeterminate";
-      html += `<div class="loop"><span class="badge ${lp.polarity === "?" ? "Q" : lp.polarity}">${lp.polarity}</span>` +
+      const bk = lp.polarity === "?" ? "Q" : lp.polarity;
+      html += `<div class="loop" data-help="ui:loop"><span class="badge ${bk}" data-help="ui:badge-${bk}">${lp.polarity}</span>` +
         `<span class="looplabel">${label}</span><div class="path">${path}</div></div>`;
     }
     loopsWrap.innerHTML = html;
@@ -217,6 +263,8 @@ export function mountApp(root: HTMLElement): Store {
       const on = store.visible.has(n);
       const lab = document.createElement("label");
       lab.className = on ? "on" : "";
+      lab.dataset.help = "ui:legend";
+      lab.dataset.name = n;
       lab.innerHTML = `<span class="sw" style="background:${colorFor(r, n)};opacity:${on ? 1 : 0.3}"></span>${escapeHtml(n)} <span class="val" data-series="${escapeHtml(n)}"></span>`;
       lab.onclick = () => { store.toggleSeries(n); renderLegend(); };
       legendEl.appendChild(lab);
@@ -295,10 +343,18 @@ export function mountApp(root: HTMLElement): Store {
 
   // boot — a model in the URL hash (a shared link) wins over the default example
   const shared = readHash();
-  src.value = shared ?? DEFAULT_EXAMPLE.source;
+  editor.setValue(shared ?? DEFAULT_EXAMPLE.source);
   exampleSel.value = shared ? "" : DEFAULT_EXAMPLE.name;
   rebuild();
   store.setTab("plot");
+
+  // first visit (and not arriving via a shared link): offer the tour once
+  try {
+    if (!shared && !localStorage.getItem("flowloom.toured")) {
+      localStorage.setItem("flowloom.toured", "1");
+      launch(UI_TOUR);
+    }
+  } catch { /* localStorage may be unavailable */ }
 
   return store;
 }
@@ -348,20 +404,24 @@ const SHELL = `
   <span class="tag">systems-thinking studio · stocks · flows · loops · animated</span>
   <span class="spacer"></span>
   <label class="tag" for="example">example</label>
-  <select id="example"></select>
+  <select id="example" data-help="ui:example"></select>
+  <div class="learn-wrap">
+    <button id="learn" class="ghost" data-help="ui:learn">？ Learn</button>
+    <div id="learnMenu" class="learn-menu"></div>
+  </div>
 </header>
 <main>
   <section class="left">
     <div class="toolbar">
-      <button id="run" class="primary">▶ Run</button>
-      <label>dt</label><input id="dt" type="number" step="0.01" value="0.1" />
-      <label>to</label><input id="to" type="number" step="1" value="50" />
-      <label>method</label>
-      <select id="method"><option value="rk4">RK4</option><option value="euler">Euler</option></select>
-      <button id="copy" class="ghost" title="copy model text">⧉ Copy</button>
-      <button id="share" class="ghost" title="copy a shareable link">🔗 Share</button>
-      <button id="download" class="ghost" title="download .flow">⤓</button>
-      <button id="open" class="ghost" title="open a .flow file">📂</button>
+      <button id="run" class="primary" data-help="ui:run">▶ Run</button>
+      <label data-help="ui:dt">dt</label><input id="dt" type="number" step="0.01" value="0.1" data-help="ui:dt" />
+      <label data-help="ui:to">to</label><input id="to" type="number" step="1" value="50" data-help="ui:to" />
+      <label data-help="ui:method">method</label>
+      <select id="method" data-help="ui:method"><option value="rk4">RK4</option><option value="euler">Euler</option></select>
+      <button id="copy" class="ghost" title="copy model text" data-help="ui:copy">⧉ Copy</button>
+      <button id="share" class="ghost" title="copy a shareable link" data-help="ui:share">🔗 Share</button>
+      <button id="download" class="ghost" title="download .flow" data-help="ui:download">⤓</button>
+      <button id="open" class="ghost" title="open a .flow file" data-help="ui:open">📂</button>
       <input id="fileInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />
     </div>
     <div class="editor-wrap"><textarea id="src" spellcheck="false"></textarea></div>
@@ -369,15 +429,15 @@ const SHELL = `
   </section>
   <section class="right">
     <div class="tabs">
-      <button data-tab="plot" class="active">Plot</button>
-      <button data-tab="diagram">Diagram</button>
-      <button data-tab="loops">Loops</button>
-      <button data-tab="table">Table</button>
-      <button data-tab="help">Format</button>
+      <button data-tab="plot" class="active" data-help="ui:tab-plot">Plot</button>
+      <button data-tab="diagram" data-help="ui:tab-diagram">Diagram</button>
+      <button data-tab="loops" data-help="ui:tab-loops">Loops</button>
+      <button data-tab="table" data-help="ui:tab-table">Table</button>
+      <button data-tab="help" data-help="ui:tab-help">Format</button>
     </div>
     <div class="view" id="view-plot">
       <canvas id="plot" height="380"></canvas>
-      <div class="transport" id="transport-plot"></div>
+      <div class="transport" id="transport-plot" data-help="ui:transport"></div>
       <div class="legend" id="legend"></div>
     </div>
     <div class="view hidden" id="view-diagram">
@@ -385,7 +445,7 @@ const SHELL = `
         <b>pills</b> are flows/aux; <span style="color:var(--green)">green</span> links push the same direction,
         <span style="color:var(--red)">red</span> the opposite. <b>Press play</b> to animate, or hover a loop to trace it.</p>
       <svg id="diagram" height="460"></svg>
-      <div class="transport" id="transport-diagram"></div>
+      <div class="transport" id="transport-diagram" data-help="ui:transport"></div>
       <div class="loopchips" id="loopChips"></div>
     </div>
     <div class="view hidden" id="view-loops">
@@ -400,4 +460,5 @@ const SHELL = `
     </div>
     <div class="view hidden" id="view-help"><div id="helpWrap"></div></div>
   </section>
-</main>`;
+</main>
+<footer id="statusbar"></footer>`;
