@@ -1,7 +1,7 @@
 # Logistic growth — a population approaching its carrying capacity.
 # A reinforcing loop (growth) braked by a balancing loop that tightens
-# as the stock nears the ceiling. The canonical limits-to-growth shape.
-stock Population = 5
+# as the stock nears the ceiling.
+stock Population [people] = 5
 
 param birthRate = 0.7      # intrinsic growth rate
 param carrying  = 1000     # carrying capacity (the ceiling)

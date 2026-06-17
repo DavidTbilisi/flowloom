@@ -1,0 +1,13 @@
+# Compound savings — a reinforcing interest loop plus a steady deposit.
+stock Balance [USD] = 1000
+
+param rate    = 0.05    # interest per period
+param deposit = 200     # added each period
+
+flow interest = rate * Balance
+flow saving   = deposit
+
+d(Balance) = interest + saving
+
+sim dt=1 to=40 method=euler
+plot Balance

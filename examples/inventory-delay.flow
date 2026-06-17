@@ -1,0 +1,18 @@
+# Inventory control with an acquisition delay.
+# Orders take time to arrive (DELAY3). A step up in sales at t=10 forces
+# the stock to hunt for its target, overshooting because of the pipeline delay.
+stock Inventory [units] = 200
+
+param target     = 200    # desired inventory
+param adjustTime = 4      # how fast we correct the gap
+param leadTime   = 6      # acquisition delay (periods)
+
+aux  sales      = 20 + step(10, 10)         # baseline 20, +10 step at t=10
+aux  gap        = target - Inventory
+aux  orders     = max(0, sales + gap / adjustTime)
+flow receiving  = delay3(orders, leadTime)  # orders arrive after a 3rd-order delay
+
+d(Inventory) = receiving - sales
+
+sim dt=0.25 to=60 method=rk4
+plot Inventory sales receiving

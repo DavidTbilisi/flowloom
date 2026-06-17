@@ -1,0 +1,13 @@
+# Newton's law of cooling — a single balancing loop.
+# The bigger the gap to room temperature, the faster heat leaves.
+stock Temp [degC] = 90
+
+param room = 20        # ambient temperature
+param k    = 0.3       # cooling constant
+
+flow cooling = k * (Temp - room)
+
+d(Temp) = -cooling
+
+sim dt=0.1 to=20 method=rk4
+plot Temp
