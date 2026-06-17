@@ -1,0 +1,20 @@
+# Lotka–Volterra — two coupled stocks oscillate forever.
+# Prey grow on their own; predators eat prey; predators starve without prey.
+stock Prey      = 40
+stock Predators = 9
+
+param preyGrowth     = 0.6    # prey birth rate
+param predation      = 0.02   # kills per predator-prey encounter
+param predDeath      = 0.5    # predator death rate
+param predEfficiency = 0.01   # prey eaten -> new predators
+
+flow births   = preyGrowth * Prey
+flow kills    = predation * Prey * Predators
+flow predGain = predEfficiency * Prey * Predators
+flow predLoss = predDeath * Predators
+
+d(Prey)      = births - kills
+d(Predators) = predGain - predLoss
+
+sim dt=0.05 to=60 method=rk4
+plot Prey Predators

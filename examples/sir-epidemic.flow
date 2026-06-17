@@ -1,0 +1,19 @@
+# SIR — Susceptible -> Infected -> Recovered.
+# beta drives the reinforcing spread loop; gamma is the balancing recovery.
+stock S = 999
+stock I = 1
+stock R = 0
+
+param beta  = 0.4     # infections per S-I contact
+param gamma = 0.1     # recovery rate
+param N     = 1000    # total population
+
+flow infection = beta * S * I / N
+flow recovery  = gamma * I
+
+d(S) = -infection
+d(I) = infection - recovery
+d(R) = recovery
+
+sim dt=0.25 to=120 method=rk4
+plot S I R
