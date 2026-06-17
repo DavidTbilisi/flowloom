@@ -63,7 +63,7 @@ SIR epidemic, compound savings, Newton's-law cooling. Each is a `.flow` text fil
 - Tabs: Plot · Diagram · Table · Format
 
 ## Roadmap
-- [ ] R/B loop polarity auto-detection and labeling
+- [x] R/B loop polarity auto-detection and labeling (Loops tab)
 - [ ] save/load `.flow` files (drag-drop) and shareable URL state
 - [ ] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing the same parser
 - [ ] richer diagram layout (causal-loop view)
