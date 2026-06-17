@@ -36,6 +36,12 @@ export interface LoopReport {
 }
 
 const MAX_LOOPS = 400;
+// Simple-cycle enumeration is worst-case exponential (dense graphs — grids,
+// fully-coupled models — have astronomically many cycles, and most DFS paths
+// never close back to the start). MAX_LOOPS bounds the *results* but not the
+// search tree, so we also bound the *work*: after this many edge traversals we
+// stop and mark the report capped. Keeps loop analysis bounded-time on any model.
+const MAX_TRAVERSALS = 300_000;
 
 export function analyzeLoops(model: Model): LoopReport {
   const graph = influenceGraph(model);
@@ -87,10 +93,15 @@ function operatingPoint(model: Model): Record<string, number> {
   for (const s of c.state) scope[s.name] = 0;
   for (const v of c.order) scope[v.name] = 0;
   const ctx: EvalCtx = { scope, tables: c.tables };
-  const passes = c.state.length + c.order.length + 2;
-  for (let p = 0; p < passes; p++) {
-    for (const v of c.order) scope[v.name] = evalExpr(v.expr, ctx);
-    for (const s of c.state) scope[s.name] = evalExpr(s.initExpr, ctx);
+  // Converge the fixed point rather than always running O(N) passes (see the
+  // matching note in codegen.initStateInto) — keeps this ~O(N) on large models,
+  // so loop analysis stays responsive on the main thread.
+  const maxPasses = c.state.length + c.order.length + 2;
+  for (let p = 0; p < maxPasses; p++) {
+    let changed = 0;
+    for (const v of c.order) { const nv = evalExpr(v.expr, ctx); if (nv !== scope[v.name]) { scope[v.name] = nv; changed++; } }
+    for (const s of c.state) { const nv = evalExpr(s.initExpr, ctx); if (nv !== scope[s.name]) { scope[s.name] = nv; changed++; } }
+    if (changed === 0) break;
   }
   return scope;
 }
@@ -106,22 +117,26 @@ export function findLoops(graph: InfluenceGraph): { loops: Loop[]; capped: boole
   const idx = new Map(graph.nodes.map((n, i) => [n, i] as const));
   const loops: Loop[] = [];
   let capped = false;
+  let traversals = 0;
 
   // self-loops (a variable that directly feeds back into itself)
   for (const e of graph.edges) if (e.from === e.to) loops.push(makeLoop([e]));
 
   const dfs = (start: string, cur: string, path: Edge[], seen: Set<string>) => {
-    if (loops.length >= MAX_LOOPS) {
+    if (loops.length >= MAX_LOOPS || traversals >= MAX_TRAVERSALS) {
       capped = true;
       return;
     }
     for (const e of adj.get(cur)!) {
+      if (++traversals >= MAX_TRAVERSALS) { capped = true; return; }
       if (e.to === start) {
         loops.push(makeLoop([...path, e]));
+        if (loops.length >= MAX_LOOPS) { capped = true; return; }
       } else if (!seen.has(e.to) && idx.get(e.to)! > idx.get(start)!) {
         seen.add(e.to);
         dfs(start, e.to, [...path, e], seen);
         seen.delete(e.to);
+        if (capped) return;
       }
     }
   };

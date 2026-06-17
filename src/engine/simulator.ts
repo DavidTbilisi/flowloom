@@ -1,6 +1,6 @@
 import type { Model } from "../lang/types.js";
-import { evalExpr, type EvalCtx } from "./eval.js";
 import { compile, type Compiled, type StateVar, type CompiledVar } from "./compile.js";
+import { buildPlan, tsBackend, initStateInto, runIntegration, type SimPlan } from "./codegen.js";
 
 // ── The integrator ──────────────────────────────────────────────────────────
 // The whole simulation is one rule applied over and over:
@@ -8,6 +8,12 @@ import { compile, type Compiled, type StateVar, type CompiledVar } from "./compi
 // You write the derivatives (`d(NAME) = …`); flowloom integrates them with
 // Euler or classical RK4. Aux/flow variables are recomputed from state every
 // time the derivative is sampled (including RK4's intermediate stages).
+//
+// The arithmetic itself runs through a compiled evaluation plan (codegen.ts):
+// every name lives at a fixed slot in one reused Float64Array and each
+// expression is compiled once. This module owns the synchronous TS backend; the
+// WASM backend (engine/wasm/) reuses the same plan and integrator for very large
+// models. Both produce identical numbers — the contract tests pin that.
 
 export interface SimResult {
   t: number[];
@@ -22,94 +28,68 @@ export interface SimResult {
   note?: string;
 }
 
-type StateVec = Record<string, number>;
-
+/** Synchronous simulation via the compiled-TS backend. */
 export function simulate(model: Model): SimResult {
   const c = compile(model);
-  const { dt, to, start, method } = model.settings;
-  const steps = Math.max(1, Math.round((to - start) / dt));
+  const plan = buildPlan(c);
+  const backend = tsBackend(plan);
+  return runPlan(model, plan, backend);
+}
 
-  const outVars = c.order.filter((v) => v.kind !== "param");
-  const names = [...c.userStocks, ...outVars.map((v) => v.name)];
+/** Heuristic: the per-model WASM compile cost only pays off for big runs. */
+export function worthWasm(plan: SimPlan, settings: { dt: number; to: number; start: number }): boolean {
+  const steps = Math.max(1, Math.round((settings.to - settings.start) / settings.dt));
+  const states = plan.stateSlots.length;
+  // ≈ derivative-evaluations; tuned so small interactive models stay on the
+  // synchronous TS path and only genuinely large runs go through WASM.
+  return states >= 64 && states * steps >= 2_000_000;
+}
 
-  const result: SimResult = {
-    t: [],
-    series: new Map(names.map((n) => [n, []])),
-    names,
-    stockNames: c.userStocks,
-    varNames: outVars.map((v) => v.name),
+/**
+ * Simulation that uses the WASM backend for large models and falls back to the
+ * compiled-TS backend otherwise (or if WASM is unavailable / fails to build).
+ * Always returns the same SimResult shape as {@link simulate}.
+ */
+export async function simulateAsync(model: Model): Promise<SimResult> {
+  const c = compile(model);
+  const plan = buildPlan(c);
+  if (worthWasm(plan, model.settings)) {
+    try {
+      const { wasmAvailable, createWasmBackend } = await import("./wasm/backend.js");
+      if (wasmAvailable()) {
+        const backend = await createWasmBackend(plan);
+        return runPlan(model, plan, backend);
+      }
+    } catch {
+      // fall through to the TS backend
+    }
+  }
+  return runPlan(model, plan, tsBackend(plan));
+}
+
+/**
+ * Run a prepared plan with a given derivative backend (TS or WASM). Shared so
+ * the WASM path produces a byte-identical SimResult shape.
+ */
+export function runPlan(
+  model: Model,
+  plan: SimPlan,
+  backend: Parameters<typeof runIntegration>[1],
+): SimResult {
+  const { dt, method } = model.settings;
+  initStateInto(plan, backend.mem, model.settings.start);
+  const out = runIntegration(plan, backend, model.settings);
+  return {
+    t: out.t,
+    series: out.series,
+    names: plan.outNames,
+    stockNames: plan.stockNames,
+    varNames: plan.varNames,
     dt,
     method,
+    note: out.note,
   };
-
-  const state = initialState(c, start);
-
-  for (let i = 0; i <= steps; i++) {
-    const t = start + i * dt;
-    const { rates, scope } = deriv(c, state, t);
-
-    result.t.push(t);
-    for (const n of names) result.series.get(n)!.push(scope[n] ?? NaN);
-
-    if (c.state.some((s) => !Number.isFinite(state[s.name]))) {
-      result.note = `stopped at t=${t.toFixed(3)} — a stock went non-finite (try a smaller dt or check the model).`;
-      break;
-    }
-    if (i === steps) break;
-
-    if (method === "euler") {
-      for (const s of c.state) state[s.name]! += dt * rates[s.name]!;
-    } else {
-      const k1 = rates;
-      const k2 = deriv(c, addScaled(c, state, k1, dt / 2), t + dt / 2).rates;
-      const k3 = deriv(c, addScaled(c, state, k2, dt / 2), t + dt / 2).rates;
-      const k4 = deriv(c, addScaled(c, state, k3, dt), t + dt).rates;
-      for (const s of c.state) {
-        state[s.name]! += (dt / 6) * (k1[s.name]! + 2 * k2[s.name]! + 2 * k3[s.name]! + k4[s.name]!);
-      }
-    }
-  }
-
-  return result;
-}
-
-/** Evaluate aux/flow variables from current state, then every state derivative. */
-function deriv(c: Compiled, state: StateVec, t: number): { rates: StateVec; scope: StateVec } {
-  const scope: StateVec = { t, time: t };
-  for (const s of c.state) scope[s.name] = state[s.name]!;
-  const ctx: EvalCtx = { scope, tables: c.tables };
-  for (const v of c.order) scope[v.name] = evalExpr(v.expr, ctx);
-  const rates: StateVec = {};
-  for (const s of c.state) rates[s.name] = s.rateExpr ? evalExpr(s.rateExpr, ctx) : 0;
-  return { rates, scope };
-}
-
-function addScaled(c: Compiled, base: StateVec, k: StateVec, h: number): StateVec {
-  const out: StateVec = {};
-  for (const s of c.state) out[s.name] = base[s.name]! + h * k[s.name]!;
-  return out;
-}
-
-// ── Initialization ──────────────────────────────────────────────────────────
-// Stocks (user + internal delay stocks) and variables can be mutually dependent
-// at t=start only through delay boundaries, which form a DAG. We seed every
-// name to 0 and relax to the fixed point — enough passes resolve any DAG exactly.
-function initialState(c: Compiled, start: number): StateVec {
-  const scope: StateVec = { t: start, time: start };
-  for (const s of c.state) scope[s.name] = 0;
-  for (const v of c.order) scope[v.name] = 0;
-  const ctx: EvalCtx = { scope, tables: c.tables };
-
-  const passes = c.state.length + c.order.length + 2;
-  for (let p = 0; p < passes; p++) {
-    for (const v of c.order) scope[v.name] = evalExpr(v.expr, ctx);
-    for (const s of c.state) scope[s.name] = evalExpr(s.initExpr, ctx);
-  }
-
-  const state: StateVec = {};
-  for (const s of c.state) state[s.name] = scope[s.name]!;
-  return state;
 }
 
 /** Re-export the compiled shape for callers that want structural access (diagram). */
-export type { Compiled, StateVar, CompiledVar };
+export type { Compiled, StateVar, CompiledVar, SimPlan };
