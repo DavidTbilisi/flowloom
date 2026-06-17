@@ -59,6 +59,17 @@
   details .body{padding:0 14px 12px;font-size:13px}
   code{background:#0c0e12;border:1px solid var(--line);border-radius:4px;padding:1px 5px;font:12px var(--mono)}
   .grammar td:first-child{color:var(--accent);white-space:nowrap}
+  .loopcount{display:flex;align-items:center;gap:8px;color:var(--dim);margin:0 0 14px}
+  .badge{display:inline-flex;align-items:center;justify-content:center;min-width:22px;height:22px;
+    padding:0 7px;border-radius:6px;font-weight:700;font-size:12px;color:#06231f}
+  .badge.R{background:var(--green)} .badge.B{background:var(--warn)} .badge.Q{background:var(--dim)}
+  .loop{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);
+    border-radius:8px;background:var(--panel);margin-bottom:8px;flex-wrap:wrap}
+  .loop .looplabel{color:var(--dim);font-size:12px;min-width:92px}
+  .loop .path{font:13px var(--mono);color:var(--ink)}
+  .loop .node{color:var(--accent)}
+  .loop .lnk sup{font-size:11px}
+  .loop .lnk.pos{color:var(--green)} .loop .lnk.neg{color:var(--red)} .loop .lnk.amb{color:var(--dim)}
 </style>
 </head>
 <body>
@@ -88,6 +99,7 @@
     <div class="tabs">
       <button data-tab="plot" class="active">Plot</button>
       <button data-tab="diagram">Diagram</button>
+      <button data-tab="loops">Loops</button>
       <button data-tab="table">Table</button>
       <button data-tab="help">Format</button>
     </div>
@@ -101,6 +113,14 @@
       <p class="hint">Auto-derived from each <code>d(stock) = …</code> line. Green = inflow, red = outflow.
         Only clean single-name flow terms are drawn as arrows; mixed expressions are listed under each stock.</p>
       <svg id="diagram" height="420"></svg>
+    </div>
+
+    <div class="view hidden" id="view-loops">
+      <p class="hint">Feedback loops found in the model, each labeled <b style="color:var(--green)">R</b> reinforcing
+        or <b style="color:var(--warn)">B</b> balancing. Polarity is the product of link signs, read at the
+        initial state — nonlinear models can flip a loop's polarity as they evolve. <code>+</code> = same direction,
+        <code>−</code> = opposite.</p>
+      <div id="loopsWrap"></div>
     </div>
 
     <div class="view hidden" id="view-table">
@@ -336,6 +356,66 @@ function flowsOfRate(m, rateExpr){
   return {inflows, outflows, leftover};
 }
 
+// ---- feedback-loop detection ----------------------------------------------
+// operating point: stock values + evaluated aux at t=0 (where polarities are read)
+function operatingPoint(m){
+  const init=Object.assign({t:0}, FN);
+  for(const v of m.order) if(v.kind==="param") init[v.name]=v.fn(init);
+  const S=Object.assign({t:0}, FN);
+  for(const s of m.stocks) S[s.name]=s.initFn(init);
+  for(const v of m.order) S[v.name]=v.fn(S);
+  return S;
+}
+
+// signed influence graph: edge u->target with sign = sign(d target / d u) at op point
+function influenceGraph(m){
+  const S0=operatingPoint(m);
+  const nodes=new Set([...m.stocks.map(s=>s.name),
+                       ...m.vars.filter(v=>v.kind!=="param").map(v=>v.name)]);
+  const edges=[];
+  const linkFrom=(target, expr, fn)=>{
+    const ids=new Set((expr.match(IDENT)||[]).filter(id=>nodes.has(id)));
+    const base=fn(S0);
+    for(const u of ids){
+      const h=1e-6*Math.max(1, Math.abs(S0[u]));
+      const pert=Object.assign({}, S0); pert[u]=S0[u]+h;
+      const val=fn(pert);
+      let sign=Math.sign(val-base);
+      if(!isFinite(val) || !isFinite(base)) sign=0;
+      edges.push({from:u, to:target, sign});
+    }
+  };
+  for(const v of m.vars) if(v.kind!=="param") linkFrom(v.name, v.expr, v.fn);
+  for(const s of m.stocks){ const r=m.rates[s.name]; if(r) linkFrom(s.name, r.expr, r.fn); }
+  return {nodes:[...nodes], edges};
+}
+
+// enumerate simple cycles; canonicalize so each loop is found once (start = min index)
+function findLoops(graph){
+  const adj={}; graph.nodes.forEach(n=>adj[n]=[]);
+  graph.edges.forEach(e=>{ if(e.from!==e.to) adj[e.from].push(e); });
+  const idx=Object.fromEntries(graph.nodes.map((n,i)=>[n,i]));
+  const loops=[]; const MAX=200; let capped=false;
+  graph.edges.forEach(e=>{ if(e.from===e.to) loops.push([e]); });   // self-loops
+  const dfs=(start, cur, path, seen)=>{
+    if(loops.length>=MAX){ capped=true; return; }
+    for(const e of adj[cur]){
+      if(e.to===start){ loops.push([...path,e]); }
+      else if(!seen.has(e.to) && idx[e.to]>idx[start]){
+        seen.add(e.to); dfs(start, e.to, [...path,e], seen); seen.delete(e.to);
+      }
+    }
+  };
+  graph.nodes.forEach(start=>{ if(!capped) dfs(start, start, [], new Set([start])); });
+  return {loops, capped};
+}
+
+function classifyLoop(loop){
+  const neg=loop.filter(e=>e.sign<0).length;
+  const amb=loop.some(e=>e.sign===0);
+  return amb ? "?" : (neg%2===0 ? "R" : "B");
+}
+
 // ---- rendering: plot -------------------------------------------------------
 const PALETTE = ["#6ad1c7","#f0c14b","#6aa8f0","#f0746a","#5fd17a","#c89bf0","#f0986a","#7ed3e6"];
 let LAST=null, VISIBLE=new Set();
@@ -461,6 +541,41 @@ function drawDiagram(m){
 }
 function escapeXml(s){return s.replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));}
 
+// ---- rendering: loops ------------------------------------------------------
+function drawLoops(m){
+  const wrap=document.getElementById("loopsWrap");
+  let g, res;
+  try{ g=influenceGraph(m); res=findLoops(g); }
+  catch(e){ wrap.innerHTML=`<p class="hint">couldn't analyze loops: ${escapeXml(e.message)}</p>`; return; }
+  const {loops, capped}=res;
+  if(!loops.length){ wrap.innerHTML=`<p class="hint">No feedback loops — this is an open-loop model (no variable feeds back into itself).</p>`; return; }
+
+  const kinds=loops.map(classifyLoop);
+  const nR=kinds.filter(k=>k==="R").length, nB=kinds.filter(k=>k==="B").length, nQ=kinds.filter(k=>k==="?").length;
+  let html=`<p class="loopcount"><span class="badge R">${nR} R</span><span class="badge B">${nB} B</span>`+
+           (nQ?`<span class="badge Q">${nQ} ?</span>`:"")+` &nbsp;${loops.length} loop${loops.length>1?"s":""}`+
+           (capped?` (capped at 200)`:"")+`</p>`;
+
+  // sort: R first, then B, then ?, shorter loops first
+  const ord={R:0,B:1,"?":2};
+  const rows=loops.map((lp,i)=>({lp,kind:kinds[i]}))
+                  .sort((a,b)=> ord[a.kind]-ord[b.kind] || a.lp.length-b.lp.length);
+
+  for(const {lp,kind} of rows){
+    const start=lp[0].from;
+    let path=`<span class="node">${start}</span>`;
+    for(const e of lp){
+      const sym = e.sign>0?"+" : e.sign<0?"−" : "?";
+      const cls = e.sign>0?"pos" : e.sign<0?"neg" : "amb";
+      path += ` <span class="lnk ${cls}">→<sup>${sym}</sup></span> <span class="node">${e.to}</span>`;
+    }
+    const label = kind==="R"?"reinforcing" : kind==="B"?"balancing" : "indeterminate";
+    html+=`<div class="loop"><span class="badge ${kind==="?"?"Q":kind}">${kind}</span>`+
+          `<span class="looplabel">${label}</span><div class="path">${path}</div></div>`;
+  }
+  wrap.innerHTML=html;
+}
+
 // ---- rendering: table ------------------------------------------------------
 function drawTable(){
   const wrap=document.getElementById("tableWrap");
@@ -498,7 +613,7 @@ function run(){
     // default visible series: the `plot` line, else all stocks
     const def = (m.plot.length?m.plot:m.stocks.map(s=>s.name)).filter(n=>LAST.series[n]);
     VISIBLE=new Set(def.length?def:LAST.names.slice(0,3));
-    drawLegend(); drawPlot(); drawDiagram(m); drawTable();
+    drawLegend(); drawPlot(); drawDiagram(m); drawLoops(m); drawTable();
     if(LAST.note){ errEl.style.display="block"; errEl.style.color="#f0c14b"; errEl.textContent="⚠ "+LAST.note; }
   }catch(e){
     errEl.style.display="block"; errEl.style.color="#f0746a"; errEl.textContent="✗ "+e.message;
@@ -611,6 +726,7 @@ document.querySelectorAll(".tabs button").forEach(b=>{
     document.getElementById("view-"+b.dataset.tab).classList.remove("hidden");
     if(b.dataset.tab==="plot") drawPlot();
     if(b.dataset.tab==="diagram"&&CURRENT_MODEL) drawDiagram(CURRENT_MODEL);
+    if(b.dataset.tab==="loops"&&CURRENT_MODEL) drawLoops(CURRENT_MODEL);
   };
 });
 window.addEventListener("resize",()=>{ drawPlot(); if(CURRENT_MODEL) drawDiagram(CURRENT_MODEL); });
