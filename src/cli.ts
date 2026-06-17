@@ -16,8 +16,17 @@
 
 import { readFileSync } from "node:fs";
 import process from "node:process";
-import { parseModel, ModelError, type Model, type Expr } from "./lang/index.js";
-import { simulateAsync, analyzeLoops, type SimResult, type LoopReport } from "./engine/index.js";
+import { parseModel, ModelError, type Model } from "./lang/index.js";
+import {
+  simulateAsync,
+  analyzeLoops,
+  applyOverride,
+  describeModel,
+  explainModel,
+  REFERENCE,
+  type SimResult,
+  type LoopReport,
+} from "./engine/index.js";
 
 const VERSION = "0.1.0";
 
@@ -68,43 +77,6 @@ function need(argv: string[], i: number, flag: string): string {
   return v!;
 }
 
-// ── overrides: text is canonical, but a constant-folded AST edit is the safe,
-// dependency-preserving way to bind a value without re-tokenising the source. ──
-function applyOverride(model: Model, spec: string): void {
-  const eq = spec.indexOf("=");
-  if (eq < 0) die(`--set expects key=value, got "${spec}"`);
-  const key = spec.slice(0, eq).trim();
-  const raw = spec.slice(eq + 1).trim();
-
-  if (key === "method") {
-    if (raw !== "euler" && raw !== "rk4") die(`--set method must be euler or rk4, got "${raw}"`);
-    model.settings.method = raw;
-    return;
-  }
-  if (key === "dt" || key === "to" || key === "start") {
-    const v = Number(raw);
-    if (!Number.isFinite(v)) die(`--set ${key} must be a number, got "${raw}"`);
-    model.settings[key] = v;
-    return;
-  }
-
-  const v = Number(raw);
-  if (!Number.isFinite(v)) die(`--set ${key}: value must be a number, got "${raw}"`);
-  const node: Expr = { kind: "num", value: v, loc: { line: 0, col: 0 } };
-
-  // VarDecl objects are shared across vars/varIndex/order, so mutating .expr in
-  // place rebinds the name everywhere the compiler will look.
-  const decl = model.varIndex.get(key);
-  if (decl) {
-    if (decl.kind !== "param") warn(`overriding ${decl.kind} "${key}" with a constant`);
-    decl.expr = node;
-    return;
-  }
-  const stock = model.stocks.find((s) => s.name === key);
-  if (stock) { stock.initExpr = node; return; }
-  die(`--set ${key}: no param, stock, or sim setting by that name`);
-}
-
 // ── input ─────────────────────────────────────────────────────────────────────
 function load(args: Args): Model {
   if (!args.file) die(`${args.cmd} needs a model file (or - for stdin)`);
@@ -125,7 +97,13 @@ function load(args: Args): Model {
     throw e;
   }
   for (const d of model.diagnostics) if (d.severity === "warning") warn(`line ${d.loc.line}: ${d.message}`);
-  for (const s of args.sets) applyOverride(model, s);
+  for (const s of args.sets) {
+    try {
+      for (const w of applyOverride(model, s)) warn(w);
+    } catch (e) {
+      die(`--set ${(e as Error).message}`);
+    }
+  }
   return model;
 }
 
@@ -235,6 +213,37 @@ function cmdCheck(args: Args): void {
   out(`ok: ${model.stocks.length} stock${plural(model.stocks.length)}, ${model.vars.length} variable${plural(model.vars.length)}, ${loops} loop${plural(loops)}`);
 }
 
+function cmdDescribe(args: Args): void {
+  const desc = describeModel(load(args));
+  if (args.format === "json") { out(JSON.stringify(desc, null, 2)); return; }
+  for (const s of desc.stocks) out(`stock  ${s.name}${s.unit ? ` [${s.unit}]` : ""} = ${s.init}`);
+  for (const r of desc.rates) out(`rate   d(${r.stock}) = ${r.expr}`);
+  for (const v of desc.vars) out(`${v.kind.padEnd(6)} ${v.name} = ${v.expr}${v.deps.length ? `   (← ${v.deps.join(", ")})` : ""}`);
+  for (const t of desc.tables) out(`table  ${t.name}  ${t.points.length} points`);
+  const { R, B } = desc.loops.counts;
+  out(`loops  ${desc.loops.items.length} (${R} R, ${B} B${desc.loops.counts["?"] ? `, ${desc.loops.counts["?"]} ?` : ""})`);
+}
+
+function cmdExplain(args: Args): void {
+  out(explainModel(load(args)));
+}
+
+function cmdReference(args: Args): void {
+  if (args.format === "json") { out(JSON.stringify(REFERENCE, null, 2)); return; }
+  const groups: Array<[string, typeof REFERENCE[number]["kind"]]> = [
+    ["Line keywords", "keyword"],
+    ["Reserved constants", "const"],
+    ["Builtins", "builtin"],
+    ["Stateful builtins (compile into stocks)", "stateful"],
+  ];
+  const blocks = groups.map(([title, kind]) => {
+    const rows = REFERENCE.filter((e) => e.kind === kind);
+    const w = Math.max(...rows.map((e) => e.signature.length));
+    return `## ${title}\n` + rows.map((e) => `  ${e.signature.padEnd(w)}  ${e.summary}`).join("\n");
+  });
+  out(`flowloom .flow language reference (v${VERSION})\n\n` + blocks.join("\n\n"));
+}
+
 const plural = (n: number) => (n === 1 ? "" : "s");
 
 // ── output / error plumbing ─────────────────────────────────────────────────────
@@ -248,10 +257,13 @@ function die(msg: string): never {
 const HELP = `flowloom ${VERSION} — run text-first systems models from the shell
 
 usage:
-  flowloom run   <model.flow> [options]   simulate and print results
-  flowloom loops <model.flow> [--json]    list reinforcing/balancing loops
-  flowloom check <model.flow>             parse only; non-zero exit on error
-  flowloom <model.flow>                   shorthand for: run
+  flowloom run      <model.flow> [options]   simulate and print results
+  flowloom loops    <model.flow> [--json]    list reinforcing/balancing loops
+  flowloom check    <model.flow>             parse only; non-zero exit on error
+  flowloom describe <model.flow> [--json]    dump model structure (stocks/rates/vars/loops)
+  flowloom explain  <model.flow>             plain-language summary of the model
+  flowloom reference [--json]                the .flow language + builtins catalog
+  flowloom <model.flow>                       shorthand for: run
 
 run options:
   --csv | --tsv | --json   machine-readable output (all steps, all series)
@@ -263,7 +275,8 @@ run options:
 
 examples:
   flowloom run examples/coffee-cooling.flow
-  flowloom run examples/cashflow-escaping-the-rat-race.flow --plot freedom --chart
+  flowloom explain examples/sir-epidemic.flow
+  flowloom describe examples/logistic-growth.flow --json
   flowloom run model.flow --set yield=0.03 --set to=240 --csv > sweep.csv
   cat model.flow | flowloom loops -`;
 
@@ -276,6 +289,9 @@ async function main(): Promise<void> {
     case "run": await cmdRun(args); break;
     case "loops": cmdLoops(args); break;
     case "check": cmdCheck(args); break;
+    case "describe": cmdDescribe(args); break;
+    case "explain": cmdExplain(args); break;
+    case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");
     default: die(`unknown command "${args.cmd}" — try `+"`flowloom --help`");
   }

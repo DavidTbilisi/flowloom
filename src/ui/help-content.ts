@@ -10,6 +10,7 @@
 
 import type { Store } from "./store.js";
 import { printExpr } from "../lang/index.js";
+import { REFERENCE } from "../engine/index.js";
 
 export interface HelpEntry {
   title: string;
@@ -18,59 +19,19 @@ export interface HelpEntry {
   doc?: string;
 }
 
-// ── static entries ───────────────────────────────────────────────────────────
-// Keyed exactly as highlight.ts emits: bare keyword, `fn:NAME`, `const:NAME`,
-// and `ui:*` for chrome.
+// ── language entries, derived from the shared catalog ────────────────────────
+// Keyword/builtin/const help comes straight from src/engine/reference.ts so the
+// editor status bar and the agent-facing reference (CLI / MCP / llms.txt) stay
+// in lock-step. Keys match how highlight.ts emits them: bare keyword, `fn:NAME`,
+// `const:NAME`. The `ui:*` chrome entries below are UI-only and live here.
+const LANGUAGE_HELP: Record<string, HelpEntry> = {};
+for (const e of REFERENCE) {
+  const key = e.kind === "keyword" ? e.name : e.kind === "const" ? `const:${e.name}` : `fn:${e.name}`;
+  LANGUAGE_HELP[key] = { title: e.signature, body: e.summary, ...(e.doc ? { doc: e.doc } : {}) };
+}
+
 export const HELP: Record<string, HelpEntry> = {
-  // line keywords
-  stock: { title: "stock NAME = EXPR", body: "An accumulator (an integral). EXPR is its initial value; it then changes only through its d() rate.", doc: "stocks" },
-  d: { title: "d(NAME) = EXPR", body: "The net rate of change of a stock — literally dNAME/dt. This line is the engine; flowloom integrates it.", doc: "stocks" },
-  flow: { title: "flow NAME = EXPR", body: "A named rate. Same maths as aux, but drawn as a flow on the diagram.", doc: "vars" },
-  aux: { title: "aux NAME = EXPR", body: "An instantaneous computed value (a converter/variable) recomputed every step.", doc: "vars" },
-  param: { title: "param NAME = EXPR", body: "A constant knob — evaluated once. `const` is an alias.", doc: "vars" },
-  const: { title: "const NAME = EXPR", body: "A constant knob (alias of param).", doc: "vars" },
-  table: { title: "table NAME = (x,y) …", body: "A graphical lookup function; call it as NAME(x). Piecewise-linear, clamped past the ends.", doc: "tables" },
-  sim: { title: "sim dt=.1 to=50 method=rk4", body: "Simulation settings. The toolbar edits this line — the text stays canonical.", doc: "sim" },
-  plot: { title: "plot A B C", body: "Which series start visible on the plot and legend.", doc: "sim" },
-
-  // constants / clock
-  "const:t": { title: "t", body: "The current simulation time. `time` is an alias. Use it to drive test inputs." },
-  "const:time": { title: "time", body: "The current simulation time (alias of t)." },
-  "const:dt": { title: "dt", body: "The integration step size, set on the sim line." },
-  "const:PI": { title: "PI", body: "The constant π ≈ 3.14159." },
-  "const:E": { title: "E", body: "Euler's number e ≈ 2.71828." },
-
-  // math builtins
-  "fn:min": { title: "min(a, b, …)", body: "Smallest of its arguments." },
-  "fn:max": { title: "max(a, b, …)", body: "Largest of its arguments." },
-  "fn:abs": { title: "abs(x)", body: "Absolute value." },
-  "fn:exp": { title: "exp(x)", body: "e raised to the power x." },
-  "fn:ln": { title: "ln(x)", body: "Natural logarithm." },
-  "fn:log": { title: "log(x)", body: "Natural logarithm (same as ln)." },
-  "fn:log10": { title: "log10(x)", body: "Base-10 logarithm." },
-  "fn:sqrt": { title: "sqrt(x)", body: "Square root." },
-  "fn:pow": { title: "pow(x, y)", body: "x raised to the power y (same as x ^ y)." },
-  "fn:sin": { title: "sin(x)", body: "Sine (radians)." },
-  "fn:cos": { title: "cos(x)", body: "Cosine (radians)." },
-  "fn:tan": { title: "tan(x)", body: "Tangent (radians)." },
-  "fn:floor": { title: "floor(x)", body: "Round down to an integer." },
-  "fn:ceil": { title: "ceil(x)", body: "Round up to an integer." },
-  "fn:round": { title: "round(x)", body: "Round to the nearest integer." },
-  "fn:sign": { title: "sign(x)", body: "−1, 0, or +1 by the sign of x." },
-  "fn:if": { title: "if(cond, a, b)", body: "a when cond is non-zero, otherwise b." },
-  "fn:clamp": { title: "clamp(x, lo, hi)", body: "x held within the range [lo, hi]." },
-
-  // test inputs
-  "fn:step": { title: "step(height, t0)", body: "0 before t0, then height — a sudden change.", doc: "inputs" },
-  "fn:pulse": { title: "pulse(t0, width)", body: "1 during [t0, t0+width), else 0 — a temporary kick.", doc: "inputs" },
-  "fn:ramp": { title: "ramp(slope, t0, t1)", body: "A linear ramp of the given slope between two times.", doc: "inputs" },
-
-  // delays & smoothing
-  "fn:smooth": { title: "smooth(input, τ)", body: "First-order exponential smoothing with time constant τ.", doc: "delays" },
-  "fn:smoothi": { title: "smoothi(input, τ, init)", body: "First-order smoothing starting from init.", doc: "delays" },
-  "fn:smooth3": { title: "smooth3(input, τ)", body: "Third-order (smoother) exponential smoothing.", doc: "delays" },
-  "fn:delay1": { title: "delay1(input, τ)", body: "First-order material delay — output lags input by ~τ.", doc: "delays" },
-  "fn:delay3": { title: "delay3(input, τ)", body: "Third-order material delay (a more realistic pipeline lag).", doc: "delays" },
+  ...LANGUAGE_HELP,
 
   // ── UI chrome ──
   "ui:run": { title: "Run", body: "Parse, simulate, and redraw. Shortcut: ⌘/Ctrl + Enter." },

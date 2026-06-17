@@ -56,6 +56,30 @@ npm run dev          # open the studio with hot reload
 Build a static bundle with `npm run build` (output in `dist/`). There is no
 backend — the engine runs entirely in the browser.
 
+## Use it from an AI agent
+
+The same DOM-free engine runs headlessly, so an agent can author, run, and reason
+about models without the UI:
+
+```bash
+npm i -g .                                   # installs `flowloom` + `flowloom-mcp`
+flowloom run     model.flow --json           # simulate → all series as JSON
+flowloom explain model.flow                  # plain-language summary (stocks, knobs, loops)
+flowloom describe model.flow --json          # full structure (stocks/rates/vars/deps/loops)
+flowloom loops   model.flow --json           # feedback loops with R/B polarity
+flowloom check   model.flow                  # validate; non-zero exit + line/col diagnostics
+flowloom reference --json                     # the language + builtins catalog
+```
+
+- **One-page authoring guide:** [`docs/llms.txt`](docs/llms.txt) — a prompt-ready
+  `.flow` cheatsheet (grammar, every builtin, the gotchas). Generated from the
+  canonical catalog (`npm run gen:llms`), so it never drifts.
+- **MCP server:** `flowloom-mcp` exposes the engine to Claude Code / Claude Desktop
+  as tools — `flow_run`, `flow_check`, `flow_loops`, `flow_describe`, `flow_explain`,
+  `flow_examples` — plus a `flow://reference` resource carrying the guide. Each tool
+  takes the model as text. Register it as a stdio MCP server pointing at
+  `dist-cli/mcp.js` (build with `npm run build:cli`).
+
 ## Tests are the contract
 
 ```bash
@@ -112,7 +136,9 @@ canonical source so they never drift.)
 - [x] compiled (slot-based) evaluator + a generated **WASM** backend for large
       models, run off-thread in a Web Worker
 - [ ] units checking from the `[unit]` annotations
-- [ ] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
+- [x] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
+- [x] AI-facing surface — CLI `explain`/`describe`/`reference`, a generated
+      `llms.txt` guide, and a `flowloom-mcp` MCP server over the same engine
 
 The original single-file prototype is preserved at
 [`reference/flowloom-v1.html`](reference/flowloom-v1.html).

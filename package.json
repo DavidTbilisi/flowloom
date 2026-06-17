@@ -5,10 +5,12 @@
   "type": "module",
   "license": "MIT",
   "bin": {
-    "flowloom": "dist-cli/cli.js"
+    "flowloom": "dist-cli/cli.js",
+    "flowloom-mcp": "dist-cli/mcp.js"
   },
   "files": [
-    "dist-cli"
+    "dist-cli",
+    "docs/llms.txt"
   ],
   "scripts": {
     "dev": "vite",
@@ -24,6 +26,7 @@
     "test:e2e:install": "playwright install chromium",
     "test:all": "vitest run && playwright test",
     "gen:examples": "vite-node scripts/gen-examples.ts",
+    "gen:llms": "vite-node scripts/gen-llms.ts",
     "gen:stress": "vite-node scripts/gen-stress.ts"
   },
   "devDependencies": {
@@ -32,5 +35,9 @@
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   }
 }

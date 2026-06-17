@@ -13,3 +13,6 @@ export { compile, type Compiled, type StateVar, type CompiledVar } from "./compi
 export { analyzeLoops, influenceGraph, findLoops, type Loop, type LoopReport, type Edge, type InfluenceGraph } from "./loops.js";
 export { evalExpr, EvalError, type EvalCtx } from "./eval.js";
 export { BUILTINS, ARITY, STATEFUL, lookupTable } from "./builtins.js";
+export { REFERENCE, REFERENCE_BY_NAME, CALLABLE_NAMES, type RefEntry, type RefKind } from "./reference.js";
+export { describeModel, explainModel, type ModelDescription } from "./introspect.js";
+export { applyOverride } from "./overrides.js";
