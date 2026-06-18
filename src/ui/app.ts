@@ -390,16 +390,22 @@ function buildTransport(el: HTMLElement, store: Store) {
     <button class="tbtn" data-act="start" title="to start">⏮</button>
     <button class="tbtn" data-act="play" title="play/pause">▶</button>
     <button class="tbtn" data-act="end" title="to end">⏭</button>
-    <input type="range" min="0" max="100" value="100" />
+    <input type="range" min="0" max="1" step="1" value="0" />
     <span class="clock">t = 0</span>`;
-  const slider = el.querySelector("input")!;
+  const slider = el.querySelector("input") as HTMLInputElement;
   const clock = el.querySelector(".clock")!;
   const playBtn = el.querySelector('[data-act="play"]') as HTMLButtonElement;
 
+  // The slider maps 1:1 to frame indices (one thumb position per result step),
+  // so dragging scrubs smoothly and `sync()` can echo the frame back with no
+  // rounding mismatch that would fight the thumb.
   slider.addEventListener("input", () => {
+    // Read the dragged value *before* touching playback state: setPlaying()
+    // notifies the frame channel, which runs sync() and would overwrite
+    // slider.value with the current frame before we get to read it.
+    const frame = Number(slider.value);
     store.setPlaying(false);
-    const n = store.frameCount;
-    store.setFrame((Number(slider.value) / 100) * (n - 1));
+    store.setFrame(frame);
   });
   (el.querySelector('[data-act="start"]') as HTMLButtonElement).onclick = () => { store.setPlaying(false); store.setFrame(0); };
   (el.querySelector('[data-act="end"]') as HTMLButtonElement).onclick = () => { store.setPlaying(false); store.setFrame(store.frameCount - 1); };
@@ -411,7 +417,8 @@ function buildTransport(el: HTMLElement, store: Store) {
   return {
     sync() {
       const n = store.frameCount;
-      slider.value = String(n > 1 ? (store.frame / (n - 1)) * 100 : 0);
+      slider.max = String(Math.max(1, n - 1));
+      slider.value = String(store.frame);
       clock.textContent = `t = ${fmt(store.currentTime)}`;
       playBtn.textContent = store.playing ? "⏸" : "▶";
     },
