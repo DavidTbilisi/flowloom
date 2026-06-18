@@ -20,11 +20,25 @@ export interface RunState {
 
 type Listener = () => void;
 
+// A model big enough that building it could block the UI — offload everything
+// (simulation + loop analysis) to the worker. Two independent costs:
+//   • simulation scales with stocks × steps (worker uses the WASM backend);
+//   • loop analysis scales with graph size (stocks), independent of steps.
+// Either being large is reason enough to go off-thread.
+function isLarge(model: Model): boolean {
+  const { dt, to, start } = model.settings;
+  const steps = Math.max(1, Math.round((to - start) / dt));
+  const n = model.stocks.length;
+  return n >= 120 || n * steps >= 2_000_000;
+}
+
 export class Store {
   source = "";
   tab: Tab = "plot";
   run: RunState = { ok: false, diagnostics: [] };
   visible = new Set<string>();
+  /** True while a large model is being simulated in the worker. */
+  computing = false;
 
   // animation clock
   frame = 0; // index into result.t
@@ -33,6 +47,8 @@ export class Store {
 
   private listeners = new Set<Listener>();
   private frameListeners = new Set<Listener>();
+  private worker: Worker | null = null;
+  private gen = 0; // generation counter to drop stale worker results
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
@@ -81,28 +97,53 @@ export class Store {
   /** Parse + simulate the current source, updating run state and default series. */
   build(source: string) {
     this.source = source;
+    const gen = ++this.gen; // invalidate any in-flight worker result
     try {
       const model = parseModel(source);
-      const result = simulate(model);
-      const loops = analyzeLoops(model);
-      this.run = {
-        ok: true,
-        model,
-        result,
-        loops,
-        diagnostics: model.diagnostics,
-        note: result.note,
-      };
-      const def = (model.plot.length ? model.plot : result.stockNames).filter((n) => result.series.has(n));
-      this.visible = new Set(def.length ? def : result.names.slice(0, 3));
-      this.frame = result.t.length - 1; // show the finished run by default
-      this.playing = false;
+      if (isLarge(model)) {
+        // keep the UI responsive: simulate AND analyze loops in the worker
+        this.computing = true;
+        this.run = { ok: true, model, diagnostics: model.diagnostics };
+        this.simulateInWorker(source, model, gen);
+      } else {
+        this.applyResult(model, simulate(model), analyzeLoops(model));
+      }
     } catch (e) {
+      this.computing = false;
       const error = e instanceof ModelError ? e.message : e instanceof Error ? e.message : String(e);
       const diagnostics = e instanceof ModelError ? e.diagnostics : [];
       this.run = { ok: false, diagnostics, error };
     }
     this.notify();
     this.notifyFrame();
+  }
+
+  private applyResult(model: Model, result: SimResult, loops?: LoopReport) {
+    this.computing = false;
+    this.run = { ok: true, model, result, loops, diagnostics: model.diagnostics, note: result.note };
+    const def = (model.plot.length ? model.plot : result.stockNames).filter((n) => result.series.has(n));
+    this.visible = new Set(def.length ? def : result.names.slice(0, 3));
+    this.frame = result.t.length - 1; // show the finished run by default
+    this.playing = false;
+  }
+
+  private simulateInWorker(source: string, model: Model, gen: number) {
+    try {
+      if (!this.worker) {
+        this.worker = new Worker(new URL("./sim-worker.ts", import.meta.url), { type: "module" });
+        this.worker.onmessage = (e: MessageEvent) => {
+          const msg = e.data as { gen: number; ok: boolean; result?: SimResult; loops?: LoopReport; error?: string };
+          if (msg.gen !== this.gen) return; // a newer build superseded this one
+          if (msg.ok && msg.result) this.applyResult(model, msg.result, msg.loops);
+          else { this.computing = false; this.run = { ok: false, diagnostics: [], error: msg.error ?? "simulation failed" }; }
+          this.notify();
+          this.notifyFrame();
+        };
+      }
+      this.worker.postMessage({ gen, source });
+    } catch {
+      // no worker available (or it failed to start) — fall back to a sync run
+      this.applyResult(model, simulate(model), analyzeLoops(model));
+    }
   }
 }

@@ -4,9 +4,20 @@
   "description": "Text-first systems-thinking studio — stocks, flows, feedback loops, animated. AI-native by design.",
   "type": "module",
   "license": "MIT",
+  "bin": {
+    "flowloom": "dist-cli/cli.js",
+    "flowloom-mcp": "dist-cli/mcp.js"
+  },
+  "files": [
+    "dist-cli",
+    "docs/llms.txt"
+  ],
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
+    "build:cli": "tsc -p tsconfig.cli.json",
+    "prepare": "tsc -p tsconfig.cli.json",
+    "flow": "vite-node src/cli.ts --",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -14,12 +25,19 @@
     "test:e2e": "playwright test",
     "test:e2e:install": "playwright install chromium",
     "test:all": "vitest run && playwright test",
-    "gen:examples": "vite-node scripts/gen-examples.ts"
+    "gen:examples": "vite-node scripts/gen-examples.ts",
+    "gen:llms": "vite-node scripts/gen-llms.ts",
+    "gen:stress": "vite-node scripts/gen-stress.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
+    "@types/node": "^22.19.21",
     "typescript": "^5.7.2",
     "vite": "^6.0.5",
     "vitest": "^2.1.8"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
   }
 }

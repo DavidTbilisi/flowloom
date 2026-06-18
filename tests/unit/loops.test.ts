@@ -38,4 +38,28 @@ describe("feedback loop detection", () => {
     const r = loops(`stock X = 0\nparam c = 1\nflow f = c\nd(X) = f\nsim to=5`);
     expect(r.loops.length).toBe(0);
   });
+
+  it("terminates quickly on a dense graph (bounded cycle search)", () => {
+    // A densely cross-coupled ring has astronomically many simple cycles; the
+    // DFS is bounded by a traversal budget so analysis can't hang the UI.
+    const N = 16, reach = 5;
+    const L: string[] = [];
+    for (let i = 0; i < N; i++) L.push(`stock N${i} = ${10 + i}`);
+    L.push("param k = 0.05");
+    for (let i = 0; i < N; i++) {
+      const terms: string[] = [];
+      for (let d = 1; d <= reach; d++) {
+        terms.push(`(N${(i + d) % N} - N${i})`);
+        terms.push(`(N${(i - d + N) % N} - N${i})`);
+      }
+      L.push(`flow d${i} = k * (${terms.join(" + ")})`);
+      L.push(`d(N${i}) = d${i}`);
+    }
+    L.push("sim to=5");
+    const t0 = Date.now();
+    const r = analyzeLoops(parseModel(L.join("\n")));
+    expect(Date.now() - t0).toBeLessThan(5000); // bounded, not exponential
+    expect(r.capped).toBe(true);
+    expect(r.loops.length).toBeGreaterThan(0);
+  });
 });

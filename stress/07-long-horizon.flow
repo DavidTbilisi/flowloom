@@ -1,0 +1,9 @@
+# Long horizon
+# (generated stress model — see stress/README.md)
+stock P = 10
+param r = 0.4
+param cap = 1000
+flow growth = r * P * (1 - P / cap)
+d(P) = growth
+sim dt=0.001 to=200 method=rk4
+plot P

@@ -30,12 +30,21 @@ reads is always what ran.
   safe AST interpreter (no `eval`). See [`docs/language.md`](docs/language.md).
 - **A proper engine** — Euler and classical **RK4** integration; `step`/`pulse`/
   `ramp` test inputs; graphical **lookup tables**; first- and third-order
-  **delays and smoothing** (`smooth`, `delay1`, `delay3`, …).
+  **delays and smoothing** (`smooth`, `delay1`, `delay3`, …). Expressions compile
+  to slots in a reused typed array (no `eval`), and **very large models run in a
+  Web Worker with a generated WebAssembly backend** so the UI never blocks.
 - **Automatic feedback-loop analysis** — a signed influence graph finds every
   loop and labels it **R** (reinforcing) or **B** (balancing).
-- **An animated diagram** — press play and watch stocks fill to their level
-  while signed causal links march; hover a loop to trace it with its R/B badge.
+- **An animated diagram on an infinite canvas** — press play and watch stocks
+  fill to their level while signed causal links march; hover a loop to trace it
+  with its R/B badge. **Scroll to zoom, drag to pan, Fit to frame** — large
+  models lay out on a scalable grid (and degrade to a navigable dot-map) so even
+  a thousand-node graph stays explorable.
 - **Plots, a data table, and a time scrubber**, all synchronized to one clock.
+- **Learn-as-you-go** — a syntax-highlighted editor, a contextual-help bar that
+  explains whatever the mouse is over, and a **Learn** button with a guided tour,
+  interactive lessons, and example walkthroughs. See
+  [`docs/ui-guide.md`](docs/ui-guide.md).
 
 ## Run it
 
@@ -46,6 +55,30 @@ npm run dev          # open the studio with hot reload
 
 Build a static bundle with `npm run build` (output in `dist/`). There is no
 backend — the engine runs entirely in the browser.
+
+## Use it from an AI agent
+
+The same DOM-free engine runs headlessly, so an agent can author, run, and reason
+about models without the UI:
+
+```bash
+npm i -g .                                   # installs `flowloom` + `flowloom-mcp`
+flowloom run     model.flow --json           # simulate → all series as JSON
+flowloom explain model.flow                  # plain-language summary (stocks, knobs, loops)
+flowloom describe model.flow --json          # full structure (stocks/rates/vars/deps/loops)
+flowloom loops   model.flow --json           # feedback loops with R/B polarity
+flowloom check   model.flow                  # validate; non-zero exit + line/col diagnostics
+flowloom reference --json                     # the language + builtins catalog
+```
+
+- **One-page authoring guide:** [`docs/llms.txt`](docs/llms.txt) — a prompt-ready
+  `.flow` cheatsheet (grammar, every builtin, the gotchas). Generated from the
+  canonical catalog (`npm run gen:llms`), so it never drifts.
+- **MCP server:** `flowloom-mcp` exposes the engine to Claude Code / Claude Desktop
+  as tools — `flow_run`, `flow_check`, `flow_loops`, `flow_describe`, `flow_explain`,
+  `flow_examples` — plus a `flow://reference` resource carrying the guide. Each tool
+  takes the model as text. Register it as a stdio MCP server pointing at
+  `dist-cli/mcp.js` (build with `npm run build:cli`).
 
 ## Tests are the contract
 
@@ -89,6 +122,9 @@ canonical source so they never drift.)
 - **⌘/Ctrl + Enter** — run
 - Tabs: Plot · Diagram · Loops · Table · Format
 - On Plot/Diagram, use the transport bar to play, pause, or scrub time.
+- The editor highlights syntax as you type; hover any keyword, node, or control
+  to see it explained in the status bar at the bottom. The **Learn** button opens
+  a tour, lessons, and walkthroughs.
 
 ## Roadmap
 
@@ -97,8 +133,12 @@ canonical source so they never drift.)
 - [x] AST language with delays, lookups, and test inputs
 - [x] contract tests (Vitest) + e2e tests (Playwright)
 - [x] save/load `.flow` files (drag-drop) and shareable URL state
+- [x] compiled (slot-based) evaluator + a generated **WASM** backend for large
+      models, run off-thread in a Web Worker
 - [ ] units checking from the `[unit]` annotations
-- [ ] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
+- [x] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
+- [x] AI-facing surface — CLI `explain`/`describe`/`reference`, a generated
+      `llms.txt` guide, and a `flowloom-mcp` MCP server over the same engine
 
 The original single-file prototype is preserved at
 [`reference/flowloom-v1.html`](reference/flowloom-v1.html).

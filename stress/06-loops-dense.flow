@@ -1,0 +1,47 @@
+# Loop-dense ring (reach 3)
+# (generated stress model — see stress/README.md)
+stock N0 = 20
+stock N1 = 21
+stock N2 = 22
+stock N3 = 23
+stock N4 = 24
+stock N5 = 25
+stock N6 = 26
+stock N7 = 27
+stock N8 = 28
+stock N9 = 29
+stock N10 = 30
+stock N11 = 31
+stock N12 = 32
+stock N13 = 33
+param k = 0.08
+flow d0 = k * ((N1 - N0) + (N13 - N0) + (N2 - N0) + (N12 - N0) + (N3 - N0) + (N11 - N0))
+d(N0) = d0
+flow d1 = k * ((N2 - N1) + (N0 - N1) + (N3 - N1) + (N13 - N1) + (N4 - N1) + (N12 - N1))
+d(N1) = d1
+flow d2 = k * ((N3 - N2) + (N1 - N2) + (N4 - N2) + (N0 - N2) + (N5 - N2) + (N13 - N2))
+d(N2) = d2
+flow d3 = k * ((N4 - N3) + (N2 - N3) + (N5 - N3) + (N1 - N3) + (N6 - N3) + (N0 - N3))
+d(N3) = d3
+flow d4 = k * ((N5 - N4) + (N3 - N4) + (N6 - N4) + (N2 - N4) + (N7 - N4) + (N1 - N4))
+d(N4) = d4
+flow d5 = k * ((N6 - N5) + (N4 - N5) + (N7 - N5) + (N3 - N5) + (N8 - N5) + (N2 - N5))
+d(N5) = d5
+flow d6 = k * ((N7 - N6) + (N5 - N6) + (N8 - N6) + (N4 - N6) + (N9 - N6) + (N3 - N6))
+d(N6) = d6
+flow d7 = k * ((N8 - N7) + (N6 - N7) + (N9 - N7) + (N5 - N7) + (N10 - N7) + (N4 - N7))
+d(N7) = d7
+flow d8 = k * ((N9 - N8) + (N7 - N8) + (N10 - N8) + (N6 - N8) + (N11 - N8) + (N5 - N8))
+d(N8) = d8
+flow d9 = k * ((N10 - N9) + (N8 - N9) + (N11 - N9) + (N7 - N9) + (N12 - N9) + (N6 - N9))
+d(N9) = d9
+flow d10 = k * ((N11 - N10) + (N9 - N10) + (N12 - N10) + (N8 - N10) + (N13 - N10) + (N7 - N10))
+d(N10) = d10
+flow d11 = k * ((N12 - N11) + (N10 - N11) + (N13 - N11) + (N9 - N11) + (N0 - N11) + (N8 - N11))
+d(N11) = d11
+flow d12 = k * ((N13 - N12) + (N11 - N12) + (N0 - N12) + (N10 - N12) + (N1 - N12) + (N9 - N12))
+d(N12) = d12
+flow d13 = k * ((N0 - N13) + (N12 - N13) + (N1 - N13) + (N11 - N13) + (N2 - N13) + (N10 - N13))
+d(N13) = d13
+sim dt=0.05 to=40 method=rk4
+plot N0 N7

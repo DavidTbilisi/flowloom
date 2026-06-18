@@ -1,0 +1,8 @@
+# Minimal
+# (generated stress model — see stress/README.md)
+stock Tank = 0
+param rate = 2
+flow fill = rate
+d(Tank) = fill
+sim dt=0.1 to=20 method=rk4
+plot Tank

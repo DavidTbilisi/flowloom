@@ -1,11 +1,13 @@
 import type { Store } from "./store.js";
 import type { SimResult, InfluenceGraph, Loop } from "../engine/index.js";
 
-// ── Animated causal diagram ─────────────────────────────────────────────────
-// Nodes are laid out radially (stocks clustered with the flows/aux they touch).
-// During playback each stock box fills to its normalized current level and shows
-// its value; signed edges (green = same direction, red = opposite) animate with
-// marching ants. Hovering a loop chip traces that loop and shows its R/B badge.
+// ── Animated causal diagram on an infinite (pan/zoom) canvas ─────────────────
+// Nodes live in a fixed *virtual* coordinate space sized to the node count, so
+// they never overlap regardless of how many there are; a viewport <g> with a
+// pan/zoom transform is the "infinite canvas" you navigate. Small models get the
+// full animated treatment (filling stocks, marching signed edges, loop tracing);
+// large models scale down gracefully — static edges, then a dot-map — so a
+// thousand-node model stays responsive. Wheel to zoom, drag to pan, Fit to frame.
 
 interface Pos { x: number; y: number; }
 interface Layout {
@@ -16,19 +18,34 @@ interface Layout {
   isStock: Set<string>;
   isInternal: Set<string>;
   range: Map<string, { lo: number; hi: number }>;
+  bounds: { minX: number; minY: number; maxX: number; maxY: number };
 }
 
-const W_REF = 720;
 const H = 460;
+// rendering tiers by node count
+const GRID_LIMIT = 60;      // radial cluster ≤ this, else a grid
+const ANIM_LIMIT = 160;     // per-frame animation (marching ants, live fill) ≤ this
+const FULL_LIMIT = 900;     // full boxes+labels ≤ this, else a dot-map
+const EDGE_LIMIT = 1600;    // draw edges ≤ this, else omit them
+
+interface View { x: number; y: number; k: number; }
 
 export class Diagram {
   private layout: Layout | null = null;
   highlight: number | null = null;
   dash = 0;
+  view: View = { x: 0, y: 0, k: 1 };
+  /** small graphs animate every frame; large ones render once (static). */
+  animated = true;
+  private onView: ((k: number) => void) | null = null;
 
-  constructor(private svg: SVGSVGElement) {}
+  constructor(private svg: SVGSVGElement) {
+    this.installPanZoom();
+  }
 
-  /** Recompute layout when the model changes. */
+  setOnView(fn: (k: number) => void) { this.onView = fn; }
+
+  /** Recompute layout when the model changes, then frame it. */
   setModel(store: Store): void {
     const run = store.run;
     if (!run.ok || !run.loops || !run.result) {
@@ -37,79 +54,106 @@ export class Diagram {
       return;
     }
     this.layout = buildLayout(run.loops.graph, run.loops.loops, run.result);
+    this.animated = this.layout.order.length <= ANIM_LIMIT;
     this.render(store);
+    this.fit(); // frame the whole graph on load
+  }
+
+  /** Per-frame hook: only re-render (for animation) when the graph is small. */
+  tick(store: Store): void {
+    if (this.animated) this.render(store);
   }
 
   render(store: Store): void {
     const L = this.layout;
     if (!L) return;
-    const W = this.svg.clientWidth || W_REF;
+    const W = this.svg.clientWidth || 720;
     this.svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     this.svg.setAttribute("height", String(H));
 
-    // recompute positions for the live width
-    placeRadial(L, W);
-
     const result = store.run.result!;
     const frame = store.frame;
+    const N = L.order.length;
     const hi = this.highlight;
     const hlEdges = hi != null ? new Set(L.loops[hi]!.edges.map((e) => e.from + "|" + e.to)) : null;
     const hlNodes = hi != null ? new Set(L.loops[hi]!.nodes) : null;
-
+    const simplified = N > FULL_LIMIT;
+    const straightEdges = simplified || N > GRID_LIMIT; // curves only for small radial graphs
     const col = (s: number) => (s > 0 ? "#5fd17a" : s < 0 ? "#f0746a" : "#7a8294");
+
     let body = "";
 
-    // edges
-    for (const e of L.graph.edges) {
-      const c = col(e.sign);
-      const on = hlEdges ? hlEdges.has(e.from + "|" + e.to) : true;
-      const op = hlEdges ? (on ? 1 : 0.08) : 0.8;
-      const w = hlEdges && on ? 3.4 : 1.7;
-      const A = L.pos.get(e.from)!, B = L.pos.get(e.to)!;
-      const dash = on ? `stroke-dasharray="7 5" stroke-dashoffset="${-this.dash}"` : "";
-      if (e.from === e.to) {
-        const r = L.isStock.has(e.from) ? 26 : 22;
-        body += `<path d="M ${A.x - 9} ${A.y - r + 3} A 15 15 0 1 1 ${A.x + 9} ${A.y - r + 3}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" ${dash} marker-end="url(#fa-${c.slice(1)})"/>`;
-        continue;
+    // ── edges ──
+    if (N <= EDGE_LIMIT) {
+      for (const e of L.graph.edges) {
+        const c = col(e.sign);
+        const on = hlEdges ? hlEdges.has(e.from + "|" + e.to) : true;
+        const op = hlEdges ? (on ? 1 : 0.06) : simplified ? 0.5 : 0.8;
+        const w = hlEdges && on ? 3.4 : 1.7;
+        const A = L.pos.get(e.from)!, B = L.pos.get(e.to)!;
+        const march = this.animated && on;
+        const dash = march ? `stroke-dasharray="7 5" stroke-dashoffset="${-this.dash}"` : "";
+        const marker = simplified ? "" : `marker-end="url(#fa-${c.slice(1)})"`;
+        if (e.from === e.to) {
+          const r = L.isStock.has(e.from) ? 26 : 22;
+          body += `<path d="M ${A.x - 9} ${A.y - r + 3} A 15 15 0 1 1 ${A.x + 9} ${A.y - r + 3}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" ${dash} ${marker}/>`;
+          continue;
+        }
+        const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
+        const ra = L.isStock.has(e.from) ? 30 : 24, rb = L.isStock.has(e.to) ? 30 : 24;
+        const sx = A.x + ux * ra, sy = A.y + uy * ra, ex = B.x - ux * rb, ey = B.y - uy * rb;
+        if (straightEdges) {
+          body += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="${c}" stroke-width="${w}" opacity="${op}" ${marker}/>`;
+        } else {
+          const dir = idx(L.order, e.from) < idx(L.order, e.to) ? 1 : -1;
+          const off = 0.16 * len * dir;
+          const mx = (sx + ex) / 2 - uy * off, my = (sy + ey) / 2 + ux * off;
+          body += `<path d="M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" ${dash} ${marker}/>`;
+        }
       }
-      const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
-      const ra = L.isStock.has(e.from) ? 30 : 24, rb = L.isStock.has(e.to) ? 30 : 24;
-      const sx = A.x + ux * ra, sy = A.y + uy * ra, ex = B.x - ux * rb, ey = B.y - uy * rb;
-      const dir = idx(L.order, e.from) < idx(L.order, e.to) ? 1 : -1;
-      const off = 0.16 * len * dir;
-      const mx = (sx + ex) / 2 - uy * off, my = (sy + ey) / 2 + ux * off;
-      body += `<path d="M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" ${dash} marker-end="url(#fa-${c.slice(1)})"/>`;
     }
 
-    // nodes
+    // ── nodes ──
     for (const n of L.order) {
       const p = L.pos.get(n)!;
-      const dim = hlNodes ? (hlNodes.has(n) ? 1 : 0.25) : 1;
+      const dim = hlNodes ? (hlNodes.has(n) ? 1 : 0.22) : 1;
       const value = result.series.get(n)?.[frame];
+      const internal = L.isInternal.has(n);
+      const helpKey = L.isStock.has(n) ? "ui:node-stock" : internal ? "ui:node-internal" : "ui:node-flow";
+      const named = internal ? "" : ` data-name="${esc(n)}"`;
+
+      if (simplified) {
+        // dot-map: a coloured dot is enough to navigate; details on hover
+        const r = L.isStock.has(n) ? 5 : 3.5;
+        const fill = L.isStock.has(n) ? "#6ad1c7" : internal ? "#3a4150" : "#7a8294";
+        body += `<g data-help="${helpKey}"${named}><circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${fill}" opacity="${dim}"/></g>`;
+        continue;
+      }
+
+      let g = "";
       if (L.isStock.has(n)) {
-        const r = L.range.get(n)!;
-        const frac = value != null && Number.isFinite(value) ? clamp01((value - r.lo) / (r.hi - r.lo || 1)) : 0;
+        const rng = L.range.get(n)!;
+        const frac = value != null && Number.isFinite(value) ? clamp01((value - rng.lo) / (rng.hi - rng.lo || 1)) : 0;
         const bw = 84, bh = 36, bx = p.x - bw / 2, by = p.y - bh / 2;
-        body += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="#11161e" stroke="#6ad1c7" stroke-width="1.6" opacity="${dim}"/>`;
-        // fill level (from the bottom)
+        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="#11161e" stroke="#6ad1c7" stroke-width="1.6" opacity="${dim}"/>`;
         const fh = bh * frac;
-        body += `<clipPath id="clip-${cssId(n)}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7"/></clipPath>`;
-        body += `<rect clip-path="url(#clip-${cssId(n)})" x="${bx}" y="${by + bh - fh}" width="${bw}" height="${fh}" fill="#6ad1c7" opacity="${0.22 * dim}"/>`;
-        body += `<text x="${p.x}" y="${by - 5}" text-anchor="middle" font-size="11" fill="#e6e9ef" opacity="${dim}" font-family="monospace">${esc(short(n))}</text>`;
-        body += `<text x="${p.x}" y="${p.y + 5}" text-anchor="middle" font-size="12" fill="#6ad1c7" opacity="${dim}" font-family="monospace">${value != null ? fmtShort(value) : ""}</text>`;
+        g += `<clipPath id="clip-${cssId(n)}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7"/></clipPath>`;
+        g += `<rect clip-path="url(#clip-${cssId(n)})" x="${bx}" y="${by + bh - fh}" width="${bw}" height="${fh}" fill="#6ad1c7" opacity="${0.22 * dim}"/>`;
+        g += `<text x="${p.x}" y="${by - 5}" text-anchor="middle" font-size="11" fill="#e6e9ef" opacity="${dim}" font-family="monospace">${esc(short(n))}</text>`;
+        g += `<text x="${p.x}" y="${p.y + 5}" text-anchor="middle" font-size="12" fill="#6ad1c7" opacity="${dim}" font-family="monospace">${value != null ? fmtShort(value) : ""}</text>`;
       } else {
-        const internal = L.isInternal.has(n);
         const stroke = internal ? "#3a4150" : "#4a5566";
         const bw = 78, bh = 30, bx = p.x - bw / 2, by = p.y - bh / 2;
-        body += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="15" fill="#141821" stroke="${stroke}" stroke-width="1.3" opacity="${dim}"/>`;
-        body += `<text x="${p.x}" y="${p.y - 1}" text-anchor="middle" font-size="10.5" fill="#cdd3df" opacity="${dim}" font-family="monospace">${esc(short(internal ? "delay" : n))}</text>`;
+        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="15" fill="#141821" stroke="${stroke}" stroke-width="1.3" opacity="${dim}"/>`;
+        g += `<text x="${p.x}" y="${p.y - 1}" text-anchor="middle" font-size="10.5" fill="#cdd3df" opacity="${dim}" font-family="monospace">${esc(short(internal ? "delay" : n))}</text>`;
         if (value != null && Number.isFinite(value))
-          body += `<text x="${p.x}" y="${p.y + 11}" text-anchor="middle" font-size="10" fill="#8b93a3" opacity="${dim}" font-family="monospace">${fmtShort(value)}</text>`;
+          g += `<text x="${p.x}" y="${p.y + 11}" text-anchor="middle" font-size="10" fill="#8b93a3" opacity="${dim}" font-family="monospace">${fmtShort(value)}</text>`;
       }
+      body += `<g data-help="${helpKey}"${named}>${g}</g>`;
     }
 
-    // R/B badge at the highlighted loop's centroid
-    if (hi != null && hlNodes) {
+    // R/B badge at the highlighted loop's centroid (skip in dot-map)
+    if (hi != null && hlNodes && !simplified) {
       const ns = [...hlNodes];
       const c = ns.reduce((a, n) => ({ x: a.x + L.pos.get(n)!.x, y: a.y + L.pos.get(n)!.y }), { x: 0, y: 0 });
       c.x /= ns.length; c.y /= ns.length;
@@ -122,10 +166,81 @@ export class Diagram {
     const defs = cols
       .map((c) => `<marker id="fa-${c.slice(1)}" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${c}"/></marker>`)
       .join("");
-    this.svg.innerHTML = `<defs>${defs}</defs>${body}`;
+
+    const t = this.view;
+    // a hint when the graph is too big to wire up edges
+    const note = N > EDGE_LIMIT
+      ? `<text x="14" y="${H - 14}" fill="#9aa3b2" font-size="12" font-family="monospace">${N} nodes — edges hidden; dot-map only. Use Plot/Table for data, scroll to zoom.</text>`
+      : simplified
+        ? `<text x="14" y="${H - 14}" fill="#9aa3b2" font-size="12" font-family="monospace">${N} nodes — simplified dot-map. Hover a dot for details; scroll to zoom.</text>`
+        : "";
+    this.svg.innerHTML = `<defs>${defs}</defs><g class="vp" transform="translate(${t.x} ${t.y}) scale(${t.k})">${body}</g>${note}`;
+    this.onView?.(this.view.k);
+  }
+
+  // ── pan / zoom (the infinite canvas) ──
+  private applyTransform(): void {
+    const vp = this.svg.querySelector(".vp");
+    if (vp) vp.setAttribute("transform", `translate(${this.view.x} ${this.view.y}) scale(${this.view.k})`);
+    this.onView?.(this.view.k);
+  }
+
+  zoomBy(factor: number, cx?: number, cy?: number): void {
+    const W = this.svg.clientWidth || 720;
+    const px = cx ?? W / 2, py = cy ?? H / 2;
+    const k2 = clamp(this.view.k * factor, 0.02, 8);
+    this.view.x = px - ((px - this.view.x) / this.view.k) * k2;
+    this.view.y = py - ((py - this.view.y) / this.view.k) * k2;
+    this.view.k = k2;
+    this.applyTransform();
+  }
+
+  /** Frame the whole graph in the viewport. */
+  fit(): void {
+    const L = this.layout;
+    if (!L) return;
+    const W = this.svg.clientWidth || 720;
+    const b = L.bounds, pad = 60;
+    const gw = b.maxX - b.minX + pad * 2, gh = b.maxY - b.minY + pad * 2;
+    const k = clamp(Math.min(W / gw, H / gh), 0.02, 4);
+    this.view.k = k;
+    this.view.x = W / 2 - ((b.minX + b.maxX) / 2) * k;
+    this.view.y = H / 2 - ((b.minY + b.maxY) / 2) * k;
+    this.applyTransform();
+  }
+
+  private installPanZoom(): void {
+    const svg = this.svg;
+    svg.addEventListener("wheel", (e) => {
+      if (!this.layout) return;
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const factor = e.deltaY < 0 ? 1.12 : 1 / 1.12;
+      this.zoomBy(factor, e.clientX - rect.left, e.clientY - rect.top);
+    }, { passive: false });
+
+    let dragging = false, lx = 0, ly = 0;
+    svg.addEventListener("pointerdown", (e) => {
+      if (!this.layout) return;
+      dragging = true; lx = e.clientX; ly = e.clientY;
+      svg.setPointerCapture(e.pointerId);
+      svg.style.cursor = "grabbing";
+    });
+    svg.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      this.view.x += e.clientX - lx;
+      this.view.y += e.clientY - ly;
+      lx = e.clientX; ly = e.clientY;
+      this.applyTransform();
+    });
+    const end = (e: PointerEvent) => { dragging = false; svg.style.cursor = "grab"; try { svg.releasePointerCapture(e.pointerId); } catch { /* */ } };
+    svg.addEventListener("pointerup", end);
+    svg.addEventListener("pointercancel", end);
+    svg.style.cursor = "grab";
   }
 }
 
+// ── layout ────────────────────────────────────────────────────────────────────
 function buildLayout(graph: InfluenceGraph, loops: Loop[], result: SimResult): Layout {
   const isStock = new Set(result.stockNames);
   const isInternal = new Set(graph.nodes.filter((n) => n.includes("#")));
@@ -133,17 +248,12 @@ function buildLayout(graph: InfluenceGraph, loops: Loop[], result: SimResult): L
   // cluster: each stock, then the neighbours it touches
   const order: string[] = [];
   const seen = new Set<string>();
-  const nbrs = (n: string) => {
-    const r = new Set<string>();
-    for (const e of graph.edges) {
-      if (e.from === n) r.add(e.to);
-      if (e.to === n) r.add(e.from);
-    }
-    return [...r];
-  };
+  const adj = new Map<string, Set<string>>();
+  for (const n of graph.nodes) adj.set(n, new Set());
+  for (const e of graph.edges) { adj.get(e.from)?.add(e.to); adj.get(e.to)?.add(e.from); }
   for (const s of result.stockNames) {
     if (!seen.has(s)) { order.push(s); seen.add(s); }
-    for (const nb of nbrs(s)) if (!seen.has(nb)) { order.push(nb); seen.add(nb); }
+    for (const nb of adj.get(s) ?? []) if (!seen.has(nb)) { order.push(nb); seen.add(nb); }
   }
   for (const n of graph.nodes) if (!seen.has(n)) { order.push(n); seen.add(n); }
 
@@ -159,20 +269,41 @@ function buildLayout(graph: InfluenceGraph, loops: Loop[], result: SimResult): L
     }
   }
 
-  return { graph, loops, order, pos: new Map(), isStock, isInternal, range };
+  const pos = layoutPositions(order, isStock);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of pos.values()) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
+  if (!Number.isFinite(minX)) { minX = minY = 0; maxX = maxY = 1; }
+
+  return { graph, loops, order, pos, isStock, isInternal, range, bounds: { minX, minY, maxX, maxY } };
 }
 
-function placeRadial(L: Layout, W: number): void {
-  const N = Math.max(1, L.order.length);
-  const cx = W / 2, cy = H / 2, R = Math.max(70, Math.min(W, H) / 2 - 62);
-  L.order.forEach((n, i) => {
-    const a = -Math.PI / 2 + (i * 2 * Math.PI) / N;
-    L.pos.set(n, { x: cx + R * Math.cos(a), y: cy + R * Math.sin(a) });
-  });
+/** Place nodes in a fixed virtual space sized so they never overlap. */
+function layoutPositions(order: string[], isStock: Set<string>): Map<string, Pos> {
+  const pos = new Map<string, Pos>();
+  const N = Math.max(1, order.length);
+  if (N <= GRID_LIMIT) {
+    // radial — radius grows with N so labels have room
+    const spacing = 150;
+    const R = Math.max(140, (N * spacing) / (2 * Math.PI));
+    order.forEach((n, i) => {
+      const a = -Math.PI / 2 + (i * 2 * Math.PI) / N;
+      pos.set(n, { x: R * Math.cos(a), y: R * Math.sin(a) });
+    });
+  } else {
+    // grid — compact, readable, tiles a big canvas you pan around
+    const cols = Math.ceil(Math.sqrt(N * 1.7));
+    const sx = isStock ? 150 : 150, sy = 104;
+    order.forEach((n, i) => {
+      const r = Math.floor(i / cols), c = i % cols;
+      pos.set(n, { x: c * sx, y: r * sy });
+    });
+  }
+  return pos;
 }
 
 const idx = (order: string[], n: string) => order.indexOf(n);
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 const short = (n: string) => (n.length > 12 ? n.slice(0, 11) + "…" : n);
 const cssId = (n: string) => n.replace(/[^a-zA-Z0-9_-]/g, "_");
 const esc = (s: string) => s.replace(/[<>&]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" })[c]!);

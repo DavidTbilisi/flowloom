@@ -12,6 +12,7 @@ import {
 } from "./types.js";
 import { parseExpr, freeVars } from "./expr.js";
 import { ExprSyntaxError } from "./tokenizer.js";
+import { suggestName } from "./suggest.js";
 
 // ── Model parser ────────────────────────────────────────────────────────────
 // The line grammar. One statement per line; `#` starts a comment. This grammar
@@ -284,7 +285,8 @@ function validateReferences(m: Raw): void {
   const check = (expr: Parameters<typeof freeVars>[0], loc: Loc) => {
     for (const id of freeVars(expr)) {
       if (!known.has(id) && !tables.has(id) && !BUILTIN_CONSTS.has(id)) {
-        push(m, "error", loc, `unknown name '${id}'`);
+        const hint = suggestName(id, [...known, ...tables, ...BUILTIN_CONSTS]);
+        push(m, "error", loc, `unknown name '${id}'${hint ? ` — did you mean '${hint}'?` : ""}`);
       }
     }
   };
@@ -295,7 +297,8 @@ function validateReferences(m: Raw): void {
 
   for (const name of m.plot) {
     if (!known.has(name)) {
-      push(m, "warning", { line: 1, col: 0 }, `plot references unknown series '${name}'`);
+      const hint = suggestName(name, known);
+      push(m, "warning", { line: 1, col: 0 }, `plot references unknown series '${name}'${hint ? ` — did you mean '${hint}'?` : ""}`);
     }
   }
 }

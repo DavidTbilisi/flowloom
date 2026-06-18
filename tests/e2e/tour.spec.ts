@@ -1,0 +1,58 @@
+import { test, expect } from "@playwright/test";
+
+// Guided learning: the UI tour and an interactive lesson.
+
+test.beforeEach(async ({ page }) => {
+  await page.goto("/");
+  await page.waitForFunction(() => (window as any).flowloom?.run?.ok === true);
+  const skip = page.locator(".tour-overlay .tour-skip");
+  if (await skip.count()) await skip.click();
+});
+
+async function openLearn(page: import("@playwright/test").Page) {
+  await page.locator("#learn").click();
+  await expect(page.locator("#learnMenu.open")).toBeVisible();
+}
+
+test("Take the tour shows the overlay and advances", async ({ page }) => {
+  await openLearn(page);
+  await page.locator(".lm-item[data-kind='tour']").click();
+  await expect(page.locator(".tour-overlay")).toBeVisible();
+  await expect(page.locator(".tour-progress")).toHaveText("1 / 9");
+  await page.locator(".tour-next").click();
+  await expect(page.locator(".tour-progress")).toHaveText("2 / 9");
+});
+
+test("Skip closes the tour", async ({ page }) => {
+  await openLearn(page);
+  await page.locator(".lm-item[data-kind='tour']").click();
+  await expect(page.locator(".tour-overlay")).toBeVisible();
+  await page.locator(".tour-skip").click();
+  await expect(page.locator(".tour-overlay")).toHaveCount(0);
+});
+
+test("an interactive lesson gates Next until the model is edited correctly", async ({ page }) => {
+  await openLearn(page);
+  await page.locator(".lm-item[data-kind='lesson']").first().click();
+  await expect(page.locator(".tour-overlay")).toBeVisible();
+
+  // step 1 seeds the starter model; advance to the gated "add the flow" step
+  await page.locator(".tour-next").click();
+  const next = page.locator(".tour-next");
+  await expect(next).toBeDisabled();
+
+  // add the growth flow the lesson asks for — Next should enable
+  await page.locator("#src").press("End");
+  await page.locator("#src").fill(
+    "stock Population = 5\nparam birthRate = 0.7\nparam carrying = 1000\nflow growth = birthRate * Population * (1 - Population / carrying)\nsim dt=0.1 to=25 method=rk4",
+  );
+  await page.locator("#run").click();
+  await expect(next).toBeEnabled();
+});
+
+test("an example walkthrough loads that model", async ({ page }) => {
+  await openLearn(page);
+  await page.locator(".lm-item[data-kind='walk']", { hasText: "SIR epidemic" }).click();
+  await expect(page.locator(".tour-overlay")).toBeVisible();
+  await expect(page.locator("#src")).toHaveValue(/stock S/);
+});
