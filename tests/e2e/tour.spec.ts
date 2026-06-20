@@ -75,6 +75,27 @@ test("a gated lesson explains why Next is disabled when the model errors", async
   await expect(page.locator(".tour-next")).toBeEnabled();
 });
 
+test("the build-visually lesson drives the real builder", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 1100 }); // realistic height: card clears the build UI
+  await openLearn(page);
+  await page.locator(".lm-item", { hasText: "Build visually" }).click();
+  await expect(page.locator(".tour-overlay")).toBeVisible();
+
+  await page.locator(".tour-next").click(); // → "Turn on Edit"
+  await page.locator('.canvas-ctrls [data-cv="edit"]').click();
+  await page.locator(".tour-next").click(); // → gated "Add a flow"
+  const next = page.locator(".tour-next");
+  await expect(next).toBeDisabled();
+
+  // add a flow through the builder, as the lesson instructs
+  await page.locator('#buildBar [data-bt="flow"]').click();
+  await page.locator("#buildPop .bp-name").fill("drain");
+  await page.locator("#buildPop .bp-eq").fill("0.1 * Water");
+  await page.locator("#buildPop .bp-save").click();
+
+  await expect(next).toBeEnabled(); // the lesson's gate sees the new flow
+});
+
 test("an example walkthrough loads that model", async ({ page }) => {
   await openLearn(page);
   await page.locator(".lm-item[data-kind='walk']", { hasText: "SIR epidemic" }).click();

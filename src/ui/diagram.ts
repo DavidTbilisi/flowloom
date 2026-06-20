@@ -95,6 +95,24 @@ export class Diagram {
     this.svg.classList.toggle("editing", on);
   }
 
+  /** Draw/update the dashed "rubber band" from the connect source to the cursor. */
+  private drawRubber(clientX: number, clientY: number): void {
+    const vp = this.svg.querySelector(".vp");
+    const from = this.connectFrom ? this.layout?.pos.get(this.connectFrom) : null;
+    if (!vp || !from) return;
+    const r = this.svg.getBoundingClientRect();
+    const x = (clientX - r.left - this.view.x) / this.view.k;
+    const y = (clientY - r.top - this.view.y) / this.view.k;
+    let line = vp.querySelector(".rubber") as SVGLineElement | null;
+    if (!line) {
+      line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("class", "rubber");
+      vp.appendChild(line);
+    }
+    line.setAttribute("x1", String(from.x)); line.setAttribute("y1", String(from.y));
+    line.setAttribute("x2", String(x)); line.setAttribute("y2", String(y));
+  }
+
   render(store: Store): void {
     const L = this.layout;
     if (!L) return;
@@ -269,7 +287,11 @@ export class Diagram {
       svg.style.cursor = "grabbing";
     });
     svg.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
+      if (!dragging) {
+        // not pressing: show a rubber-band line while wiring a connection
+        if (this.editMode && this.tool === "connect" && this.connectFrom) this.drawRubber(e.clientX, e.clientY);
+        return;
+      }
       const dx = e.clientX - lx, dy = e.clientY - ly;
       lx = e.clientX; ly = e.clientY;
       if (downNode && this.layout) {

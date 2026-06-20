@@ -180,6 +180,7 @@ svg { width: 100%; background: var(--panel); border: 1px solid var(--line); bord
 /* the `hidden` attribute must win over the flex display rules below */
 .build-bar[hidden], .build-pop[hidden] { display: none; }
 #diagram.editing { cursor: crosshair; }
+#diagram .rubber { stroke: var(--accent); stroke-width: 2; stroke-dasharray: 5 4; pointer-events: none; opacity: .8; }
 .build-bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px;
   padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
