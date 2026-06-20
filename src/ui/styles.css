@@ -133,6 +133,9 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .plot-ctrls button { font-size: 12px; padding: 4px 9px; }
 .plot-ctrls input[type=number] { width: 56px; }
 .plot-ctrls .ov-msg { color: var(--dim); font: 11px var(--mono); margin-left: 4px; }
+.plot-ctrls .cal-params { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
+.plot-ctrls .cal-p { display: inline-flex; align-items: center; gap: 3px; }
+.plot-ctrls .cal-p input { margin: 0; }
 
 /* ── transport / playback bar ─────────────────────────────────────────── */
 .transport {
@@ -171,6 +174,37 @@ svg { width: 100%; background: var(--panel); border: 1px solid var(--line); bord
 .canvas-ctrls .zoomlbl {
   font: 11px var(--mono); color: var(--dim); min-width: 40px; text-align: right;
 }
+.canvas-ctrls [data-cv="edit"].active { background: var(--accent); color: #06231f; border-color: var(--accent); font-weight: 600; }
+
+/* ── visual builder ───────────────────────────────────────────────────── */
+/* the `hidden` attribute must win over the flex display rules below */
+.build-bar[hidden], .build-pop[hidden] { display: none; }
+#diagram.editing { cursor: crosshair; }
+.build-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px;
+  padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.build-bar button { font-size: 12px; padding: 4px 9px; }
+.build-bar button[data-tool].active { background: var(--accent); color: #06231f; border-color: var(--accent); font-weight: 600; }
+.build-bar .sign { min-width: 30px; font-weight: 700; color: var(--green); }
+.build-bar .sign.neg { color: var(--red); }
+.build-bar .bsep { width: 1px; align-self: stretch; background: var(--line); margin: 0 3px; }
+.build-bar .build-hint { color: var(--dim); font: 11px var(--mono); margin-left: auto; }
+.build-pop {
+  position: absolute; top: 12px; left: 12px; z-index: 5; width: 280px;
+  display: flex; flex-direction: column; gap: 7px; padding: 10px;
+  background: var(--panel2); border: 1px solid var(--line); border-radius: 9px;
+  box-shadow: rgba(0,0,0,.5) 0 10px 30px;
+}
+.build-pop .bp-row { display: flex; align-items: center; gap: 6px; }
+.build-pop .bp-eqlbl { color: var(--dim); font: 12px var(--mono); min-width: 34px; text-align: right; }
+.build-pop input { flex: 1; font: 13px var(--mono); }
+.build-pop .bp-warn:empty { display: none; }
+.build-pop .bp-warn { color: var(--warn); font: 11px/1.4 var(--mono); }
+.build-pop .bp-actions { display: flex; align-items: center; gap: 6px; }
+.build-pop .bp-actions .spacer { flex: 1; }
+.build-pop .bp-del { color: var(--red); border-color: transparent; }
+.build-pop .bp-del:hover { border-color: var(--red); }
 
 .hint { color: var(--dim); font-size: 12px; margin: 0 0 10px; }
 .kv { color: var(--accent); }

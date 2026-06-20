@@ -3,8 +3,26 @@ import { drawPlot, colorFor, fmt } from "./plot.js";
 import { Diagram } from "./diagram.js";
 import { EXAMPLES, DEFAULT_EXAMPLE } from "../examples/index.js";
 import { setSimSetting, setParamValue } from "./model-edit.js";
-import { parseModel } from "../lang/index.js";
-import { simulate, monteCarlo, parseDataset, calibrate } from "../engine/index.js";
+import {
+  addStock, addVar, connectFlowToStock, pipeBetweenStocks, setEquation, setInit,
+  renameSymbol, deleteSymbol, uniqueName, referencesTo, readLayout, setLayoutPos,
+} from "./model-build.js";
+import { parseModel, printExpr, type Model, type Expr } from "../lang/index.js";
+import { simulate, parseDataset, calibrate, RANDOM_FNS } from "../engine/index.js";
+
+/** Does any equation call a random*() builtin? (drives the Monte Carlo hint) */
+function modelUsesRandom(model: Model): boolean {
+  const hit = (e: Expr): boolean =>
+    e.kind === "call" ? RANDOM_FNS.has(e.name.toLowerCase()) || e.args.some(hit)
+      : e.kind === "binary" ? hit(e.left) || hit(e.right)
+      : e.kind === "unary" ? hit(e.arg)
+      : false;
+  return (
+    model.vars.some((v) => hit(v.expr)) ||
+    [...model.rates.values()].some((r) => hit(r.expr)) ||
+    model.stocks.some((s) => hit(s.initExpr))
+  );
+}
 import { renderHelp } from "./help.js";
 import { readHash, writeHash, shareUrl, downloadFlow, enableDropLoad } from "./persist.js";
 import { mountEditor } from "./editor.js";
@@ -54,6 +72,148 @@ export function mountApp(root: HTMLElement): Store {
       else if (act === "out") diagram.zoomBy(1 / 1.3);
     };
   });
+
+  // ── visual builder: edit the model by clicking the diagram ──
+  // Every action is a string→string transform on the canonical text (model-build),
+  // applied through the same setValue+rebuild path as everything else.
+  {
+    const buildBar = $<HTMLDivElement>("#buildBar");
+    const buildHint = $<HTMLElement>("#buildHint");
+    const buildPop = $<HTMLDivElement>("#buildPop");
+    const bpName = buildPop.querySelector(".bp-name") as HTMLInputElement;
+    const bpEq = buildPop.querySelector(".bp-eq") as HTMLInputElement;
+    const bpEqLbl = buildPop.querySelector(".bp-eqlbl") as HTMLElement;
+    const bpWarn = $<HTMLElement>("#bpWarn");
+    const delBtn = buildPop.querySelector(".bp-del") as HTMLButtonElement;
+    const editBtn = root.querySelector('.canvas-ctrls [data-cv="edit"]') as HTMLButtonElement;
+    const signBtn = $<HTMLButtonElement>("#signToggle");
+    type Kind = "stock" | "flow" | "aux" | "param";
+    let editing: { name: string; kind: Kind } | null = null;
+    let sign: "+" | "-" = "+";
+
+    const apply = (next: string) => { editor.setValue(next); rebuild(); };
+    const redraw = () => { if (store.tab === "diagram") diagram.render(store); };
+
+    const closePop = () => {
+      buildPop.hidden = true; editing = null; diagram.selected = null;
+      delBtn.dataset.armed = ""; redraw();
+    };
+
+    const openPop = (name: string, kind: Kind) => {
+      editing = { name, kind };
+      diagram.selected = name; diagram.connectFrom = null;
+      bpName.value = name;
+      let eq = "0";
+      const m = store.run.model;
+      if (m) {
+        if (kind === "stock") { const s = m.stocks.find((s) => s.name === name); if (s) eq = printExpr(s.initExpr); }
+        else { const v = m.varIndex.get(name); if (v) eq = printExpr(v.expr); }
+      }
+      bpEq.value = eq;
+      bpEqLbl.textContent = kind === "stock" ? "init =" : "=";
+      bpWarn.textContent = ""; delBtn.dataset.armed = "";
+      buildPop.hidden = false; redraw();
+      bpName.focus(); bpName.select();
+    };
+
+    const savePop = () => {
+      if (!editing) return;
+      const { name: oldName, kind } = editing;
+      let s = src.value;
+      let name = bpName.value.trim();
+      if (name && name !== oldName) s = renameSymbol(s, oldName, name); else name = oldName;
+      const eq = bpEq.value.trim() || "0";
+      s = kind === "stock" ? setInit(s, name, eq) : setEquation(s, name, eq);
+      apply(s); closePop();
+    };
+
+    const setTool = (t: "select" | "connect") => {
+      diagram.tool = t; diagram.connectFrom = null;
+      buildBar.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => b.classList.toggle("active", b.dataset.tool === t));
+      buildHint.textContent = t === "connect" ? "Click a flow/aux, then a stock, to wire it." : "Click a node to edit it.";
+      if (!buildPop.hidden) closePop(); else redraw();
+    };
+
+    const setEdit = (on: boolean) => {
+      diagram.setEditMode(on);
+      buildBar.hidden = !on;
+      editBtn.classList.toggle("active", on);
+      buildPop.hidden = true; editing = null;
+      if (on) { store.setPlaying(false); setTool("select"); } else redraw();
+    };
+    editBtn.onclick = () => setEdit(!diagram.editMode);
+
+    buildBar.querySelectorAll<HTMLButtonElement>("[data-bt]").forEach((b) => {
+      b.onclick = () => {
+        const kind = b.dataset.bt as Kind;
+        const base = kind === "stock" ? "Stock" : kind;
+        const name = uniqueName(src.value, base);
+        apply(kind === "stock" ? addStock(src.value, name, "0") : addVar(src.value, kind, name, "0"));
+        openPop(name, kind);
+      };
+    });
+    buildBar.querySelectorAll<HTMLButtonElement>("[data-tool]").forEach((b) => {
+      b.onclick = () => setTool(b.dataset.tool as "select" | "connect");
+    });
+    signBtn.onclick = () => {
+      sign = sign === "+" ? "-" : "+";
+      signBtn.textContent = sign === "+" ? "＋" : "－";
+      signBtn.classList.toggle("neg", sign === "-");
+    };
+
+    diagram.onNodePick = (name) => {
+      const m = store.run.model;
+      const isStock = (n: string) => !!m?.stocks.some((s) => s.name === n);
+      if (diagram.tool === "connect") {
+        if (!diagram.connectFrom) {
+          diagram.connectFrom = name;
+          buildHint.textContent = isStock(name)
+            ? `Draining ${name} → click another stock to pipe into.`
+            : `Wiring ${name} → click a target stock.`;
+          redraw();
+        } else if (diagram.connectFrom === name) {
+          diagram.connectFrom = null; setTool("connect");
+        } else if (isStock(diagram.connectFrom) && isStock(name)) {
+          // stock → stock: create a flow that drains the source and fills the target
+          const from = diagram.connectFrom;
+          const flow = uniqueName(src.value, "flow");
+          diagram.connectFrom = null;
+          apply(pipeBetweenStocks(src.value, from, name, flow, "0"));
+          buildHint.textContent = `Piped ${from} → ${name} via ${flow}. Set its rate.`;
+          openPop(flow, "flow");
+        } else if (!isStock(name)) {
+          buildHint.textContent = `${name} isn't a stock — pick a stock as the target.`;
+        } else {
+          const from = diagram.connectFrom;
+          diagram.connectFrom = null;
+          apply(connectFlowToStock(src.value, from, name, sign));
+          buildHint.textContent = `Wired ${sign}${from} into ${name}. Click a flow/aux to wire another.`;
+        }
+        return;
+      }
+      openPop(name, isStock(name) ? "stock" : (m?.varIndex.get(name)?.kind ?? "aux"));
+    };
+
+    // dragging a node persists its position as a `# @pos` comment
+    diagram.onNodeMove = (name, x, y) => apply(setLayoutPos(src.value, name, x, y));
+
+    (buildPop.querySelector(".bp-save") as HTMLButtonElement).onclick = savePop;
+    (buildPop.querySelector(".bp-cancel") as HTMLButtonElement).onclick = closePop;
+    bpName.onkeydown = bpEq.onkeydown = (e) => {
+      if (e.key === "Enter") savePop();
+      else if (e.key === "Escape") closePop();
+    };
+    delBtn.onclick = () => {
+      if (!editing) return;
+      const refs = referencesTo(src.value, editing.name);
+      if (refs.length && delBtn.dataset.armed !== "1") {
+        bpWarn.textContent = `Used on line${refs.length > 1 ? "s" : ""} ${refs.join(", ")}. Click Delete again to remove anyway.`;
+        delBtn.dataset.armed = "1";
+        return;
+      }
+      apply(deleteSymbol(src.value, editing.name)); closePop();
+    };
+  }
 
   // examples dropdown
   for (const ex of EXAMPLES) {
@@ -151,26 +311,49 @@ export function mountApp(root: HTMLElement): Store {
   const clearOvBtn = $<HTMLButtonElement>("#clearOvBtn");
   const dataInput = $<HTMLInputElement>("#dataInput");
   const cmpInput = $<HTMLInputElement>("#cmpInput");
+  const calParamsEl = $<HTMLSpanElement>("#calParams");
+  const calExcluded = new Set<string>(); // params the user unchecked for calibration
+
+  function modelParams(): string[] {
+    return store.run.model ? store.run.model.vars.filter((v) => v.kind === "param").map((v) => v.name) : [];
+  }
+
+  // Checkboxes to pick which params Calibrate fits (state lives in calExcluded,
+  // so re-rendering on every structural notify is safe and preserves the choice).
+  function renderCalParams() {
+    const params = store.overlay.data ? modelParams() : [];
+    if (!params.length) { calParamsEl.innerHTML = ""; calParamsEl.hidden = true; return; }
+    calParamsEl.hidden = false;
+    calParamsEl.innerHTML = "fit: " + params
+      .map((p) => `<label class="cal-p"><input type="checkbox" data-p="${escapeHtml(p)}"${calExcluded.has(p) ? "" : " checked"}/>${escapeHtml(p)}</label>`)
+      .join("");
+    calParamsEl.querySelectorAll<HTMLInputElement>("input[data-p]").forEach((cb) => {
+      cb.onchange = () => { const p = cb.dataset.p!; cb.checked ? calExcluded.delete(p) : calExcluded.add(p); };
+    });
+  }
 
   function refreshOverlayCtrls() {
     const ov = store.overlay;
     clearOvBtn.hidden = !(ov.bands || ov.data || ov.compare);
     calBtn.disabled = !ov.data || !store.run.ok;
+    const flat = ov.bands && store.run.model && !modelUsesRandom(store.run.model);
     const bits: string[] = [];
-    if (ov.bands) bits.push(`${ov.bands.runs} runs`);
+    if (ov.bands) bits.push(`${ov.bands.runs} runs${flat ? " · flat (no random())" : ""}`);
     if (ov.data) bits.push(`data: ${[...ov.data.columns.keys()].join(", ")}`);
     if (ov.compare) bits.push("comparing");
     ovMsg.textContent = bits.join(" · ");
+    renderCalParams();
   }
 
   mcBtn.onclick = async () => {
     if (!store.run.ok || !store.run.model) return;
     const runs = Math.max(2, Math.floor(Number(mcRuns.value) || 100));
+    const vis = [...store.visible]; // empty ⇒ let the ensemble default (plot line / all) apply
     mcBtn.disabled = true;
     const prev = mcBtn.textContent;
     mcBtn.textContent = "running…";
     try {
-      store.setBands(await monteCarlo(store.run.model, { runs, series: [...store.visible] }));
+      store.setBands(await store.runEnsemble({ runs, ...(vis.length ? { series: vis } : {}) }));
     } catch (e) {
       ovMsg.textContent = `monte carlo: ${(e as Error).message}`;
     } finally {
@@ -204,8 +387,8 @@ export function mountApp(root: HTMLElement): Store {
   calBtn.onclick = async () => {
     const data = store.overlay.data;
     if (!data || !store.run.ok || !store.run.model) return;
-    const params = store.run.model.vars.filter((v) => v.kind === "param").map((v) => v.name);
-    if (!params.length) { ovMsg.textContent = "calibrate: model has no params to fit"; return; }
+    const params = modelParams().filter((p) => !calExcluded.has(p));
+    if (!params.length) { ovMsg.textContent = "calibrate: select at least one param to fit"; return; }
     calBtn.disabled = true;
     const prev = calBtn.textContent;
     calBtn.textContent = "fitting…";
@@ -281,6 +464,7 @@ export function mountApp(root: HTMLElement): Store {
     }
 
     diagram.highlight = null;
+    diagram.setPositions(readLayout(src.value)); // `# @pos` hints override auto-layout
     diagram.setModel(store);
     renderLoopChips();
     renderLoops();
@@ -623,6 +807,7 @@ const SHELL = `
         <button id="calBtn" class="ghost" title="fit params to the loaded data and write them back" data-help="ui:calibrate" disabled>◎ Calibrate</button>
         <button id="cmpBtn" class="ghost" title="overlay another .flow model's run (dashed)" data-help="ui:compare">⇄ Compare</button>
         <button id="clearOvBtn" class="ghost" title="remove all overlays" data-help="ui:clear-overlays" hidden>✕ overlays</button>
+        <span id="calParams" class="cal-params" data-help="ui:calibrate" hidden></span>
         <span id="ovMsg" class="ov-msg"></span>
         <input id="dataInput" type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style="display:none" />
         <input id="cmpInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />
@@ -632,13 +817,36 @@ const SHELL = `
       <p class="hint">Causal graph from the model's equations. <b style="color:var(--accent)">Boxes</b> are stocks (filling to their level),
         <b>pills</b> are flows/aux; <span style="color:var(--green)">green</span> links push the same direction,
         <span style="color:var(--red)">red</span> the opposite. <b>Scroll to zoom · drag to pan.</b></p>
+      <div class="build-bar" id="buildBar" hidden>
+        <button data-bt="stock">+ Stock</button>
+        <button data-bt="flow">+ Flow</button>
+        <button data-bt="aux">+ Aux</button>
+        <button data-bt="param">+ Param</button>
+        <span class="bsep"></span>
+        <button data-tool="select" class="tool active">Select</button>
+        <button data-tool="connect" class="tool">Connect</button>
+        <button id="signToggle" class="sign" title="sign of the wired flow">＋</button>
+        <span class="build-hint" id="buildHint">Click a node to edit it.</span>
+      </div>
       <div class="canvas-wrap">
         <svg id="diagram" height="460"></svg>
         <div class="canvas-ctrls">
+          <button data-cv="edit" title="toggle edit mode">✎ Edit</button>
           <button data-cv="fit" title="fit graph to view">⊡ Fit</button>
           <button data-cv="in" title="zoom in">＋</button>
           <button data-cv="out" title="zoom out">－</button>
           <span class="zoomlbl">100%</span>
+        </div>
+        <div class="build-pop" id="buildPop" hidden>
+          <div class="bp-row"><input class="bp-name" placeholder="name" spellcheck="false"></div>
+          <div class="bp-row bp-eqrow"><span class="bp-eqlbl">=</span><input class="bp-eq" placeholder="expression" spellcheck="false"></div>
+          <div class="bp-warn" id="bpWarn"></div>
+          <div class="bp-actions">
+            <button class="bp-del ghost">Delete</button>
+            <span class="spacer"></span>
+            <button class="bp-cancel ghost">Cancel</button>
+            <button class="bp-save primary">Save</button>
+          </div>
         </div>
       </div>
       <div class="transport" id="transport-diagram" data-help="ui:transport"></div>

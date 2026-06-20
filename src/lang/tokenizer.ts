@@ -11,6 +11,8 @@ export type TokType =
   | "op"
   | "lparen"
   | "rparen"
+  | "lbracket"
+  | "rbracket"
   | "comma"
   | "eof";
 
@@ -75,6 +77,16 @@ export function tokenize(src: string, line: number): Token[] {
     }
     if (c === ")") {
       toks.push({ type: "rparen", value: c, col: i });
+      i++;
+      continue;
+    }
+    if (c === "[") {
+      toks.push({ type: "lbracket", value: c, col: i });
+      i++;
+      continue;
+    }
+    if (c === "]") {
+      toks.push({ type: "rbracket", value: c, col: i });
       i++;
       continue;
     }

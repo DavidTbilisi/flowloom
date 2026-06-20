@@ -9,6 +9,7 @@
 // long-horizon integrator, and the non-finite halt path.
 
 import { writeFileSync, mkdirSync, readdirSync, unlinkSync, existsSync } from "node:fs";
+import process from "node:process";
 import { parseModel } from "../src/lang/index.js";
 import { simulate, buildPlan, compile, worthWasm } from "../src/engine/index.js";
 import { analyzeLoops } from "../src/engine/index.js";
@@ -161,7 +162,10 @@ const SPECS: Spec[] = [
 ];
 
 // ── write + validate + report ────────────────────────────────────────────────
+// Wrapped in main() and gated on the env flag the npm script sets, so importing
+// this module never deletes/writes stress/* (mirrors the gen-llms guard).
 
+function main() {
 const DIR = "stress";
 if (!existsSync(DIR)) mkdirSync(DIR);
 for (const f of readdirSync(DIR)) if (f.endsWith(".flow")) unlinkSync(`${DIR}/${f}`);
@@ -264,3 +268,6 @@ const md: string[] = [
 ];
 writeFileSync(`${DIR}/README.md`, md.join("\n") + "\n");
 console.log(`\nwrote ${SPECS.length} stress models + README to ${DIR}/`);
+}
+
+if (process.env.GEN_STRESS) main();

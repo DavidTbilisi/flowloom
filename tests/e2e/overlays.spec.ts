@@ -41,6 +41,25 @@ test("loading data enables calibrate, which fits params and writes them back", a
   await expect(page.locator("#src")).not.toHaveValue(/rate = 0\.2\b/);
 });
 
+test("calibrate fits only the checked params", async ({ page }) => {
+  await page.locator("#src").fill("stock S = 5\nparam a = 0.1\nparam b = 7\nflow f = a*S + b\nchange(S) = f\nsim dt=1 to=10\nplot S");
+  await page.locator("#run").click();
+  await page.waitForFunction(() => (window as any).flowloom.run.ok === true);
+
+  const csv = "t,S\n0,5\n2,12\n4,25\n6,45\n8,75\n10,120";
+  await page.locator("#dataInput").setInputFiles({ name: "obs.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await page.waitForFunction(() => !!(window as any).flowloom.overlay.data);
+
+  // exclude `b` from the fit, then calibrate
+  await page.locator('#calParams input[data-p="b"]').uncheck();
+  await page.locator("#calBtn").click();
+
+  // b stays exactly 7 (excluded); a moves off its 0.1 start
+  await expect.poll(() => page.evaluate(() => (window as any).flowloom.run.model.varIndex.get("b").expr.value)).toBe(7);
+  const a = await page.evaluate(() => (window as any).flowloom.run.model.varIndex.get("a").expr.value);
+  expect(a).not.toBe(0.1);
+});
+
 test("Compare overlays a second model and Clear removes overlays", async ({ page }) => {
   const other = "stock Population = 5\nparam r = 0.3\nflow g = r*Population\nchange(Population) = g\nsim dt=0.1 to=25\nplot Population";
   await page.locator("#cmpInput").setInputFiles({ name: "other.flow", mimeType: "text/plain", buffer: Buffer.from(other) });

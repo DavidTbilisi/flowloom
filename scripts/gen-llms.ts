@@ -30,6 +30,8 @@ animation are all derived from it. Read and edit a model entirely as text.
   aux   NAME [unit] = EXPR              an instantaneous computed value, recomputed each step
   param NAME [unit] = EXPR              a constant knob, evaluated once (alias: const)
   table NAME = (x,y) (x,y) ...          piecewise-linear lookup; call it as NAME(x)
+  dim NAME = A, B, C                     a subscript dimension (array index) of named elements
+  stock NAME[dim] = EXPR                 an array: one stock per element; refer to NAME[dim] / NAME[A]; sum(NAME) collapses it
   sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4)
   plot A B C                            which series are visible by default
   # text after a hash is a comment; a trailing # on a decl is its doc string
@@ -93,7 +95,8 @@ per series instead of the full time series. A metric SPEC reduces a run to one
 number — "<op>:<series>" with op = final|max|min|mean|time-to-peak|settle-time,
 or "at:<t>:<series>" (e.g. final:Cash, max:Infected, at:50:Inventory). \`sweep\`
 turns one knob across a range; \`sensitivity\` bumps every param ±frac and ranks
-them; \`solve\` inverts the model — it finds the knob value that drives the metric
+them (\`--method morris\` or \`sobol\` for global, variance-based ranking instead of
+the local one-factor tornado); \`solve\` inverts the model — it finds the knob value that drives the metric
 to a --target (bisection, derivative-free). All three read that SPEC and return
 compact numbers, never raw series.
 

@@ -24,6 +24,7 @@ import {
   summarizeRun,
   sweepParam,
   sensitivity,
+  globalSensitivity,
   lintModel,
   solveParam,
   monteCarlo,
@@ -99,11 +100,14 @@ export const handlers = {
   },
 
   async flow_sensitivity(
-    { model, metric, params, frac, set }:
-      { model: string; metric: string; params?: string[]; frac?: number; set?: string[] },
+    { model, metric, params, frac, method, samples, set }:
+      { model: string; metric: string; params?: string[]; frac?: number; method?: "ofat" | "morris" | "sobol"; samples?: number; set?: string[] },
   ): Promise<ToolResult> {
-    const r = await sensitivity(loadModel(model, set), params ?? [], metric, frac ?? 0.1);
-    return text(r);
+    const m = loadModel(model, set);
+    if (method === "morris" || method === "sobol") {
+      return text(await globalSensitivity(m, { method, metric, params, frac: frac ?? 0.1, ...(samples !== undefined ? { samples } : {}) }));
+    }
+    return text(await sensitivity(m, params ?? [], metric, frac ?? 0.1));
   },
 
   async flow_solve(
@@ -269,12 +273,14 @@ export function buildServer(): McpServer {
     {
       title: "Rank knob sensitivity",
       description:
-        "One-factor-at-a-time: bump each param by ±frac of its base value and rank by how much the metric moves (a tornado ordering of what matters). Defaults to every param.",
+        "Rank params by how much they move the metric. method=ofat (default): one-factor-at-a-time tornado around the base. method=morris: global elementary-effects screening (mu*/sigma). method=sobol: variance-based first-order (S1) and total-order (ST) indices. All vary each param ±frac of its base.",
       inputSchema: {
         model: modelArg,
         metric: metricArg,
         params: z.array(z.string()).optional().describe("Params to vary (default: all params in the model)."),
-        frac: z.number().optional().describe("± fraction of each param's base value to bump (default 0.1)."),
+        frac: z.number().optional().describe("± fraction of each param's base value (default 0.1)."),
+        method: z.enum(["ofat", "morris", "sobol"]).optional().describe("Sensitivity method (default ofat)."),
+        samples: z.number().optional().describe("morris: number of trajectories (default 10). sobol: base sample size N (default 128)."),
         set: setArg,
       },
     },

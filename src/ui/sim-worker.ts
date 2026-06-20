@@ -8,12 +8,30 @@
 // across postMessage, so no manual serialization is needed.
 
 import { parseModel } from "../lang/index.js";
-import { simulateAsync, analyzeLoops } from "../engine/index.js";
+import { simulateAsync, analyzeLoops, monteCarlo } from "../engine/index.js";
 
-interface Req { gen: number; source: string }
+interface RunReq { gen: number; source: string }
+interface EnsembleReq { kind: "ensemble"; reqId: number; source: string; runs: number; seed?: number; series?: string[] }
 
-self.onmessage = async (e: MessageEvent<Req>) => {
-  const { gen, source } = e.data;
+self.onmessage = async (e: MessageEvent<RunReq | EnsembleReq>) => {
+  // Monte Carlo ensembles run here too — N sequential sims would freeze the UI on
+  // the main thread. Discriminated by `kind`; replies carry the matching reqId.
+  if ((e.data as EnsembleReq).kind === "ensemble") {
+    const { reqId, source, runs, seed, series } = e.data as EnsembleReq;
+    try {
+      const bands = await monteCarlo(parseModel(source), {
+        runs,
+        ...(seed !== undefined ? { seed } : {}),
+        ...(series?.length ? { series } : {}),
+      });
+      (self as unknown as Worker).postMessage({ kind: "ensemble", reqId, ok: true, bands });
+    } catch (err) {
+      (self as unknown as Worker).postMessage({ kind: "ensemble", reqId, ok: false, error: err instanceof Error ? err.message : String(err) });
+    }
+    return;
+  }
+
+  const { gen, source } = e.data as RunReq;
   try {
     const model = parseModel(source);
     // Both the simulation and the loop analysis are heavy on large models, so

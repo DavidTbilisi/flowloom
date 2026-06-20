@@ -26,6 +26,7 @@ import {
   summarizeRun,
   sweepParam,
   sensitivity,
+  globalSensitivity,
   lintModel,
   solveParam,
   monteCarlo,
@@ -36,6 +37,7 @@ import {
   type RunSummary,
   type SweepResult,
   type SensitivityResult,
+  type GsaResult,
   type SolveResult,
   type SolveOptions,
   type EnsembleResult,
@@ -58,6 +60,8 @@ interface Args {
   range?: string; // --range FROM..TO[/STEPS] for sweep
   metric?: string; // --metric SPEC (e.g. final:Stock) for sweep/sensitivity/solve
   frac: number; // --frac: ± fraction for sensitivity
+  method?: string; // --method ofat|morris|sobol for sensitivity
+  samples?: number; // --samples for morris (trajectories) / sobol (base N)
   target?: number; // --target N for solve
   bracket?: string; // --bracket A..B for solve
   tol?: number; // --tol T for solve
@@ -85,6 +89,8 @@ function parseArgs(argv: string[]): Args {
       case "--range": a.range = need(argv, ++i, arg); break;
       case "--metric": a.metric = need(argv, ++i, arg); break;
       case "--frac": a.frac = Number(need(argv, ++i, arg)); break;
+      case "--method": a.method = need(argv, ++i, arg); break;
+      case "--samples": a.samples = Math.max(2, Math.floor(Number(need(argv, ++i, arg)))); break;
       case "--target": a.target = Number(need(argv, ++i, arg)); break;
       case "--bracket": a.bracket = need(argv, ++i, arg); break;
       case "--tol": a.tol = Number(need(argv, ++i, arg)); break;
@@ -100,6 +106,8 @@ function parseArgs(argv: string[]): Args {
         else if (arg.startsWith("--range=")) a.range = arg.slice(8);
         else if (arg.startsWith("--metric=")) a.metric = arg.slice(9);
         else if (arg.startsWith("--frac=")) a.frac = Number(arg.slice(7));
+        else if (arg.startsWith("--method=")) a.method = arg.slice(9);
+        else if (arg.startsWith("--samples=")) a.samples = Math.max(2, Math.floor(Number(arg.slice(10))));
         else if (arg.startsWith("--target=")) a.target = Number(arg.slice(9));
         else if (arg.startsWith("--bracket=")) a.bracket = arg.slice(10);
         else if (arg.startsWith("--tol=")) a.tol = Number(arg.slice(6));
@@ -364,16 +372,41 @@ async function cmdSweep(args: Args): Promise<void> {
   out(args.format === "json" ? JSON.stringify(r, null, 2) : renderSweep(r));
 }
 
+function renderGsa(r: GsaResult): string {
+  const head = `global sensitivity (${r.method}) of ${r.metric} — ${r.runs} runs`;
+  if (!r.rows.length) return `${head}\n  (no numeric params to vary)`;
+  const wp = Math.max(...r.rows.map((x) => x.param.length));
+  const lines = r.rows.map((x) => {
+    if (r.method === "morris") {
+      const max = Math.max(...r.rows.map((y) => y.muStar ?? 0)) || 1;
+      const bar = "█".repeat(Math.round(((x.muStar ?? 0) / max) * 24)) || "·";
+      return `  ${x.param.padEnd(wp)}  mu*=${fmt(x.muStar!).padStart(10)}  sigma=${fmt(x.sigma!).padStart(10)}  ${bar}`;
+    }
+    const bar = "█".repeat(Math.round(Math.max(0, Math.min(1, x.st ?? 0)) * 24)) || "·";
+    return `  ${x.param.padEnd(wp)}  S1=${fmt(x.s1!).padStart(8)}  ST=${fmt(x.st!).padStart(8)}  ${bar}`;
+  });
+  return [head, ...lines].join("\n");
+}
+
 async function cmdSensitivity(args: Args): Promise<void> {
   const model = load(args);
   if (!args.metric) die("sensitivity needs --metric SPEC (e.g. max:Infected)");
-  let r: SensitivityResult;
+  const method = args.method ?? "ofat";
   try {
-    r = await sensitivity(model, args.params, args.metric, args.frac);
+    if (method === "morris" || method === "sobol") {
+      const r = await globalSensitivity(model, {
+        method, metric: args.metric, params: args.params, frac: args.frac,
+        ...(args.samples !== undefined ? { samples: args.samples } : {}),
+      });
+      out(args.format === "json" ? JSON.stringify(r, null, 2) : renderGsa(r));
+      return;
+    }
+    if (method !== "ofat") die(`unknown --method "${method}" (use ofat | morris | sobol)`);
+    const r = await sensitivity(model, args.params, args.metric, args.frac);
+    out(args.format === "json" ? JSON.stringify(r, null, 2) : renderSensitivity(r));
   } catch (e) {
     die((e as Error).message);
   }
-  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderSensitivity(r));
 }
 
 function renderSolve(r: SolveResult): string {
@@ -517,7 +550,7 @@ usage:
   flowloom explain  <model.flow>             plain-language summary of the model
   flowloom summary  <model.flow> [--json]    classify each series' dynamics (no raw arrays)
   flowloom sweep    <model.flow> --param P --range A..B[/N] --metric SPEC [--json]
-  flowloom sensitivity <model.flow> --metric SPEC [--param a,b] [--frac F] [--json]
+  flowloom sensitivity <model.flow> --metric SPEC [--param a,b] [--frac F] [--method ofat|morris|sobol] [--samples N] [--json]
   flowloom solve    <model.flow> --param P --metric SPEC --target N [--bracket A..B] [--json]
   flowloom montecarlo <model.flow> [--runs N] [--seed N] [--plot a,b] [--json]
   flowloom calibrate <model.flow> --param a,b --data obs.csv [--against S=col] [--json]
