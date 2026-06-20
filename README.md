@@ -24,6 +24,11 @@ the dynamics by editing lines. flowloom keeps the **text canonical** and *derive
 the picture. Even the toolbar's dt/method controls edit the text, so what an AI
 reads is always what ran.
 
+And — unlike the AI tools that only *draw* a causal-loop diagram — flowloom
+**actually simulates**: real units, RK4 integration, automatic R/B loop detection.
+So when an AI writes a model here, you don't trust it — you **run it**, watch the
+dynamics, and check the numbers. Validate, don't vibe.
+
 ## What's in it
 
 - **A real language** — `stock`, `change()`, `flow`, `aux`, `param`, `table`, with a
@@ -40,7 +45,18 @@ reads is always what ran.
   with its R/B badge. **Scroll to zoom, drag to pan, Fit to frame** — large
   models lay out on a scalable grid (and degrade to a navigable dot-map) so even
   a thousand-node graph stays explorable.
-- **Plots, a data table, and a time scrubber**, all synchronized to one clock.
+- **Draft a model with AI** — describe a system in plain English (*"a coffee
+  shop where word-of-mouth drives growth but limited seating caps it"*) and
+  Claude writes the `.flow`. It's then **parsed, checked, and run** by the same
+  engine — so the AI's output is *verifiable*, not a sketch. Bring your own
+  Anthropic key (stored only in your browser); the studio is fully functional
+  without it.
+- **Live parameter knobs** — every `param` gets a slider; drag it and the plot,
+  diagram, loops, and table all re-simulate at once (Vensim's "SyntheSim", in the
+  browser). The slider edits the *text*, so what you tuned is what's saved.
+- **Plots that look designed** — round-number axes, gradient area fills, and
+  hover-to-scrub the time cursor across every series.
+- **A data table and a time scrubber**, all synchronized to one clock.
 - **Learn-as-you-go** — a syntax-highlighted editor, a contextual-help bar that
   explains whatever the mouse is over, and a **Learn** button with a guided tour,
   interactive lessons, and example walkthroughs. See
@@ -62,8 +78,10 @@ backend — the engine runs entirely in the browser.
 
 ## Use it from an AI agent
 
-The same DOM-free engine runs headlessly, so an agent can author, run, and reason
-about models without the UI:
+The in-app **✨ AI** button is one way to get a model from a prompt. The other is
+headless: the same DOM-free engine runs without the UI, so an agent (Claude Code,
+Claude Desktop, a script) can author, run, and reason about models — and critique
+them against real loop analysis and simulation, not a hallucinated mental run:
 
 ```bash
 npm i -g .                                   # installs `flowloom` + `flowloom-mcp`
@@ -146,6 +164,9 @@ canonical source so they never drift.)
 - [x] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
 - [x] AI-facing surface — CLI `explain`/`describe`/`reference`, a generated
       `llms.txt` guide, and a `flowloom-mcp` MCP server over the same engine
+- [x] **in-app AI draft** — prose → `.flow`, parsed and run on the spot (BYO key)
+- [x] **live parameter sliders** — drag a knob, the whole model re-simulates
+- [x] designed plots — round-number axes, gradient fills, hover-to-scrub
 
 The original single-file prototype is preserved at
 [`reference/flowloom-v1.html`](reference/flowloom-v1.html).

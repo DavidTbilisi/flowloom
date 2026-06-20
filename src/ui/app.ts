@@ -934,7 +934,7 @@ function escapeHtml(s: string): string {
 const SHELL = `
 <header>
   <h1><b>flow</b>loom</h1>
-  <span class="tag">systems-thinking studio · stocks · flows · loops · animated</span>
+  <span class="tag">think in systems — as text, with AI · stocks · flows · loops, simulated</span>
   <span class="spacer"></span>
   <label class="tag" for="example">example</label>
   <select id="example" data-help="ui:example"></select>
