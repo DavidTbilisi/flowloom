@@ -117,6 +117,24 @@ test("dragging a node persists its position as a # @pos comment", async ({ page 
   await expect(page.locator("#src")).toHaveValue(/# @pos Population/);
 });
 
+test("undo reverts a builder edit", async ({ page }) => {
+  await page.locator('#buildBar [data-bt="stock"]').click();
+  await expect(page.locator("#src")).toHaveValue(/stock Stock = 0/);
+  await page.keyboard.press("Escape"); // close popover
+  await page.locator('#buildBar [data-tool="select"]').click(); // move focus off the text inputs
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(page.locator("#src")).not.toHaveValue(/stock Stock = 0/);
+});
+
+test("connect shows a rubber-band line from the source node", async ({ page }) => {
+  await page.locator('#buildBar [data-tool="connect"]').click();
+  await page.locator('#diagram [data-name="growth"]').click(); // pick the source flow
+  const box = await page.locator('#diagram [data-name="Population"]').boundingBox();
+  if (!box) throw new Error("node not found");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await expect(page.locator("#diagram .rubber")).toHaveCount(1);
+});
+
 test("delete warns about references before removing", async ({ page }) => {
   // select the growth flow (present in the default Logistic example)
   await page.locator('#diagram [data-name="growth"]').click();

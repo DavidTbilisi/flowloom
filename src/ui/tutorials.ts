@@ -175,9 +175,46 @@ const CHECK_UNITS: Tour = [
   },
 ];
 
+// Build a model by clicking the diagram — the visual builder, taught hands-on.
+// The tour overlay doesn't block the studio, so the user really drives the
+// builder; gates validate the live model just like the typed lessons.
+const BUILD_VISUALLY: Tour = [
+  {
+    title: "Build it by clicking",
+    body: "Same studio, no typing. We'll grow a draining tank straight from the diagram. Press Next.",
+    before: (c) => {
+      c.setEditor(`# Lesson: build visually\nstock Water [L] = 100\n\nsim dt=0.1 to=20 method=rk4\nplot Water\n`);
+      c.gotoTab("diagram");
+    },
+  },
+  {
+    title: "Turn on Edit",
+    body: "On the diagram (top-right of the canvas) click ✎ Edit. A build toolbar appears, and the canvas becomes editable.",
+    target: "#diagram",
+  },
+  {
+    // no target → centered card, so it never covers the build toolbar
+    title: "Add a flow",
+    body: "On the build toolbar, click + Flow. In the popover, name it `drain`, set it to  0.1 * Water , and Save. A new pill joins the diagram.",
+    gate: "valid",
+    validate: (c) => [...(c.store.run.model?.varIndex.values() ?? [])].some((v) => v.kind === "flow"),
+  },
+  {
+    title: "Wire it into the stock",
+    body: "Click Connect, then the −/＋ toggle to make it − (an outflow). Click the `drain` pill, then the `Water` box. That writes change(Water) = -drain.",
+    gate: "valid",
+    validate: (c) => !!c.store.run.model?.rates.has("Water"),
+  },
+  {
+    title: "You built it 🎉",
+    body: "A stock, a flow, and the link between them — drawn, not typed. Press play to watch Water drain. Everything you clicked was written to the text on the left; that's still the single source of truth.",
+  },
+];
+
 export const LESSONS: { name: string; tour: Tour }[] = [
   { name: "Build limits-to-growth", tour: LIMITS_TO_GROWTH },
   { name: "Build a balancing loop", tour: GOAL_SEEKING },
+  { name: "Build visually (no typing)", tour: BUILD_VISUALLY },
   { name: "Add randomness", tour: ADD_RANDOMNESS },
   { name: "Catch a unit mistake", tour: CHECK_UNITS },
 ];

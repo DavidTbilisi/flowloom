@@ -91,7 +91,7 @@ export function mountApp(root: HTMLElement): Store {
     let editing: { name: string; kind: Kind } | null = null;
     let sign: "+" | "-" = "+";
 
-    const apply = (next: string) => { editor.setValue(next); rebuild(); };
+    const apply = (next: string) => commit(next); // snapshot for undo, then setValue+rebuild
     const redraw = () => { if (store.tab === "diagram") diagram.render(store); };
 
     const closePop = () => {
@@ -244,6 +244,40 @@ export function mountApp(root: HTMLElement): Store {
     buildTimer = window.setTimeout(rebuild, 250);
   }
 
+  // ── undo / redo for programmatic source edits (builder, toolbar) ──
+  // editor.setValue() replaces the textarea wholesale, discarding its native undo
+  // stack — so we snapshot the source around every such edit and restore on ⌘/Ctrl-Z.
+  const undoStack: string[] = [];
+  const redoStack: string[] = [];
+  function commit(next: string) {
+    if (next === src.value) return;
+    undoStack.push(src.value);
+    if (undoStack.length > 200) undoStack.shift();
+    redoStack.length = 0;
+    editor.setValue(next); rebuild();
+  }
+  function undo() {
+    const prev = undoStack.pop();
+    if (prev === undefined) return;
+    redoStack.push(src.value);
+    editor.setValue(prev); rebuild();
+  }
+  function redo() {
+    const next = redoStack.pop();
+    if (next === undefined) return;
+    undoStack.push(src.value);
+    editor.setValue(next); rebuild();
+  }
+  function resetHistory() { undoStack.length = 0; redoStack.length = 0; }
+  window.addEventListener("keydown", (e) => {
+    if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== "z") return;
+    // a focused text field keeps its own native undo/redo
+    const ae = document.activeElement;
+    if (ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement) return;
+    e.preventDefault();
+    if (e.shiftKey) redo(); else undo();
+  });
+
   function reflectSettings() {
     if (store.run.ok && store.run.model) {
       const s = store.run.model.settings;
@@ -279,14 +313,14 @@ export function mountApp(root: HTMLElement): Store {
   $<HTMLButtonElement>("#open").onclick = () => fileInput.click();
   fileInput.onchange = () => {
     const f = fileInput.files?.[0];
-    if (f) f.text().then((text) => { editor.setValue(text); rebuild(); });
+    if (f) f.text().then((text) => { editor.setValue(text); rebuild(); resetHistory(); });
     fileInput.value = "";
   };
-  enableDropLoad($<HTMLElement>(".editor-wrap"), (text) => { editor.setValue(text); rebuild(); });
+  enableDropLoad($<HTMLElement>(".editor-wrap"), (text) => { editor.setValue(text); rebuild(); resetHistory(); });
 
   exampleSel.onchange = () => {
     const ex = EXAMPLES.find((e) => e.name === exampleSel.value);
-    if (ex) { editor.setValue(ex.source); rebuild(); store.setFrame(store.frameCount - 1); }
+    if (ex) { editor.setValue(ex.source); rebuild(); store.setFrame(store.frameCount - 1); resetHistory(); }
   };
 
   // toolbar settings rewrite the canonical `sim` line so the text stays the source of truth
@@ -396,8 +430,7 @@ export function mountApp(root: HTMLElement): Store {
       const r = await calibrate(store.run.model, { params, dataset: data });
       let text = src.value;
       for (const [name, value] of Object.entries(r.params)) text = setParamValue(text, name, value);
-      editor.setValue(text);
-      rebuild();
+      commit(text); // undoable
       ovMsg.textContent = `calibrated ${params.join(", ")} — nrmse ${r.residual.toFixed(4)}`;
     } catch (e) {
       ovMsg.textContent = `calibrate: ${(e as Error).message}`;
@@ -412,13 +445,13 @@ export function mountApp(root: HTMLElement): Store {
   // ── guided learning: the tour controller + Learn menu ──
   const ctx: TourCtx = {
     store,
-    setEditor: (text) => { editor.setValue(text); rebuild(); },
+    setEditor: (text) => { editor.setValue(text); rebuild(); resetHistory(); },
     selectLines: (from, to) => editor.selectLines(from, to),
     gotoTab: (tab) => store.setTab(tab),
     setFrame: (frame) => store.setFrame(frame),
     loadExample: (name) => {
       const ex = EXAMPLES.find((e) => e.name === name);
-      if (ex) { exampleSel.value = name; editor.setValue(ex.source); rebuild(); }
+      if (ex) { exampleSel.value = name; editor.setValue(ex.source); rebuild(); resetHistory(); }
     },
   };
   let activeTour: { close(): void } | null = null;
@@ -699,6 +732,7 @@ export function mountApp(root: HTMLElement): Store {
   editor.setValue(shared ?? DEFAULT_EXAMPLE.source);
   exampleSel.value = shared ? "" : DEFAULT_EXAMPLE.name;
   rebuild();
+  resetHistory();
   store.setTab("plot");
 
   // first visit (and not arriving via a shared link): offer the tour once
