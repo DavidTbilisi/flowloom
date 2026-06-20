@@ -1,5 +1,6 @@
 import type { Store } from "./store.js";
 import type { SimResult, InfluenceGraph, Loop } from "../engine/index.js";
+import { colorFor } from "./plot.js";
 
 // ── Animated causal diagram on an infinite (pan/zoom) canvas ─────────────────
 // Nodes live in a fixed *virtual* coordinate space sized to the node count, so
@@ -186,10 +187,16 @@ export class Diagram {
       const helpKey = L.isStock.has(n) ? "ui:node-stock" : internal ? "ui:node-internal" : "ui:node-flow";
       const named = internal ? "" : ` data-name="${esc(n)}"`;
 
+      // Each stock takes its plot colour, so the eye links a name in the editor,
+      // its line on the plot, its swatch in the legend, and its box here — one
+      // identity, one colour (the Desmos trick). Flows/aux stay neutral so the
+      // green/red polarity of the *edges* reads clearly.
+      const nodeColor = L.isStock.has(n) ? colorFor(result, n) : "";
+
       if (simplified) {
         // dot-map: a coloured dot is enough to navigate; details on hover
         const r = L.isStock.has(n) ? 5 : 3.5;
-        const fill = L.isStock.has(n) ? "#6ad1c7" : internal ? "#3a4150" : "#7a8294";
+        const fill = L.isStock.has(n) ? nodeColor : internal ? "#3a4150" : "#7a8294";
         body += `<g data-help="${helpKey}"${named}><circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${fill}" opacity="${dim}"/></g>`;
         continue;
       }
@@ -199,12 +206,12 @@ export class Diagram {
         const rng = L.range.get(n)!;
         const frac = value != null && Number.isFinite(value) ? clamp01((value - rng.lo) / (rng.hi - rng.lo || 1)) : 0;
         const bw = 84, bh = 36, bx = p.x - bw / 2, by = p.y - bh / 2;
-        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="#11161e" stroke="#6ad1c7" stroke-width="1.6" opacity="${dim}"/>`;
+        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="#11161e" stroke="${nodeColor}" stroke-width="1.6" opacity="${dim}"/>`;
         const fh = bh * frac;
         g += `<clipPath id="clip-${cssId(n)}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7"/></clipPath>`;
-        g += `<rect clip-path="url(#clip-${cssId(n)})" x="${bx}" y="${by + bh - fh}" width="${bw}" height="${fh}" fill="#6ad1c7" opacity="${0.22 * dim}"/>`;
+        g += `<rect clip-path="url(#clip-${cssId(n)})" x="${bx}" y="${by + bh - fh}" width="${bw}" height="${fh}" fill="${nodeColor}" opacity="${0.22 * dim}"/>`;
         g += `<text x="${p.x}" y="${by - 5}" text-anchor="middle" font-size="11" fill="#e6e9ef" opacity="${dim}" font-family="monospace">${esc(short(n))}</text>`;
-        g += `<text x="${p.x}" y="${p.y + 5}" text-anchor="middle" font-size="12" fill="#6ad1c7" opacity="${dim}" font-family="monospace">${value != null ? fmtShort(value) : ""}</text>`;
+        g += `<text x="${p.x}" y="${p.y + 5}" text-anchor="middle" font-size="12" fill="${nodeColor}" opacity="${dim}" font-family="monospace">${value != null ? fmtShort(value) : ""}</text>`;
       } else {
         const stroke = internal ? "#3a4150" : "#4a5566";
         const bw = 78, bh = 30, bx = p.x - bw / 2, by = p.y - bh / 2;
