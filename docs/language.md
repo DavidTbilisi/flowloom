@@ -86,11 +86,19 @@ breakpoints and clamp to the end values outside the defined range.
 
 Standard infix math with the usual precedence:
 
-- Operators: `+ - * / %` and `^` for power (`**` is accepted and means the same).
+- Arithmetic: `+ - * / %` and `^` for power (`**` is accepted and means the same).
   `^` is right-associative: `2 ^ 3 ^ 2 = 2 ^ 9`.
+- Comparisons: `== != < <= > >=`. They return `1` (true) or `0` (false).
+- Logical: `&&` / `and`, `||` / `or`, and unary `!` / `not`. Any non-zero value
+  counts as true. The word forms are aliases — they print back as the symbols.
 - Unary `-` and `+`.
 - The current time is available as `t` (or `time`).
 - Constants: `PI`, `E`.
+
+Precedence, loosest to tightest: `||` < `&&` < comparisons < `+ -` < `* / %` <
+`^` < unary. So `a + b > c && d` parses as `((a + b) > c) && d`. These operators
+are what you put in the condition of `if(cond, a, b)` — e.g.
+`if(Cash > 0 && !paused, hireRate, 0)`.
 
 ### Functions
 
@@ -102,8 +110,10 @@ sin  cos  tan  floor  ceil  round  sign
 if(cond, a, b)        clamp(x, lo, hi)
 ```
 
-`if(cond, a, b)` short-circuits — only the taken branch is evaluated, so the
-untaken branch can safely divide by zero.
+`if(cond, a, b)` is a pure function, **not** control flow: `cond`, `a`, and `b`
+are all evaluated, then the result of `a` or `b` is selected. Don't rely on the
+untaken branch being skipped to avoid e.g. division by zero — guard the operand
+instead (`x / max(y, 1e-9)`).
 
 ### Test-input functions
 

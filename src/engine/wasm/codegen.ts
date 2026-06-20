@@ -78,10 +78,24 @@ export function compileWasm(plan: SimPlan): WasmProgram {
         throw new Error(`unknown name '${e.name}'`);
       }
       case "unary":
-        emit(e.arg);
-        if (e.op === "-") out.push(OP.f64_neg);
+        if (e.op === "-") { emit(e.arg); out.push(OP.f64_neg); return; }
+        if (e.op === "!") { // a == 0 ? 1 : 0
+          emit(e.arg);
+          out.push(OP.f64_const, ...f64Bytes(0), OP.f64_eq, OP.f64_convert_i32_u);
+          return;
+        }
+        emit(e.arg); // unary '+' is identity
         return;
       case "binary": {
+        // logical &&/|| coerce each operand to a 0/1 bool first (a != 0)
+        if (e.op === "&&" || e.op === "||") {
+          emit(e.left);
+          out.push(OP.f64_const, ...f64Bytes(0), OP.f64_ne);
+          emit(e.right);
+          out.push(OP.f64_const, ...f64Bytes(0), OP.f64_ne);
+          out.push(e.op === "&&" ? OP.i32_and : OP.i32_or, OP.f64_convert_i32_u);
+          return;
+        }
         emit(e.left);
         emit(e.right);
         switch (e.op) {
@@ -91,6 +105,13 @@ export function compileWasm(plan: SimPlan): WasmProgram {
           case "/": out.push(OP.f64_div); return;
           case "%": out.push(OP.call, ...uLEB(FUNC.rem!)); return;
           case "^": out.push(OP.call, ...uLEB(FUNC.pow!)); return;
+          // comparisons leave an i32 (0/1); convert to f64 to match the stack discipline
+          case "<": out.push(OP.f64_lt, OP.f64_convert_i32_u); return;
+          case ">": out.push(OP.f64_gt, OP.f64_convert_i32_u); return;
+          case "<=": out.push(OP.f64_le, OP.f64_convert_i32_u); return;
+          case ">=": out.push(OP.f64_ge, OP.f64_convert_i32_u); return;
+          case "==": out.push(OP.f64_eq, OP.f64_convert_i32_u); return;
+          case "!=": out.push(OP.f64_ne, OP.f64_convert_i32_u); return;
         }
         return;
       }

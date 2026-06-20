@@ -54,7 +54,10 @@ export const FUNCTIONS = new Set([...Object.keys(BUILTINS), ...STATEFUL]);
 const isIdentStart = (c: string) => /[A-Za-z_]/.test(c);
 const isIdentPart = (c: string) => /[A-Za-z0-9_]/.test(c);
 const isDigit = (c: string) => c >= "0" && c <= "9";
-const OP_CHARS = new Set(["+", "-", "*", "/", "%", "^", "=", "<", ">", "!"]);
+const OP_CHARS = new Set(["+", "-", "*", "/", "%", "^", "=", "<", ">", "!", "&", "|"]);
+const OPS2 = new Set(["**", "<=", ">=", "==", "!=", "&&", "||"]);
+/** Word aliases for logical operators — coloured like operators, not identifiers. */
+const WORD_OPS = new Set(["and", "or", "not"]);
 const PUNCT_CHARS = new Set(["(", ")", ",", "[", "]"]);
 
 /** Tokenize an entire model source. The result spans every character. */
@@ -125,6 +128,11 @@ export function tokenizeSource(src: string): Tok[] {
       const word = src.slice(start, i);
       let kind: TokKind = "ident";
       let helpKey: string | undefined = `ident:${word}`;
+      if (WORD_OPS.has(word)) {
+        push(word, start, "op");
+        atLineStart = false;
+        continue;
+      }
       if (atLineStart && KEYWORDS.has(word)) {
         kind = "keyword";
         helpKey = word;
@@ -140,9 +148,9 @@ export function tokenizeSource(src: string): Tok[] {
       continue;
     }
 
-    // two-char operator: **
-    if (c === "*" && src[i + 1] === "*") {
-      push("**", i, "op");
+    // two-char operators: ** <= >= == != && ||
+    if (OPS2.has(c + (src[i + 1] ?? ""))) {
+      push(c + src[i + 1]!, i, "op");
       i += 2;
       atLineStart = false;
       continue;

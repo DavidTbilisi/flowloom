@@ -28,7 +28,9 @@ export function evalExpr(e: Expr, ctx: EvalCtx): number {
     }
     case "unary": {
       const a = evalExpr(e.arg, ctx);
-      return e.op === "-" ? -a : a;
+      if (e.op === "-") return -a;
+      if (e.op === "!") return a === 0 ? 1 : 0;
+      return a;
     }
     case "binary": {
       const l = evalExpr(e.left, ctx);
@@ -46,6 +48,23 @@ export function evalExpr(e: Expr, ctx: EvalCtx): number {
           return l % r;
         case "^":
           return Math.pow(l, r);
+        // comparisons and logical connectives return 1 (true) / 0 (false)
+        case "<":
+          return l < r ? 1 : 0;
+        case ">":
+          return l > r ? 1 : 0;
+        case "<=":
+          return l <= r ? 1 : 0;
+        case ">=":
+          return l >= r ? 1 : 0;
+        case "==":
+          return l === r ? 1 : 0;
+        case "!=":
+          return l !== r ? 1 : 0;
+        case "&&":
+          return l !== 0 && r !== 0 ? 1 : 0;
+        case "||":
+          return l !== 0 || r !== 0 ? 1 : 0;
       }
       break;
     }

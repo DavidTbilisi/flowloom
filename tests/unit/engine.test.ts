@@ -16,6 +16,49 @@ function final(src: string, series: string) {
   return arr[arr.length - 1]!;
 }
 
+describe("comparison / logical operators", () => {
+  // The compiled (codegen) backend is exercised here; wasm.test.ts pins WASM to
+  // these same numbers, and the operators feed if(cond,a,b).
+  const M = `stock S = 0
+param a = 5
+param b = 10
+aux lt = a < b
+aux gt = a > b
+aux ge = b >= 10
+aux eq = a == 5
+aux ne = a != 5
+aux andv = (a > 0) && (b > 0)
+aux orv  = (a > 100) || (b > 0)
+aux notv = !(a > 100)
+aux precCmp = 2 + 3 > 4
+aux precAnd = 1 < 2 && 3 < 1
+aux worded = a > 0 and not (a > 100)
+d(S) = 0
+sim dt=1 to=1
+plot lt gt ge eq ne andv orv notv precCmp precAnd worded`;
+
+  const r = run(M);
+  const at0 = (name: string) => r.series.get(name)![0]!;
+
+  it("comparisons return 1/0", () => {
+    expect(at0("lt")).toBe(1);
+    expect(at0("gt")).toBe(0);
+    expect(at0("ge")).toBe(1);
+    expect(at0("eq")).toBe(1);
+    expect(at0("ne")).toBe(0);
+  });
+  it("logical && / || / ! treat any non-zero as true", () => {
+    expect(at0("andv")).toBe(1);
+    expect(at0("orv")).toBe(1);
+    expect(at0("notv")).toBe(1);
+  });
+  it("binds arithmetic > comparison > logical", () => {
+    expect(at0("precCmp")).toBe(1); // (2+3) > 4
+    expect(at0("precAnd")).toBe(0); // (1<2) && (3<1)
+    expect(at0("worded")).toBe(1);  // (a>0) and not(a>100)
+  });
+});
+
 describe("integrator vs closed form", () => {
   it("Newton cooling matches the analytic exponential (RK4)", () => {
     // Temp(t) = room + (T0-room)·e^(-k t) = 20 + 70·e^(-0.3·20)

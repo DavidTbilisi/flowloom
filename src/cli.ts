@@ -282,20 +282,28 @@ function cmdLoops(args: Args): void {
 
 function cmdCheck(args: Args): void {
   const model = load(args); // exits non-zero on parse error
+  const diagnostics = lintModel(model);
+  const errors = diagnostics.filter((d) => d.severity === "error");
+  if (errors.length) {
+    for (const d of errors) process.stderr.write(`error: line ${d.loc.line}: ${d.message}\n`);
+    process.exit(1);
+  }
   const loops = analyzeLoops(model).loops.length;
   out(`ok: ${model.stocks.length} stock${plural(model.stocks.length)}, ${model.vars.length} variable${plural(model.vars.length)}, ${loops} loop${plural(loops)}`);
-  for (const d of lintModel(model)) warn(`line ${d.loc.line}: ${d.message}`);
+  for (const d of diagnostics) warn(`line ${d.loc.line}: ${d.message}`);
 }
 
 function cmdLint(args: Args): void {
   const model = load(args);
-  const warnings = lintModel(model);
+  const diagnostics = lintModel(model);
   if (args.format === "json") {
-    out(JSON.stringify(warnings.map((d) => ({ line: d.loc.line, col: d.loc.col, severity: d.severity, message: d.message })), null, 2));
+    out(JSON.stringify(diagnostics.map((d) => ({ line: d.loc.line, col: d.loc.col, severity: d.severity, message: d.message })), null, 2));
+    if (diagnostics.some((d) => d.severity === "error")) process.exit(1);
     return;
   }
-  if (!warnings.length) { out("no lint warnings"); return; }
-  for (const d of warnings) out(`line ${String(d.loc.line).padStart(3)}: ${d.message}`);
+  if (!diagnostics.length) { out("no lint warnings"); return; }
+  for (const d of diagnostics) out(`${d.severity === "error" ? "error" : "warn"} line ${String(d.loc.line).padStart(3)}: ${d.message}`);
+  if (diagnostics.some((d) => d.severity === "error")) process.exit(1);
 }
 
 function cmdDescribe(args: Args): void {

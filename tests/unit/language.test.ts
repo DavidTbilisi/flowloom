@@ -19,6 +19,30 @@ describe("expression parser", () => {
     expect(printExpr(e)).toBe("2 ^ 10");
   });
 
+  it("parses comparison / logical operators with the right precedence", () => {
+    // arithmetic binds tighter than comparison, which binds tighter than && / ||
+    expect(printExpr(parseExpr("a + b > c", 1))).toBe("a + b > c");
+    expect(printExpr(parseExpr("a > b && c < d", 1))).toBe("a > b && c < d");
+    expect(printExpr(parseExpr("a && b || c", 1))).toBe("a && b || c");
+    expect(printExpr(parseExpr("(a || b) && c", 1))).toBe("(a || b) && c");
+    expect(printExpr(parseExpr("!a", 1))).toBe("!a");
+    expect(printExpr(parseExpr("!(a && b)", 1))).toBe("!(a && b)");
+  });
+
+  it("canonicalises the word aliases and/or/not to symbols", () => {
+    expect(printExpr(parseExpr("a and b", 1))).toBe("a && b");
+    expect(printExpr(parseExpr("a or b", 1))).toBe("a || b");
+    expect(printExpr(parseExpr("not a", 1))).toBe("!a");
+    // and they're operators, not free variables
+    expect([...freeVars(parseExpr("a and b or not c", 1))].sort()).toEqual(["a", "b", "c"]);
+  });
+
+  it("gives a helpful error for = and single & / |", () => {
+    expect(() => parseExpr("a = b", 1)).toThrow(/use '=='/);
+    expect(() => parseExpr("a & b", 1)).toThrow(/&&/);
+    expect(() => parseExpr("a | b", 1)).toThrow(/\|\|/);
+  });
+
   it("extracts free variables, excluding function names", () => {
     const vars = freeVars(parseExpr("birthRate * Population * (1 - Population / carrying)", 1));
     expect([...vars].sort()).toEqual(["Population", "birthRate", "carrying"]);

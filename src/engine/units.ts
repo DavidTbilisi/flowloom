@@ -173,11 +173,28 @@ export function inferDim(e: Expr, env: UnitEnv, out: Diagnostic[]): DimResult {
       // an element shares the base symbol's declared unit
       return env.names.get(e.name) ?? UNKNOWN;
     case "unary":
+      // logical NOT yields a dimensionless boolean; -/+ preserve the dimension
+      if (e.op === "!") { inferDim(e.arg, env, out); return new Map(); }
       return inferDim(e.arg, env, out);
     case "binary": {
       const l = inferDim(e.left, env, out);
       const r = inferDim(e.right, env, out);
       switch (e.op) {
+        case "<":
+        case ">":
+        case "<=":
+        case ">=":
+        case "==":
+        case "!=":
+          // comparing unlike units is a mistake; the result is a dimensionless 0/1
+          if (l !== UNKNOWN && r !== UNKNOWN && !eqDim(l, r)) {
+            out.push(warn(e.loc, `unit mismatch: ${fmtDim(l)} ${e.op} ${fmtDim(r)} — both sides must share units`));
+          }
+          return new Map();
+        case "&&":
+        case "||":
+          // logical connectives operate on booleans and yield a dimensionless 0/1
+          return new Map();
         case "*":
           return l === UNKNOWN || r === UNKNOWN ? UNKNOWN : mulDim(l, r);
         case "/":

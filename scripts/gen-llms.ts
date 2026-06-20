@@ -36,10 +36,18 @@ animation are all derived from it. Read and edit a model entirely as text.
   plot A B C                            which series are visible by default
   # text after a hash is a comment; a trailing # on a decl is its doc string
 
-Operators: + - * / % ^ (power, right-assoc), unary -, and parentheses. There are
-no boolean/comparison operators — branch with if(cond, a, b), where any non-zero
-value is "true". A stock changes ONLY through its change() rate; everything else is
-recomputed every step.
+Operators, loosest to tightest binding:
+  ||  or                     logical OR  (word alias: or)
+  &&  and                    logical AND (word alias: and)
+  ==  !=  <  <=  >  >=        comparisons — yield 1 (true) or 0 (false)
+  +  -                       add / subtract
+  *  /  %                    multiply / divide / remainder
+  ^                          power (right-associative; ** is an alias)
+  -x   !x   (not x)          unary negate / logical NOT (word alias: not)
+Comparisons and &&/|| return 1 or 0, and any non-zero value counts as "true" — so
+they are what you put in if(cond, a, b): e.g. if(Cash > 0, hireRate, 0) or
+if(Stock < reorder && !paused, batch, 0). A stock changes ONLY through its
+change() rate; everything else is recomputed every step.
 
 ## Builtin functions and reserved names
 

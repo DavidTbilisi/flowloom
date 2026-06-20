@@ -55,3 +55,28 @@ describe("lintModel", () => {
     expect(lintModel(parseModel(EXAMPLES.find((e) => e.name === "Logistic growth")!.source))).toEqual([]);
   });
 });
+
+describe("call validation (unknown function / arity)", () => {
+  const diags = (src: string) => lintModel(parseModel(src));
+
+  it("flags an unknown function as an error with a line and did-you-mean", () => {
+    const d = diags(`stock S = 1\nd(S) = sqrtt(S)`);
+    const e = d.find((x) => x.severity === "error")!;
+    expect(e.message).toMatch(/unknown function 'sqrtt' — did you mean 'sqrt'\?/);
+    expect(e.loc.line).toBe(2);
+  });
+
+  it("flags a function with no near miss without a hint", () => {
+    expect(diags(`stock S = 1\nd(S) = avg(1, 2)`).some((x) => x.severity === "error" && /unknown function 'avg'$/.test(x.message))).toBe(true);
+  });
+
+  it("flags wrong argument counts", () => {
+    expect(diags(`stock S = 1\nd(S) = clamp(S)`).some((x) => /clamp\(\) takes 3 arguments, got 1/.test(x.message))).toBe(true);
+    expect(diags(`stock S = 1\nd(S) = sin(S, S)`).some((x) => /sin\(\) takes 1 argument, got 2/.test(x.message))).toBe(true);
+  });
+
+  it("accepts real builtins, stateful functions, sum, and case-insensitive names", () => {
+    const ok = `dim R = A, B\nstock P[R] = 1\nparam tau = 2\naux total = sum(P)\naux sm = smooth(total, tau)\naux mixed = SIN(total) + Max(1, 2) + clamp(total, 0, 5)\nchange(P[R]) = 0 * sm * mixed`;
+    expect(diags(ok).filter((x) => x.severity === "error")).toEqual([]);
+  });
+});

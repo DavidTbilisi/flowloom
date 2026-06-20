@@ -80,6 +80,36 @@ plot A B mathy trig inputs cond looked`;
     }
   });
 
+  it("matches on a model exercising every comparison / logical operator", async () => {
+    // Comparisons and &&/|| return 1/0 in TS; WASM computes them with f64
+    // compare ops + i32 conversion. They must agree bit-for-bit.
+    const src = `
+stock A = 5
+stock B = 10
+aux lt = A < B
+aux gt = A > B
+aux le = A <= 5
+aux ge = B >= 10
+aux eq = A == 5
+aux ne = A != B
+aux andv = (A > 0) && (B > 0)
+aux orv  = (A > 100) || (B > 0)
+aux notv = !(A > 100)
+aux worded = (A > 0 and B > 0) or not (A > 100)
+aux chained = if(A < B && A > 0, A, B)
+flow fa = -0.05*A*(A > 1)
+flow fb = 0.02*B*(B < 100)
+d(A) = fa
+d(B) = fb
+sim dt=0.25 to=20 method=rk4
+plot A B lt gt le ge eq ne andv orv notv worded chained`;
+    const { ts, wasm } = await runBoth(src);
+    for (const n of ts.names) {
+      const a = ts.series.get(n)!, b = wasm.series.get(n)!;
+      for (let i = 0; i < a.length; i++) expect(b[i], `${n}[${i}]`).toBeCloseTo(a[i]!, 9);
+    }
+  });
+
   it("matches on a model with delays/smoothing (internal stocks)", async () => {
     const src = `
 stock Inventory = 200

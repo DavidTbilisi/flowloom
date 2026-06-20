@@ -7,6 +7,14 @@ import { tokenize, ExprSyntaxError, type Token } from "./tokenizer.js";
 // dependencies and (numerically) differentiate for loop-polarity detection.
 
 const PREC: Record<BinOp, number> = {
+  "||": 3,
+  "&&": 4,
+  "==": 6,
+  "!=": 6,
+  "<": 6,
+  ">": 6,
+  "<=": 6,
+  ">=": 6,
   "+": 10,
   "-": 10,
   "*": 20,
@@ -62,7 +70,7 @@ class Parser {
 
   private parsePrefix(): Expr {
     const t = this.peek();
-    if (t.type === "op" && (t.value === "-" || t.value === "+")) {
+    if (t.type === "op" && (t.value === "-" || t.value === "+" || t.value === "!")) {
       this.next();
       const arg = this.parsePrefix();
       return { kind: "unary", op: t.value, arg, loc: this.loc(t) };

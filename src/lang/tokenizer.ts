@@ -22,7 +22,11 @@ export interface Token {
   col: number;
 }
 
-const OPS = new Set(["+", "-", "*", "/", "%", "^"]);
+const OPS = new Set(["+", "-", "*", "/", "%", "^", "<", ">", "!"]);
+/** Two-character operators, matched before single-character ones. */
+const OPS2 = new Set(["<=", ">=", "==", "!=", "&&", "||"]);
+/** Word aliases for logical operators (Python/SQL-style), canonicalised to symbols. */
+const WORD_OPS: Record<string, string> = { and: "&&", or: "||", not: "!" };
 
 /**
  * Tokenize an expression. `line` is used only to attach a line number to
@@ -66,7 +70,10 @@ export function tokenize(src: string, line: number): Token[] {
       const start = i;
       i++;
       while (i < src.length && isIdentPart(src[i]!)) i++;
-      toks.push({ type: "ident", value: src.slice(start, i), col: start });
+      const word = src.slice(start, i);
+      const wordOp = WORD_OPS[word];
+      if (wordOp) toks.push({ type: "op", value: wordOp, col: start });
+      else toks.push({ type: "ident", value: word, col: start });
       continue;
     }
 
@@ -102,6 +109,13 @@ export function tokenize(src: string, line: number): Token[] {
       i += 2;
       continue;
     }
+    // two-character operators (<=, >=, ==, !=, &&, ||) before single-character
+    const two = c! + (src[i + 1] ?? "");
+    if (OPS2.has(two)) {
+      toks.push({ type: "op", value: two, col: i });
+      i += 2;
+      continue;
+    }
     if (OPS.has(c!)) {
       toks.push({ type: "op", value: c!, col: i });
       i++;
@@ -109,6 +123,8 @@ export function tokenize(src: string, line: number): Token[] {
     }
 
     const loc = at(i);
+    if (c === "=") throw new ExprSyntaxError("unexpected '=' — use '==' to compare", loc);
+    if (c === "&" || c === "|") throw new ExprSyntaxError(`unexpected '${c}' — write '${c}${c}' for logical ${c === "&" ? "and" : "or"}`, loc);
     throw new ExprSyntaxError(`unexpected character '${c}'`, loc);
   }
 

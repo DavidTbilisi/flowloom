@@ -2,13 +2,15 @@
 // Non-fatal warnings the parser doesn't raise — the things that parse and run
 // but are usually mistakes. Pure and DOM-free, so it rides along with `check`
 // (CLI `lint`/`check`, MCP `flow_lint`/`flow_check`) and tightens the loop an
-// agent lives in: write → check → fix. Everything here is severity "warning";
-// nothing changes whether the model runs.
+// agent lives in: write → check → fix. Most findings are severity "warning"
+// (the model still runs); the exception is the call validation folded in from
+// validate.ts, which is severity "error" — those calls won't run at all.
 
 import type { Model, Diagnostic, Expr, Loc } from "../lang/index.js";
 import { freeVars } from "../lang/index.js";
 import { operatingPoint } from "./loops.js";
 import { checkUnits } from "./units.js";
+import { validateModel } from "./validate.js";
 
 /** Stateful builtins whose 2nd argument is a time constant τ that must be > 0. */
 const TAU_BUILTINS = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3"]);
@@ -18,6 +20,10 @@ const warn = (loc: Loc, message: string): Diagnostic => ({ severity: "warning", 
 /** Lint a parsed model. Returns warnings only — never throws on a valid model. */
 export function lintModel(model: Model): Diagnostic[] {
   const out: Diagnostic[] = [];
+
+  // Calls to functions that don't exist (or with the wrong argument count) parse
+  // fine but won't run — surface them here as errors so `check` is trustworthy.
+  out.push(...validateModel(model));
 
   // Every name referenced anywhere — by a var, a rate, a stock init, or `plot`.
   const referenced = new Set<string>();

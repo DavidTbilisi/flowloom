@@ -1,6 +1,8 @@
 import type { Expr, Model, TableDecl, VarDecl, Loc } from "../lang/types.js";
 import { freeVars } from "../lang/expr.js";
+import { ModelError } from "../lang/parser.js";
 import { scalarize } from "../lang/scalarize.js";
+import { validateModel } from "./validate.js";
 
 // ── Compiler: expand stateful delays into internal stocks ───────────────────
 // SMOOTH / SMOOTHI / SMOOTH3 / DELAY1 / DELAY3 carry state over time, so they
@@ -37,6 +39,11 @@ export interface Compiled {
 }
 
 export function compile(inModel: Model): Compiled {
+  // Reject unknown / mis-arity function calls up front, with a source location —
+  // otherwise codegen throws a line-less "unknown function" deep in the backend.
+  const callErrors = validateModel(inModel);
+  if (callErrors.length) throw new ModelError(callErrors);
+
   // Expand subscript dimensions to scalars first, so everything below (and the
   // whole engine) deals only with scalar names — see scalarize.ts.
   const model = scalarize(inModel);

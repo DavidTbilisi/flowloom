@@ -24,14 +24,20 @@ export interface Diagnostic {
 export type Expr =
   | { kind: "num"; value: number; loc: Loc }
   | { kind: "ident"; name: string; loc: Loc }
-  | { kind: "unary"; op: "-" | "+"; arg: Expr; loc: Loc }
+  | { kind: "unary"; op: "-" | "+" | "!"; arg: Expr; loc: Loc }
   | { kind: "binary"; op: BinOp; left: Expr; right: Expr; loc: Loc }
   | { kind: "call"; name: string; args: Expr[]; loc: Loc }
   // Subscripted reference: `name[sub]`, where sub is a dimension name (elementwise
   // / aggregate context) or a single element name. Lowered to scalars at compile.
   | { kind: "index"; name: string; sub: string; loc: Loc };
 
-export type BinOp = "+" | "-" | "*" | "/" | "%" | "^";
+export type BinOp =
+  | "+" | "-" | "*" | "/" | "%" | "^"
+  // Comparisons and logical connectives. They return 1 (true) or 0 (false); any
+  // non-zero operand is "true" for `&&`/`||`. This is what makes `if(cond,a,b)`
+  // usable — `cond` is built from these.
+  | "<" | ">" | "<=" | ">=" | "==" | "!="
+  | "&&" | "||";
 
 /** The declaration kinds a non-stock variable can have. */
 export type VarKind = "flow" | "aux" | "param";

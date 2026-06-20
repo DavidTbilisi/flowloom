@@ -145,7 +145,9 @@ function compileWith(e: Expr, slots: Map<string, number>, plan: SimPlan): Fn {
     }
     case "unary": {
       const a = compileWith(e.arg, slots, plan);
-      return e.op === "-" ? (m) => -a(m) : a;
+      if (e.op === "-") return (m) => -a(m);
+      if (e.op === "!") return (m) => (a(m) === 0 ? 1 : 0);
+      return a;
     }
     case "binary": {
       const l = compileWith(e.left, slots, plan);
@@ -157,6 +159,14 @@ function compileWith(e: Expr, slots: Map<string, number>, plan: SimPlan): Fn {
         case "/": return (m) => l(m) / r(m);
         case "%": return (m) => l(m) % r(m);
         case "^": return (m) => Math.pow(l(m), r(m));
+        case "<": return (m) => (l(m) < r(m) ? 1 : 0);
+        case ">": return (m) => (l(m) > r(m) ? 1 : 0);
+        case "<=": return (m) => (l(m) <= r(m) ? 1 : 0);
+        case ">=": return (m) => (l(m) >= r(m) ? 1 : 0);
+        case "==": return (m) => (l(m) === r(m) ? 1 : 0);
+        case "!=": return (m) => (l(m) !== r(m) ? 1 : 0);
+        case "&&": return (m) => (l(m) !== 0 && r(m) !== 0 ? 1 : 0);
+        case "||": return (m) => (l(m) !== 0 || r(m) !== 0 ? 1 : 0);
       }
       throw new Error("bad operator");
     }

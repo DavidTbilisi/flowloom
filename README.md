@@ -48,6 +48,10 @@ reads is always what ran.
 
 ## Run it
 
+**Live:** <https://davidtbilisi.github.io/flowloom/> — pushed to `main` auto-deploys
+via GitHub Actions (`.github/workflows/deploy.yml`). A model shared as a link
+(`#m=…`) opens straight into the studio.
+
 ```bash
 npm install
 npm run dev          # open the studio with hot reload
