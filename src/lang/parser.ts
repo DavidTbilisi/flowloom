@@ -13,7 +13,7 @@ import {
 } from "./types.js";
 import { parseExpr, freeVars } from "./expr.js";
 import { ExprSyntaxError } from "./tokenizer.js";
-import { suggestName } from "./suggest.js";
+import { suggestName, suggestSuffix } from "./suggest.js";
 
 // ── Model parser ────────────────────────────────────────────────────────────
 // The line grammar. One statement per line; `#` starts a comment. This grammar
@@ -305,8 +305,9 @@ function validateReferences(m: Raw): void {
   const check = (expr: Parameters<typeof freeVars>[0], loc: Loc) => {
     for (const id of freeVars(expr)) {
       if (!known.has(id) && !tables.has(id) && !BUILTIN_CONSTS.has(id)) {
-        const hint = suggestName(id, [...known, ...tables, ...BUILTIN_CONSTS]);
-        push(m, "error", loc, `unknown name '${id}'${hint ? ` — did you mean '${hint}'?` : ""}`);
+        const suffix = suggestSuffix(id, [...known, ...tables, ...BUILTIN_CONSTS],
+          "define it (stock/param/aux/flow) or check the spelling");
+        push(m, "error", loc, `unknown name '${id}'${suffix}`);
       }
     }
   };

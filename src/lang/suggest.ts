@@ -44,3 +44,14 @@ export function suggestName(name: string, candidates: Iterable<string>): string 
   const max = Math.max(1, Math.floor(name.length / 3)); // ~one edit per three characters
   return bestD <= max ? best : undefined;
 }
+
+/**
+ * The actionable suffix for an "unknown X" diagnostic: a `— did you mean 'Y'?`
+ * when a candidate is close, otherwise `— <fallback>`. The point is that a
+ * blocking diagnostic is never a dead end — an agent (or a person) always gets a
+ * next move, whether the mistake was a typo or a name it simply has to define.
+ */
+export function suggestSuffix(name: string, candidates: Iterable<string>, fallback: string): string {
+  const hint = suggestName(name, candidates);
+  return hint ? ` — did you mean '${hint}'?` : ` — ${fallback}`;
+}
