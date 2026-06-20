@@ -138,6 +138,27 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .plot-ctrls .cal-p { display: inline-flex; align-items: center; gap: 3px; }
 .plot-ctrls .cal-p input { margin: 0; }
 
+/* ── AI draft panel (prose → .flow) ───────────────────────────────────── */
+.ai-panel[hidden] { display: none; }
+.ai-panel {
+  position: absolute; top: 10px; left: 10px; right: 10px; z-index: 5;
+  display: flex; flex-direction: column; gap: 8px; padding: 12px;
+  background: var(--panel2); border: 1px solid var(--accent); border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(0,0,0,.55);
+}
+.ai-panel .ai-head { display: flex; align-items: center; }
+.ai-panel .ai-title { font-weight: 600; color: var(--ink); flex: 1; }
+.ai-panel .ai-x { background: transparent; border: 0; color: var(--dim); cursor: pointer; font-size: 14px; padding: 0 4px; }
+.ai-panel .ai-x:hover { color: var(--ink); }
+.ai-panel textarea, .ai-panel input {
+  width: 100%; font: 13px/1.5 var(--mono); background: #0c0e12; resize: vertical;
+}
+.ai-panel #aiPrompt { font-family: inherit; }
+.ai-panel .ai-row { display: flex; align-items: center; gap: 8px; }
+.ai-panel .ai-row .spacer { flex: 1; }
+.ai-panel .ai-msg { color: var(--warn); font: 12px var(--mono); min-height: 16px; }
+.ai-panel .ai-foot { color: var(--dim); font-size: 11px; line-height: 1.45; }
+
 /* ── live parameter sliders (Tune) ────────────────────────────────────── */
 .tune[hidden] { display: none; }
 .tune {
