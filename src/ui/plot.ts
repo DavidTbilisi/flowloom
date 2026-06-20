@@ -29,8 +29,18 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
   const tMin = T[0] ?? 0, tMax = T[T.length - 1] ?? 1;
 
   const vis = [...store.visible].filter((n) => r.series.has(n));
+  const ov = store.overlay;
   let lo = Infinity, hi = -Infinity;
-  for (const n of vis) for (const v of r.series.get(n)!) if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+  const grow = (v: number) => { if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; } };
+  for (const n of vis) for (const v of r.series.get(n)!) grow(v);
+  // Overlays must fit in view too: Monte Carlo bands, observed data, comparison run.
+  for (const n of vis) {
+    const b = ov.bands?.bands.get(n);
+    if (b) { for (const v of b.p05) grow(v); for (const v of b.p95) grow(v); }
+    const cmp = ov.compare?.result.series.get(n);
+    if (cmp) for (const v of cmp) grow(v);
+  }
+  if (ov.data) for (const [name, col] of ov.data.columns) if (vis.includes(name)) for (const v of col) grow(v);
   if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
   if (lo === hi) { hi = lo + 1; lo -= 1; }
   const padY = (hi - lo) * 0.06; lo -= padY; hi += padY;
@@ -53,6 +63,55 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
   }
   g.strokeStyle = "#3a4150";
   g.beginPath(); g.moveTo(x0, y1); g.lineTo(x0, y0); g.lineTo(x1, y0); g.stroke();
+
+  // ── overlays (drawn behind the canonical series) ──
+  // Monte Carlo bands: a translucent p05–p95 ribbon per visible series.
+  if (ov.bands) {
+    for (const n of vis) {
+      const b = ov.bands.bands.get(n);
+      if (!b) continue;
+      const bt = ov.bands.t;
+      g.fillStyle = colorFor(r, n); g.globalAlpha = 0.16;
+      g.beginPath();
+      for (let i = 0; i < bt.length; i++) g[i ? "lineTo" : "moveTo"](sx(bt[i]!), sy(b.p95[i]!));
+      for (let i = bt.length - 1; i >= 0; i--) g.lineTo(sx(bt[i]!), sy(b.p05[i]!));
+      g.closePath(); g.fill();
+      g.globalAlpha = 0.5; g.strokeStyle = colorFor(r, n); g.lineWidth = 1;
+      g.beginPath();
+      for (let i = 0; i < bt.length; i++) g[i ? "lineTo" : "moveTo"](sx(bt[i]!), sy(b.p50[i]!));
+      g.stroke();
+      g.globalAlpha = 1;
+    }
+  }
+
+  // Comparison run: the other model's series as a dashed line.
+  if (ov.compare) {
+    g.lineWidth = 2; g.setLineDash([5, 4]); g.globalAlpha = 0.85;
+    for (const n of vis) {
+      const arr = ov.compare.result.series.get(n);
+      if (!arr) continue;
+      const ct = ov.compare.result.t;
+      g.strokeStyle = colorFor(r, n);
+      g.beginPath();
+      for (let i = 0; i < arr.length; i++) g[i ? "lineTo" : "moveTo"](sx(ct[i]!), sy(arr[i]!));
+      g.stroke();
+    }
+    g.setLineDash([]); g.globalAlpha = 1;
+  }
+
+  // Observed data: hollow markers at each sample of a matching visible series.
+  if (ov.data) {
+    for (const n of vis) {
+      const col = ov.data.columns.get(n);
+      if (!col) continue;
+      g.strokeStyle = colorFor(r, n); g.fillStyle = "#11151c"; g.lineWidth = 1.5;
+      for (let i = 0; i < ov.data.t.length; i++) {
+        const v = col[i]!;
+        if (!Number.isFinite(v)) continue;
+        g.beginPath(); g.arc(sx(ov.data.t[i]!), sy(v), 2.8, 0, Math.PI * 2); g.fill(); g.stroke();
+      }
+    }
+  }
 
   // series
   g.lineWidth = 2;

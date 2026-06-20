@@ -1,5 +1,5 @@
 import { parseModel, ModelError, type Model, type Diagnostic } from "../lang/index.js";
-import { simulate, analyzeLoops, type SimResult, type LoopReport } from "../engine/index.js";
+import { simulate, analyzeLoops, type SimResult, type LoopReport, type EnsembleResult, type Dataset } from "../engine/index.js";
 
 // ── Application state ────────────────────────────────────────────────────────
 // One observable store. Components subscribe; setters notify. The animation
@@ -16,6 +16,16 @@ export interface RunState {
   diagnostics: Diagnostic[];
   error?: string;
   note?: string;
+}
+
+/** Optional things drawn over the plot, independent of the canonical run. */
+export interface Overlay {
+  /** Monte Carlo percentile bands (cleared when the model is re-run). */
+  bands?: EnsembleResult;
+  /** Observed reference series to fit/compare against (persists across edits). */
+  data?: Dataset;
+  /** A second model's run, overlaid for comparison (persists across edits). */
+  compare?: { source: string; result: SimResult };
 }
 
 type Listener = () => void;
@@ -37,6 +47,8 @@ export class Store {
   tab: Tab = "plot";
   run: RunState = { ok: false, diagnostics: [] };
   visible = new Set<string>();
+  /** Auxiliary series drawn over the plot (Monte Carlo bands, data, comparison). */
+  overlay: Overlay = {};
   /** True while a large model is being simulated in the worker. */
   computing = false;
 
@@ -94,9 +106,27 @@ export class Store {
     this.notifyFrame();
   }
 
+  setBands(bands: EnsembleResult | undefined) {
+    this.overlay.bands = bands;
+    this.notify();
+  }
+  setData(data: Dataset | undefined) {
+    this.overlay.data = data;
+    this.notify();
+  }
+  setCompare(compare: { source: string; result: SimResult } | undefined) {
+    this.overlay.compare = compare;
+    this.notify();
+  }
+  clearOverlay() {
+    this.overlay = {};
+    this.notify();
+  }
+
   /** Parse + simulate the current source, updating run state and default series. */
   build(source: string) {
     this.source = source;
+    this.overlay.bands = undefined; // bands are tied to the previous model — stale now
     const gen = ++this.gen; // invalidate any in-flight worker result
     try {
       const model = parseModel(source);

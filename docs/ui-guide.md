@@ -25,6 +25,23 @@ anything and it explains what you're looking at**, in one line:
 When a richer explanation exists, a **Learn more ›** link jumps to the **Format**
 reference. When you're not hovering anything, the bar rotates a few tips.
 
+## Plot overlays (under the Plot tab)
+
+A row of controls beneath the legend layers extra context onto the time-series
+plot — none of it changes the canonical run:
+
+- **Monte Carlo** — for a model using `random*()`, runs N seeded simulations and
+  shades a **p05–p95 percentile band** (with the median) behind each visible
+  series. Re-running the model clears the bands (they belong to the old run).
+- **Load data** — overlay an observed **CSV/TSV** series (a time column plus
+  named columns) as hollow markers, to eyeball fit or to calibrate against.
+- **Calibrate** — enabled once data is loaded: fits the model's params to the
+  data (least normalised-RMSE) and **writes the fitted values back into the
+  text**, keeping the model canonical.
+- **Compare** — overlay another `.flow` model's run as a **dashed** line, to see
+  how two models differ on the same axes.
+- **✕ overlays** — clear them all.
+
 ## Guided learning (the Learn button)
 
 The **Learn** button (top-right) opens three kinds of guided help, all built on
