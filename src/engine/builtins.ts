@@ -74,6 +74,11 @@ export const ARITY: Record<string, [number, number]> = {
   step: [2, 2],
   pulse: [1, 2],
   ramp: [2, 3],
+  // Seeded randomness — routed specially (they need seed/step/draw-index, not the
+  // generic (args,t) ABI), but registered here so the validator and catalog see them.
+  random: [0, 0],
+  random_uniform: [2, 2],
+  random_normal: [2, 2],
 };
 
 /** Names of the stateful delay/smooth builtins handled by the compiler. */

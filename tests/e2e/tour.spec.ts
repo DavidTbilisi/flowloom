@@ -50,6 +50,31 @@ test("an interactive lesson gates Next until the model is edited correctly", asy
   await expect(next).toBeEnabled();
 });
 
+test("a gated lesson explains why Next is disabled when the model errors", async ({ page }) => {
+  await openLearn(page);
+  await page.locator(".lm-item[data-kind='lesson']").first().click();
+  await page.locator(".tour-next").click(); // step 1 → gated "add the flow" step
+
+  // a flow referencing an undefined name keeps the model invalid: the hint
+  // surfaces the error instead of leaving a silently dead Next button
+  await page.locator("#src").fill(
+    "stock Population = 5\nflow growth = fertility * Population\nsim dt=0.1 to=25 method=rk4",
+  );
+  await page.locator("#run").click();
+  const hint = page.locator(".tour-hint");
+  await expect(hint).toBeVisible();
+  await expect(hint).toContainText("fertility");
+  await expect(page.locator(".tour-next")).toBeDisabled();
+
+  // fixing it clears the hint and enables Next
+  await page.locator("#src").fill(
+    "stock Population = 5\nparam birthRate = 0.7\nparam carrying = 1000\nflow growth = birthRate * Population * (1 - Population / carrying)\nsim dt=0.1 to=25 method=rk4",
+  );
+  await page.locator("#run").click();
+  await expect(hint).toBeHidden();
+  await expect(page.locator(".tour-next")).toBeEnabled();
+});
+
 test("an example walkthrough loads that model", async ({ page }) => {
   await openLearn(page);
   await page.locator(".lm-item[data-kind='walk']", { hasText: "SIR epidemic" }).click();

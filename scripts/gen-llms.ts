@@ -25,7 +25,7 @@ animation are all derived from it. Read and edit a model entirely as text.
 ## Grammar — one statement per line
 
   stock NAME [unit] = EXPR              an accumulator; EXPR is its INITIAL value
-  d(NAME) = EXPR                        the net rate dNAME/dt — what gets integrated
+  change(NAME) = EXPR                   the net rate dNAME/dt — what gets integrated (alias: d(NAME))
   flow  NAME [unit] = EXPR              a named rate (same maths as aux, drawn as a flow)
   aux   NAME [unit] = EXPR              an instantaneous computed value, recomputed each step
   param NAME [unit] = EXPR              a constant knob, evaluated once (alias: const)
@@ -36,7 +36,7 @@ animation are all derived from it. Read and edit a model entirely as text.
 
 Operators: + - * / % ^ (power, right-assoc), unary -, and parentheses. There are
 no boolean/comparison operators — branch with if(cond, a, b), where any non-zero
-value is "true". A stock changes ONLY through its d() rate; everything else is
+value is "true". A stock changes ONLY through its change() rate; everything else is
 recomputed every step.
 
 ## Builtin functions and reserved names
@@ -82,7 +82,8 @@ ${example!.source.replace(/\s*$/, "")}
   flowloom describe model.flow --json              structure (stocks/rates/vars/loops) as JSON
   flowloom loops model.flow --json                 feedback loops with R/B polarity
   flowloom check model.flow                        parse + lint; non-zero exit on parse error
-  flowloom lint model.flow [--json]                non-fatal warnings (unused params, dead vars, bad τ)
+  flowloom lint model.flow [--json]                non-fatal warnings (unused params, dead vars, units, bad τ)
+  flowloom montecarlo model.flow --runs N          percentile bands across N seeded runs
   flowloom reference --json                         this catalog as JSON
 
 Prefer \`summary\` over \`run\` when you only need to know *what the model did*
@@ -95,20 +96,29 @@ them; \`solve\` inverts the model — it finds the knob value that drives the me
 to a --target (bisection, derivative-free). All three read that SPEC and return
 compact numbers, never raw series.
 
+For stochastic models, random()/random_uniform(lo,hi)/random_normal(mean,sd) draw
+seeded noise (set \`sim seed=N\`, default 0 ⇒ reproducible; resampled once per step).
+\`montecarlo\` runs N seeds and reports p05/p25/p50/p75/p95 + mean bands per series.
+Where you annotate \`[unit]\`s, \`lint\` runs a dimensional check (unlike-unit adds,
+dimensioned args to exp/ln/sin, a change(stock) that isn't stock-units per time).
+
 When a name is misspelled, the parse error carries a "did you mean 'X'?" hint
 (case included — birthrate vs birthRate). \`check\`/\`lint\` (and flow_check's
 \`lint\` field) also flag unused params, computed-but-unused vars, stocks with no
 rate, and non-positive smooth/delay time constants — none of which stop a run.
 
 MCP: the \`flowloom-mcp\` server exposes the same engine as tools — flow_run,
-flow_summary, flow_sweep, flow_sensitivity, flow_solve, flow_check, flow_lint,
-flow_loops, flow_describe, flow_explain, flow_examples — plus a flow://reference
-resource carrying this guide. Each tool takes the model as text.
+flow_summary, flow_sweep, flow_sensitivity, flow_solve, flow_montecarlo,
+flow_check, flow_lint, flow_loops, flow_describe, flow_explain, flow_examples —
+plus a flow://reference resource carrying this guide. Each tool takes the model as text.
 `;
 }
 
-// Run as a script (not when imported by the freshness test).
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Write the file only when invoked as the gen script (the npm script sets
+// GEN_LLMS=1), never when vitest imports buildLlmsDoc for the freshness check.
+// `vite-node` rewrites process.argv to drop the script path, so an env flag is
+// the reliable signal here.
+if (process.env.GEN_LLMS) {
   const doc = buildLlmsDoc();
   writeFileSync("docs/llms.txt", doc);
   console.log(`wrote docs/llms.txt (${doc.length} bytes)`);

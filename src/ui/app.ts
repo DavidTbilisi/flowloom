@@ -252,19 +252,76 @@ export function mountApp(root: HTMLElement): Store {
     loopsWrap.innerHTML = html;
   }
 
+  // Sample ~`target` table rows at round time values (e.g. 0, 2, 4 …) instead of
+  // raw index steps, which produced awkward times like 1.2, 2.4 … and a ragged
+  // final row. First and last samples are always included.
+  function sampleRows(t: ArrayLike<number>, target: number): number[] {
+    const N = t.length;
+    if (N <= target + 1) return Array.from({ length: N }, (_, i) => i);
+    const t0 = t[0]!, t1 = t[N - 1]!;
+    const step = niceStep((t1 - t0) / target);
+    const idx: number[] = [];
+    let last = -1;
+    for (let k = 0; ; k++) {
+      const tk = t0 + k * step;
+      if (tk > t1 + step * 0.5) break;
+      const i = nearestIndex(t, tk);
+      if (i !== last) { idx.push(i); last = i; }
+    }
+    if (idx[idx.length - 1] !== N - 1) idx.push(N - 1);
+    return idx;
+  }
+
+  // Nearest "nice" step (1, 2, 5 × 10ⁿ) at or below the requested spacing.
+  function niceStep(raw: number): number {
+    if (!(raw > 0)) return 1;
+    const base = Math.pow(10, Math.floor(Math.log10(raw)));
+    const f = raw / base;
+    return (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10) * base;
+  }
+
+  // Binary search for the index whose time is closest to `tk` (t is ascending).
+  function nearestIndex(t: ArrayLike<number>, tk: number): number {
+    let lo = 0, hi = t.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (t[mid]! < tk) lo = mid + 1; else hi = mid;
+    }
+    if (lo > 0 && Math.abs(t[lo - 1]! - tk) <= Math.abs(t[lo]! - tk)) return lo - 1;
+    return lo;
+  }
+
+  // Format a column to a shared decimal count (the max any value needs, ≤3) so
+  // that right-aligned values line up on the decimal point. Exponential/non-finite
+  // values are left as `fmt` produced them.
+  function fmtColumn(vals: number[]): string[] {
+    let dec = 0;
+    const raw = vals.map(fmt);
+    for (const s of raw) {
+      if (s.includes("e") || s === "—") continue;
+      const dot = s.indexOf(".");
+      if (dot >= 0) dec = Math.max(dec, s.length - dot - 1);
+    }
+    return vals.map((v, k) => {
+      const s = raw[k]!;
+      return s.includes("e") || s === "—" || dec === 0 ? s : v.toFixed(dec);
+    });
+  }
+
   function renderTable() {
     const r = store.run.result;
     if (!r) { tableWrap.innerHTML = ""; return; }
     const cols = r.names;
-    const N = r.t.length, every = Math.max(1, Math.floor(N / 16));
-    const rows: number[] = [];
-    for (let i = 0; i < N; i += every) rows.push(i);
-    if (rows[rows.length - 1] !== N - 1) rows.push(N - 1);
-    let html = `<table><tr><th>t</th>${cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
-    for (const i of rows) {
-      html += `<tr data-row="${i}"><td>${fmt(r.t[i]!)}</td>${cols.map((c) => `<td class="num">${fmt(r.series.get(c)![i]!)}</td>`).join("")}</tr>`;
-    }
-    html += `</table>`;
+    const rows = sampleRows(r.t, 16);
+    const tcol = fmtColumn(rows.map((i) => r.t[i]!));
+    const cells = cols.map((c) => fmtColumn(rows.map((i) => r.series.get(c)![i]!)));
+    let html = `<table><thead><tr><th class="tcol">time</th>${cols
+      .map((c) => `<th class="num">${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>`;
+    rows.forEach((i, ri) => {
+      html += `<tr data-row="${i}"><td class="tcol num">${tcol[ri]}</td>${cols
+        .map((_, ci) => `<td class="num">${cells[ci]![ri]}</td>`).join("")}</tr>`;
+    });
+    html += `</tbody></table>`;
     tableWrap.innerHTML = html;
   }
 

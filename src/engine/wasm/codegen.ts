@@ -9,6 +9,7 @@
 import type { Expr } from "../../lang/types.js";
 import type { SimPlan } from "../codegen.js";
 import { makeSlotMap } from "../codegen.js";
+import { RANDOM_FNS } from "../rng.js";
 import { buildModule, OP, FUNC, uLEB, sLEB, f64Bytes } from "./encoder.js";
 
 const F64_BLOCK = 0x7c;
@@ -45,6 +46,23 @@ export function compileWasm(plan: SimPlan): WasmProgram {
     out.push(OP.f64_store, 3, 0); // align=2^3=8, offset=0
   };
   const loadT = () => out.push(OP.local_get, 0);
+  const loadSlot = (slot: number) => out.push(OP.i32_const, ...sLEB(slot * 8), OP.f64_load, 3, 0);
+
+  // random*(): push (seed, step, draw-index, …args) and call the imported helper —
+  // the very same rng.ts function the TS backend uses, so the numbers are identical.
+  const emitRandom = (nm: string, e: Expr & { kind: "call" }): void => {
+    const k = plan.drawIndex.get(e)!;
+    loadSlot(plan.seedSlot);
+    loadSlot(plan.stepSlot);
+    out.push(OP.f64_const, ...f64Bytes(k));
+    if (nm === "random") {
+      out.push(OP.f64_const, ...f64Bytes(0), OP.f64_const, ...f64Bytes(1), OP.call, ...uLEB(FUNC.runif!));
+    } else {
+      emit(e.args[0]!);
+      emit(e.args[1]!);
+      out.push(OP.call, ...uLEB(nm === "random_uniform" ? FUNC.runif! : FUNC.rnorm!));
+    }
+  };
 
   // emit code that leaves the value of `e` on the stack
   const emit = (e: Expr): void => {
@@ -84,7 +102,9 @@ export function compileWasm(plan: SimPlan): WasmProgram {
           out.push(OP.call, ...uLEB(FUNC.lookup!));
           return;
         }
-        emitBuiltin(e.name.toLowerCase(), e.args, emit, out, loadT);
+        const nm = e.name.toLowerCase();
+        if (RANDOM_FNS.has(nm)) { emitRandom(nm, e); return; }
+        emitBuiltin(nm, e.args, emit, out, loadT);
         return;
       }
     }

@@ -11,9 +11,9 @@ param N     = 1000    # total population
 flow infection = beta * S * I / N
 flow recovery  = gamma * I
 
-d(S) = -infection
-d(I) = infection - recovery
-d(R) = recovery
+change(S) = -infection
+change(I) = infection - recovery
+change(R) = recovery
 
 sim dt=0.25 to=120 method=rk4
 plot S I R

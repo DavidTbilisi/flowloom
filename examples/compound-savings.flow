@@ -7,7 +7,7 @@ param deposit = 200     # added each period
 flow interest = rate * Balance
 flow saving   = deposit
 
-d(Balance) = interest + saving
+change(Balance) = interest + saving
 
 sim dt=1 to=40 method=euler
 plot Balance

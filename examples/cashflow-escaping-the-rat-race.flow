@@ -22,9 +22,9 @@ aux  income    [USD] = salary + passive            # total monthly income
 flow surplus   [USD] = income - Expenses           # monthly cash flow
 flow investing [USD] = invest * max(0, Cash - buffer)   # cash swept into Assets
 
-d(Cash)     = surplus - investing
-d(Assets)   = investing
-d(Expenses) = creep * (creepCap * income - Expenses)    # the Rat Race trap
+change(Cash)     = surplus - investing
+change(Assets)   = investing
+change(Expenses) = creep * (creepCap * income - Expenses)    # the Rat Race trap
 
 aux freedom = passive - Expenses    # crosses 0 when you escape the Rat Race
 

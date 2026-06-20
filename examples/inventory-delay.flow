@@ -12,7 +12,7 @@ aux  gap        = target - Inventory
 aux  orders     = max(0, sales + gap / adjustTime)
 flow receiving  = delay3(orders, leadTime)  # orders arrive after a 3rd-order delay
 
-d(Inventory) = receiving - sales
+change(Inventory) = receiving - sales
 
 sim dt=0.25 to=60 method=rk4
 plot Inventory sales receiving

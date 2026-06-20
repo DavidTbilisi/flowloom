@@ -56,6 +56,12 @@ export function evalExpr(e: Expr, ctx: EvalCtx): number {
       if (table) {
         return lookupTable(table.points, evalExpr(e.args[0]!, ctx));
       }
+      // The tree-walker is used only for loop-polarity perturbation at the
+      // operating point, where randomness should be deterministic — so each
+      // random*() resolves to its distribution mean.
+      if (name === "random") return 0.5;
+      if (name === "random_uniform") return (evalExpr(e.args[0]!, ctx) + evalExpr(e.args[1]!, ctx)) / 2;
+      if (name === "random_normal") return evalExpr(e.args[0]!, ctx);
       const fn = BUILTINS[name];
       if (!fn) throw new EvalError(`unknown function '${e.name}'`);
       // IF short-circuits to avoid div-by-zero in the untaken branch.

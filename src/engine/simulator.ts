@@ -77,6 +77,9 @@ export function runPlan(
   backend: Parameters<typeof runIntegration>[1],
 ): SimResult {
   const { dt, method } = model.settings;
+  // Seed is constant for the whole run; write it once into its reserved slot
+  // (shared with the WASM backend's linear memory). Default 0 ⇒ reproducible.
+  backend.mem[plan.seedSlot] = model.settings.seed ?? 0;
   initStateInto(plan, backend.mem, model.settings.start);
   const out = runIntegration(plan, backend, model.settings);
   return {

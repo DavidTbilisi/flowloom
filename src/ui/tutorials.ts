@@ -75,7 +75,7 @@ const LIMITS_TO_GROWTH: Tour = [
   },
   {
     title: "Drive the stock with it",
-    body: "Now connect the flow to the stock — add:  d(Population) = growth",
+    body: "Now connect the flow to the stock — add:  change(Population) = growth",
     gate: "valid",
     validate: (c) => !!c.store.run.model?.rates.has("Population"),
   },

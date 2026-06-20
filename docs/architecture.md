@@ -37,7 +37,7 @@ src/ui  (plot · animated diagram · table · loops · editor)
 - **`parser.ts`** — the line grammar. Produces a validated `Model`: declares
   symbols, enforces unique/reserved names, topologically orders variables (and
   reports algebraic loops), checks that every referenced name resolves and every
-  `d()` targets a real stock. Diagnostics carry source locations.
+  `change()` targets a real stock. Diagnostics carry source locations.
 - **`types.ts`** — the shared `Model`, `Expr`, and declaration types — the
   contract between parser and engine.
 

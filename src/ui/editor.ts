@@ -36,21 +36,30 @@ export function mountEditor(
 
   function refresh(): void {
     toks = tokenizeSource(textarea.value);
-    let html = "";
+    // Build one <div class="ln"> per logical line so a CSS counter can paint the
+    // gutter number; wrapping a line keeps its number top-aligned. Only `ws`
+    // tokens can straddle a newline, so they're the only ones we split.
+    const lines: string[] = [""];
     for (const t of toks) {
-      const body = esc(t.text);
-      if (t.kind === "ws" || t.kind === "punct" || t.kind === "op") {
-        html += body;
+      if (t.kind === "ws" && t.text.includes("\n")) {
+        const parts = t.text.split("\n");
+        lines[lines.length - 1] += esc(parts[0]!);
+        for (let k = 1; k < parts.length; k++) lines.push(esc(parts[k]!));
       } else {
-        const attrs = t.helpKey
-          ? ` data-help="${esc(t.helpKey)}"${t.helpKey.startsWith("ident:") ? ` data-name="${esc(t.text)}"` : ""}`
-          : "";
-        html += `<span class="tok-${t.kind}"${attrs}>${body}</span>`;
+        lines[lines.length - 1] += tokenHtml(t);
       }
     }
-    // trailing newline needs a guard so the <pre> keeps the last line's height
-    pre.innerHTML = html + "\n";
+    pre.innerHTML = lines.map((h) => `<div class="ln">${h}</div>`).join("");
     syncScroll();
+  }
+
+  function tokenHtml(t: Tok): string {
+    const body = esc(t.text);
+    if (t.kind === "ws" || t.kind === "punct" || t.kind === "op") return body;
+    const attrs = t.helpKey
+      ? ` data-help="${esc(t.helpKey)}"${t.helpKey.startsWith("ident:") ? ` data-name="${esc(t.text)}"` : ""}`
+      : "";
+    return `<span class="tok-${t.kind}"${attrs}>${body}</span>`;
   }
 
   function syncScroll(): void {
