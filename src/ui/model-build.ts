@@ -178,9 +178,12 @@ export function setInit(src: string, stock: string, init: string): string {
  *  `change(NAME)` targets and the `plot` list — via the lossless tokenizer, so
  *  only whole identifier tokens are touched (never substrings). */
 export function renameSymbol(src: string, oldName: string, newName: string): string {
-  return tokenizeSource(src)
+  const renamed = tokenizeSource(src)
     .map((t) => (t.kind === "ident" && t.text === oldName ? newName : t.text))
     .join("");
+  // `# @pos NAME` lives inside a comment token, so the tokenizer won't touch it —
+  // rewrite it explicitly so a renamed node keeps its stored position.
+  return renamed.replace(new RegExp(`(^#\\s*@pos\\s+)${esc(oldName)}\\b`, "gm"), `$1${newName}`);
 }
 
 /** Remove a symbol's declaration and (for a stock) its `change()` line.

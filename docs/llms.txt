@@ -132,7 +132,8 @@ per series instead of the full time series. A metric SPEC reduces a run to one
 number — "<op>:<series>" with op = final|max|min|mean|time-to-peak|settle-time,
 or "at:<t>:<series>" (e.g. final:Cash, max:Infected, at:50:Inventory). `sweep`
 turns one knob across a range; `sensitivity` bumps every param ±frac and ranks
-them; `solve` inverts the model — it finds the knob value that drives the metric
+them (`--method morris` or `sobol` for global, variance-based ranking instead of
+the local one-factor tornado); `solve` inverts the model — it finds the knob value that drives the metric
 to a --target (bisection, derivative-free). All three read that SPEC and return
 compact numbers, never raw series.
 

@@ -112,6 +112,14 @@ describe("model-build: rename", () => {
     expect(src).not.toMatch(/\bPopulation\b/);
   });
 
+  it("carries a node's stored position across a rename", () => {
+    let src = setLayoutPos(BASE, "Population", 120, -40);
+    src = renameSymbol(src, "Population", "Pop");
+    expect(src).toMatch(/# @pos Pop 120 -40/);
+    expect(src).not.toMatch(/# @pos Population/);
+    expect(readLayout(src).get("Pop")).toEqual({ x: 120, y: -40 });
+  });
+
   it("does not rename substrings or unrelated tokens", () => {
     const src = "param rate = 1\nparam rateLimit = 2\nstock S = rate\nsim dt=1 to=2\n";
     const out = renameSymbol(src, "rate", "speed");

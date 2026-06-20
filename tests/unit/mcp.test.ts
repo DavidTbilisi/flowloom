@@ -73,6 +73,15 @@ describe("mcp handlers", () => {
     expect(r.rows[0]).toHaveProperty("delta");
   });
 
+  it("flow_sensitivity runs global methods (morris/sobol)", async () => {
+    const morris = parse(await handlers.flow_sensitivity({ model: SRC, metric: "final:Population", method: "morris", samples: 6 }));
+    expect(morris.method).toBe("morris");
+    expect(morris.rows[0]).toHaveProperty("muStar");
+    const sobol = parse(await handlers.flow_sensitivity({ model: SRC, metric: "final:Population", method: "sobol", samples: 32 }));
+    expect(sobol.method).toBe("sobol");
+    expect(sobol.rows[0]).toHaveProperty("st");
+  });
+
   it("flow_solve finds the knob value that hits a target", async () => {
     // final:Population grows with birthRate; solve for a reachable target.
     const r = parse(await handlers.flow_solve({ model: SRC, param: "birthRate", metric: "final:Population", target: 20 }));
