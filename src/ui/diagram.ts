@@ -136,7 +136,9 @@ export class Diagram {
 
     // ── edges ──
     if (N <= EDGE_LIMIT) {
+      let ei = -1;
       for (const e of L.graph.edges) {
+        ei++;
         const c = col(e.sign);
         const on = hlEdges ? hlEdges.has(e.from + "|" + e.to) : true;
         const op = hlEdges ? (on ? 1 : 0.06) : simplified ? 0.5 : 0.8;
@@ -145,6 +147,11 @@ export class Diagram {
         const march = this.animated && on && !this.editMode;
         const dash = march ? `stroke-dasharray="7 5" stroke-dashoffset="${-this.dash}"` : "";
         const marker = simplified ? "" : `marker-end="url(#fa-${c.slice(1)})"`;
+        // A signal dot travels the edge in the direction of causality while the
+        // sim plays — Loopy's "feel the feedback" moment. Desynced per edge (ei)
+        // so the graph pulses organically rather than in lockstep.
+        const flowing = march && !simplified && this.dash > 0;
+        const t = ((this.dash + ei * 37) % 80) / 80; // 0..1 along the edge
         if (e.from === e.to) {
           const r = L.isStock.has(e.from) ? 26 : 22;
           body += `<path d="M ${A.x - 9} ${A.y - r + 3} A 15 15 0 1 1 ${A.x + 9} ${A.y - r + 3}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" ${dash} ${marker}/>`;
@@ -153,14 +160,20 @@ export class Diagram {
         const dx = B.x - A.x, dy = B.y - A.y, len = Math.hypot(dx, dy) || 1, ux = dx / len, uy = dy / len;
         const ra = L.isStock.has(e.from) ? 30 : 24, rb = L.isStock.has(e.to) ? 30 : 24;
         const sx = A.x + ux * ra, sy = A.y + uy * ra, ex = B.x - ux * rb, ey = B.y - uy * rb;
+        let dotX = 0, dotY = 0;
         if (straightEdges) {
           body += `<line x1="${sx}" y1="${sy}" x2="${ex}" y2="${ey}" stroke="${c}" stroke-width="${w}" opacity="${op}" ${marker}/>`;
+          dotX = sx + (ex - sx) * t; dotY = sy + (ey - sy) * t;
         } else {
           const dir = idx(L.order, e.from) < idx(L.order, e.to) ? 1 : -1;
           const off = 0.16 * len * dir;
           const mx = (sx + ex) / 2 - uy * off, my = (sy + ey) / 2 + ux * off;
           body += `<path d="M ${sx} ${sy} Q ${mx} ${my} ${ex} ${ey}" fill="none" stroke="${c}" stroke-width="${w}" opacity="${op}" ${dash} ${marker}/>`;
+          const u = 1 - t; // point on the quadratic Bézier at parameter t
+          dotX = u * u * sx + 2 * u * t * mx + t * t * ex;
+          dotY = u * u * sy + 2 * u * t * my + t * t * ey;
         }
+        if (flowing) body += `<circle cx="${dotX.toFixed(1)}" cy="${dotY.toFixed(1)}" r="3.2" fill="${c}"/>`;
       }
     }
 
