@@ -128,6 +128,12 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .legend .sw { width: 11px; height: 11px; border-radius: 3px; }
 .legend .val { color: var(--dim); font: 11px var(--mono); }
 
+/* ── plot overlay controls (Monte Carlo / data / compare / calibrate) ───── */
+.plot-ctrls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+.plot-ctrls button { font-size: 12px; padding: 4px 9px; }
+.plot-ctrls input[type=number] { width: 56px; }
+.plot-ctrls .ov-msg { color: var(--dim); font: 11px var(--mono); margin-left: 4px; }
+
 /* ── transport / playback bar ─────────────────────────────────────────── */
 .transport {
   display: flex; align-items: center; gap: 10px; margin-top: 12px;

@@ -138,6 +138,7 @@ canonical source so they never drift.)
 - [x] units checking (dimensional analysis) from the `[unit]` annotations
 - [x] seeded randomness (`random`/`random_uniform`/`random_normal`) + Monte Carlo bands
 - [x] data import + calibration (fit params to an observed CSV by normalised-RMSE)
+- [x] studio plot overlays: Monte Carlo bands, observed-data overlay, model comparison, in-app calibrate
 - [x] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
 - [x] AI-facing surface — CLI `explain`/`describe`/`reference`, a generated
       `llms.txt` guide, and a `flowloom-mcp` MCP server over the same engine

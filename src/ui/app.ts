@@ -2,7 +2,9 @@ import { Store, type Tab } from "./store.js";
 import { drawPlot, colorFor, fmt } from "./plot.js";
 import { Diagram } from "./diagram.js";
 import { EXAMPLES, DEFAULT_EXAMPLE } from "../examples/index.js";
-import { setSimSetting } from "./model-edit.js";
+import { setSimSetting, setParamValue } from "./model-edit.js";
+import { parseModel } from "../lang/index.js";
+import { simulate, monteCarlo, parseDataset, calibrate } from "../engine/index.js";
 import { renderHelp } from "./help.js";
 import { readHash, writeHash, shareUrl, downloadFlow, enableDropLoad } from "./persist.js";
 import { mountEditor } from "./editor.js";
@@ -72,6 +74,7 @@ export function mountApp(root: HTMLElement): Store {
   // subscription below rather than inline here.
   let buildTimer: number | undefined;
   function rebuild() {
+    window.clearTimeout(buildTimer); // cancel any pending debounced rebuild
     store.build(src.value);
     reflectSettings();
     writeHash(src.value);
@@ -139,6 +142,89 @@ export function mountApp(root: HTMLElement): Store {
   root.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((b) => {
     b.onclick = () => store.setTab(b.dataset.tab as Tab);
   });
+
+  // ── plot overlays: Monte Carlo bands, observed data, comparison, calibration ──
+  const ovMsg = $<HTMLSpanElement>("#ovMsg");
+  const mcBtn = $<HTMLButtonElement>("#mcBtn");
+  const mcRuns = $<HTMLInputElement>("#mcRuns");
+  const calBtn = $<HTMLButtonElement>("#calBtn");
+  const clearOvBtn = $<HTMLButtonElement>("#clearOvBtn");
+  const dataInput = $<HTMLInputElement>("#dataInput");
+  const cmpInput = $<HTMLInputElement>("#cmpInput");
+
+  function refreshOverlayCtrls() {
+    const ov = store.overlay;
+    clearOvBtn.hidden = !(ov.bands || ov.data || ov.compare);
+    calBtn.disabled = !ov.data || !store.run.ok;
+    const bits: string[] = [];
+    if (ov.bands) bits.push(`${ov.bands.runs} runs`);
+    if (ov.data) bits.push(`data: ${[...ov.data.columns.keys()].join(", ")}`);
+    if (ov.compare) bits.push("comparing");
+    ovMsg.textContent = bits.join(" · ");
+  }
+
+  mcBtn.onclick = async () => {
+    if (!store.run.ok || !store.run.model) return;
+    const runs = Math.max(2, Math.floor(Number(mcRuns.value) || 100));
+    mcBtn.disabled = true;
+    const prev = mcBtn.textContent;
+    mcBtn.textContent = "running…";
+    try {
+      store.setBands(await monteCarlo(store.run.model, { runs, series: [...store.visible] }));
+    } catch (e) {
+      ovMsg.textContent = `monte carlo: ${(e as Error).message}`;
+    } finally {
+      mcBtn.disabled = false;
+      mcBtn.textContent = prev;
+      refreshOverlayCtrls();
+    }
+  };
+
+  $<HTMLButtonElement>("#dataBtn").onclick = () => dataInput.click();
+  dataInput.onchange = () => {
+    const f = dataInput.files?.[0];
+    if (f) f.text().then((text) => {
+      try { store.setData(parseDataset(text)); } catch (e) { ovMsg.textContent = `data: ${(e as Error).message}`; }
+      refreshOverlayCtrls();
+    });
+    dataInput.value = "";
+  };
+
+  $<HTMLButtonElement>("#cmpBtn").onclick = () => cmpInput.click();
+  cmpInput.onchange = () => {
+    const f = cmpInput.files?.[0];
+    if (f) f.text().then((text) => {
+      try { store.setCompare({ source: text, result: simulate(parseModel(text)) }); }
+      catch (e) { ovMsg.textContent = `compare: ${(e as Error).message}`; }
+      refreshOverlayCtrls();
+    });
+    cmpInput.value = "";
+  };
+
+  calBtn.onclick = async () => {
+    const data = store.overlay.data;
+    if (!data || !store.run.ok || !store.run.model) return;
+    const params = store.run.model.vars.filter((v) => v.kind === "param").map((v) => v.name);
+    if (!params.length) { ovMsg.textContent = "calibrate: model has no params to fit"; return; }
+    calBtn.disabled = true;
+    const prev = calBtn.textContent;
+    calBtn.textContent = "fitting…";
+    try {
+      const r = await calibrate(store.run.model, { params, dataset: data });
+      let text = src.value;
+      for (const [name, value] of Object.entries(r.params)) text = setParamValue(text, name, value);
+      editor.setValue(text);
+      rebuild();
+      ovMsg.textContent = `calibrated ${params.join(", ")} — nrmse ${r.residual.toFixed(4)}`;
+    } catch (e) {
+      ovMsg.textContent = `calibrate: ${(e as Error).message}`;
+    } finally {
+      calBtn.textContent = prev;
+      refreshOverlayCtrls();
+    }
+  };
+
+  clearOvBtn.onclick = () => { store.clearOverlay(); refreshOverlayCtrls(); };
 
   // ── guided learning: the tour controller + Learn menu ──
   const ctx: TourCtx = {
@@ -374,6 +460,7 @@ export function mountApp(root: HTMLElement): Store {
     );
     if (store.tab === "plot") drawPlot(plotCanvas, store);
     if (store.tab === "diagram") diagram.render(store);
+    refreshOverlayCtrls();
   });
 
   // ── frame channel: cheap per-frame repaint ──
@@ -529,6 +616,17 @@ const SHELL = `
       <canvas id="plot" height="380"></canvas>
       <div class="transport" id="transport-plot" data-help="ui:transport"></div>
       <div class="legend" id="legend"></div>
+      <div class="plot-ctrls" id="plotCtrls">
+        <button id="mcBtn" class="ghost" title="run a Monte Carlo ensemble and shade percentile bands" data-help="ui:montecarlo">⤳ Monte&nbsp;Carlo</button>
+        <input id="mcRuns" type="number" min="2" step="10" value="100" title="number of seeded runs" data-help="ui:montecarlo" />
+        <button id="dataBtn" class="ghost" title="overlay an observed CSV/TSV series" data-help="ui:data">📊 Load&nbsp;data</button>
+        <button id="calBtn" class="ghost" title="fit params to the loaded data and write them back" data-help="ui:calibrate" disabled>◎ Calibrate</button>
+        <button id="cmpBtn" class="ghost" title="overlay another .flow model's run (dashed)" data-help="ui:compare">⇄ Compare</button>
+        <button id="clearOvBtn" class="ghost" title="remove all overlays" data-help="ui:clear-overlays" hidden>✕ overlays</button>
+        <span id="ovMsg" class="ov-msg"></span>
+        <input id="dataInput" type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style="display:none" />
+        <input id="cmpInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />
+      </div>
     </div>
     <div class="view hidden" id="view-diagram">
       <p class="hint">Causal graph from the model's equations. <b style="color:var(--accent)">Boxes</b> are stocks (filling to their level),
