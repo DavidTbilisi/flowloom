@@ -27,6 +27,19 @@ describe("mcp handlers", () => {
     expect(r.diagnostics[0]).toHaveProperty("message");
   });
 
+  it("flow_check is trustworthy: a lint-level call error makes ok:false, not a buried error", () => {
+    // unknown function / wrong arity parse fine but won't run. `check` must report
+    // ok:false with structured diagnostics — an agent treats ok:true as "this runs".
+    const badFn = parse(handlers.flow_check({ model: "stock S = 1\nd(S) = avg(1, 2)" }));
+    expect(badFn.ok).toBe(false);
+    expect(badFn.diagnostics[0]).toMatchObject({ line: 2 });
+    expect(badFn.diagnostics[0].message).toMatch(/unknown function 'avg'/);
+
+    const badArity = parse(handlers.flow_check({ model: "stock S = 1\nd(S) = clamp(S)" }));
+    expect(badArity.ok).toBe(false);
+    expect(badArity.diagnostics[0].message).toMatch(/clamp\(\) takes 3 arguments/);
+  });
+
   it("flow_check includes lint warnings on an ok model", () => {
     const r = parse(handlers.flow_check({ model: "stock X = 1\nparam unused = 9\nd(X) = 1" }));
     expect(r.ok).toBe(true);
