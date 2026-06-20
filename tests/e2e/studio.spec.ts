@@ -33,6 +33,33 @@ test("editing the model re-runs it (text is the source of truth)", async ({ page
   expect(finalX).toBeCloseTo(20, 6); // dX/dt = 2 over 10 ⇒ 20
 });
 
+test("live param sliders rewrite the canonical text and re-simulate", async ({ page }) => {
+  // one slider per numeric param (logistic has birthRate + carrying)
+  await expect(page.locator('input[data-tune="birthRate"]')).toBeVisible();
+  await expect(page.locator('input[data-tune="carrying"]')).toHaveCount(1);
+
+  // drive the birthRate slider like a real drag (input + change events). A range
+  // input snaps to its step, so capture the value it actually lands on.
+  const snapped = await page.evaluate(() => {
+    const s = document.querySelector('input[data-tune="birthRate"]') as HTMLInputElement;
+    s.value = "1.2";
+    s.dispatchEvent(new Event("input", { bubbles: true }));
+    s.dispatchEvent(new Event("change", { bubbles: true }));
+    return Number(s.value);
+  });
+  expect(snapped).toBeGreaterThan(1); // moved up from the original 0.7
+
+  // the canonical text was rewritten (text is the source of truth) and the doc
+  // comment is preserved.
+  await expect(page.locator("#src")).toHaveValue(/birthRate = 1\.\d+\s+# intrinsic/);
+  await expect(page.locator("#src")).not.toHaveValue(/birthRate = 0\.7\b/);
+  // …and the model re-simulated with the slider's value.
+  const birthRate = await page.evaluate(() =>
+    (window as any).flowloom.run.model.varIndex.get("birthRate").expr.value,
+  );
+  expect(birthRate).toBeCloseTo(snapped, 5);
+});
+
 test("reports a clear error for a broken model", async ({ page }) => {
   await page.locator("#src").fill("stock X = 1\nd(X) = doesNotExist");
   await page.locator("#run").click();

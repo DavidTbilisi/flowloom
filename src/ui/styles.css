@@ -138,6 +138,24 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .plot-ctrls .cal-p { display: inline-flex; align-items: center; gap: 3px; }
 .plot-ctrls .cal-p input { margin: 0; }
 
+/* ── live parameter sliders (Tune) ────────────────────────────────────── */
+.tune[hidden] { display: none; }
+.tune {
+  margin-top: 12px; padding: 10px 12px 12px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.tune-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.tune-title { font-weight: 600; color: var(--ink); }
+.tune-hint { color: var(--dim); font-size: 11px; }
+.tune-row {
+  display: grid; grid-template-columns: minmax(72px, 130px) 1fr 64px;
+  align-items: center; gap: 10px; padding: 3px 0;
+}
+.tune-row .tune-name { font: 12px var(--mono); color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tune-row input[type=range] { width: 100%; accent-color: var(--accent); cursor: grab; }
+.tune-row input[type=range]:active { cursor: grabbing; }
+.tune-row .tune-val { font: 12px var(--mono); color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+
 /* ── transport / playback bar ─────────────────────────────────────────── */
 .transport {
   display: flex; align-items: center; gap: 10px; margin-top: 12px;

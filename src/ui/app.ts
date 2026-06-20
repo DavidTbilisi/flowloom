@@ -517,7 +517,90 @@ export function mountApp(root: HTMLElement): Store {
     renderLoops();
     renderTable();
     renderLegend();
+    renderTune();
   }
+
+  // ── live parameter sliders (SyntheSim / Stella-Live) ──────────────────────
+  // Auto-generate a slider per numeric `param`. Dragging rewrites that param's
+  // value in the *canonical text* and re-simulates live, so the plot, diagram,
+  // loops and legend all move at once — the most-loved feature in every SD tool,
+  // and a natural fit for flowloom's fast recompile + text-as-source-of-truth.
+  const tuneWrap = $<HTMLDivElement>("#tuneWrap");
+  let tuneSig = "";         // the param-name set currently rendered as sliders
+  let tuneDragging = false; // don't rebuild slider DOM mid-drag (would drop the grab)
+  let tuneStart: string | null = null; // text snapshot at drag start, for one undo step
+
+  function numParams(): Array<{ name: string; value: number }> {
+    const vars = store.run.ok ? store.run.model?.vars ?? [] : [];
+    return vars
+      .filter((v) => v.kind === "param" && v.expr.kind === "num")
+      .map((v) => ({ name: v.name, value: (v.expr as Extract<Expr, { kind: "num" }>).value }));
+  }
+
+  function renderTune() {
+    const params = numParams();
+    const sig = params.map((p) => p.name).join(",");
+    if (sig === tuneSig) {
+      // same params — just echo new values into the existing sliders (but never
+      // fight the slider the user is actively dragging).
+      if (!tuneDragging) for (const p of params) {
+        const s = tuneWrap.querySelector<HTMLInputElement>(`input[data-tune="${p.name}"]`);
+        const l = tuneWrap.querySelector<HTMLElement>(`[data-tuneval="${p.name}"]`);
+        if (s) s.value = String(p.value);
+        if (l) l.textContent = fmt(p.value);
+      }
+      return;
+    }
+    tuneSig = sig;
+    if (!params.length) { tuneWrap.hidden = true; tuneWrap.innerHTML = ""; return; }
+    tuneWrap.hidden = false;
+    tuneWrap.innerHTML =
+      `<div class="tune-head"><span class="tune-title">Tune</span>` +
+      `<span class="tune-hint">drag a knob — the whole model re-simulates live</span></div>` +
+      params.map((p) => {
+        const mag = Math.abs(p.value) || 1;
+        const lo = p.value >= 0 ? 0 : p.value - mag;
+        const hi = p.value >= 0 ? p.value + mag : 0;
+        const step = (hi - lo) / 200 || 0.01;
+        return (
+          `<label class="tune-row">` +
+          `<span class="tune-name">${escapeHtml(p.name)}</span>` +
+          `<input type="range" data-tune="${escapeHtml(p.name)}" min="${lo}" max="${hi}" step="${step}" value="${p.value}" />` +
+          `<span class="tune-val" data-tuneval="${escapeHtml(p.name)}">${fmt(p.value)}</span>` +
+          `</label>`
+        );
+      }).join("");
+  }
+
+  // delegated, wired once — the slider DOM is rebuilt only when the param set changes
+  tuneWrap.addEventListener("pointerdown", (e) => {
+    if ((e.target as HTMLElement).matches("input[data-tune]")) { tuneDragging = true; tuneStart = src.value; }
+  });
+  tuneWrap.addEventListener("input", (e) => {
+    const el = e.target as HTMLInputElement;
+    if (!el.matches("input[data-tune]")) return;
+    const name = el.dataset.tune!, val = Number(el.value);
+    const lbl = tuneWrap.querySelector<HTMLElement>(`[data-tuneval="${name}"]`);
+    if (lbl) lbl.textContent = fmt(val);
+    // live, non-undoable: rewrite the canonical text + re-simulate this frame
+    editor.setValue(setParamValue(src.value, name, val));
+    rebuild();
+  });
+  const endTune = () => {
+    if (!tuneDragging) return;
+    tuneDragging = false;
+    if (tuneStart !== null && tuneStart !== src.value) { // collapse the whole drag into one undo step
+      undoStack.push(tuneStart);
+      if (undoStack.length > 200) undoStack.shift();
+      redoStack.length = 0;
+    }
+    tuneStart = null;
+    renderTune();
+  };
+  tuneWrap.addEventListener("change", (e) => {
+    if ((e.target as HTMLElement).matches("input[data-tune]")) endTune();
+  });
+  window.addEventListener("pointerup", endTune); // releases that land outside the track
 
   function renderLoopChips() {
     const run = store.run;
@@ -860,6 +943,7 @@ const SHELL = `
         <input id="dataInput" type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style="display:none" />
         <input id="cmpInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />
       </div>
+      <div class="tune" id="tuneWrap" hidden></div>
     </div>
     <div class="view hidden" id="view-diagram">
       <p class="hint">Causal graph from the model's equations. <b style="color:var(--accent)">Boxes</b> are stocks (filling to their level),
