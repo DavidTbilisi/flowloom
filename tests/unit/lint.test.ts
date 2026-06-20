@@ -26,6 +26,12 @@ describe("suggestName / did-you-mean", () => {
       parseModel(`stock Population = 5\nparam birthRate = 0.7\nflow g = birthrate * Population\nd(Population) = g`),
     ).toThrow(/unknown name 'birthrate' — did you mean 'birthRate'\?/);
   });
+
+  it("an unknown name with no near miss still gets a recovery pointer (never a dead end)", () => {
+    expect(() => parseModel(`stock S = 1\nd(S) = velocity`)).toThrow(
+      /unknown name 'velocity' — define it \(stock\/param\/aux\/flow\) or check the spelling/,
+    );
+  });
 });
 
 describe("lintModel", () => {
@@ -66,8 +72,10 @@ describe("call validation (unknown function / arity)", () => {
     expect(e.loc.line).toBe(2);
   });
 
-  it("flags a function with no near miss without a hint", () => {
-    expect(diags(`stock S = 1\nd(S) = avg(1, 2)`).some((x) => x.severity === "error" && /unknown function 'avg'$/.test(x.message))).toBe(true);
+  it("a function with no near miss still gets a recovery pointer (never a dead end)", () => {
+    expect(diags(`stock S = 1\nd(S) = avg(1, 2)`).some(
+      (x) => x.severity === "error" && /unknown function 'avg' — not a flowloom builtin — check the reference/.test(x.message),
+    )).toBe(true);
   });
 
   it("flags wrong argument counts", () => {

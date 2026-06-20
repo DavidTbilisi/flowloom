@@ -12,7 +12,7 @@
 
 import type { Model, Diagnostic, Expr, Loc } from "../lang/index.js";
 import { ARITY, STATEFUL } from "./builtins.js";
-import { suggestName } from "../lang/suggest.js";
+import { suggestSuffix } from "../lang/suggest.js";
 
 /** Argument counts for the stateful family + the subscript aggregate, which
  *  aren't in ARITY (they're rewritten away before codegen). */
@@ -46,8 +46,8 @@ export function validateModel(model: Model): Diagnostic[] {
           const lc = e.name.toLowerCase();
           const bounds = arity(lc);
           if (!bounds) {
-            const hint = suggestName(e.name, known);
-            out.push(err(loc, `unknown function '${e.name}'${hint ? ` — did you mean '${hint}'?` : ""}`));
+            const suffix = suggestSuffix(e.name, known, "not a flowloom builtin — check the reference for the function list");
+            out.push(err(loc, `unknown function '${e.name}'${suffix}`));
           } else {
             const [lo, hi] = bounds;
             const n = e.args.length;
