@@ -184,6 +184,43 @@ aux freedom = passive - Expenses    # crosses 0 when you escape the Rat Race
 sim dt=0.25 to=180 method=rk4
 plot Assets passive Expenses freedom`,
   },
+  {
+    name: "Noisy savings (stochastic)",
+    blurb: "A balance with a noisy monthly return — press ⤳ Monte Carlo (under Plot) to see the spread of outcomes.",
+    source: `# Noisy savings — compound returns with month-to-month volatility.
+# The return each step is a mean plus a Gaussian shock (random_normal).
+# Seeded, so the run is reproducible; the Monte Carlo button (under the Plot
+# tab) runs many seeds at once and shades the p05–p95 band.
+stock Balance [USD] = 1000
+
+param ret = 0.04           # mean monthly return
+param vol = 0.03           # volatility — standard deviation of the shock
+
+flow gain = Balance * (ret + random_normal(0, vol))
+
+change(Balance) = gain
+
+sim dt=1 to=60 seed=1
+plot Balance`,
+  },
+  {
+    name: "Calibration demo",
+    blurb: "Fit a param to data: Load data (examples/calibration-demo.csv), then ◎ Calibrate to recover the growth rate.",
+    source: `# Calibration demo — the growth rate starts deliberately wrong.
+# Under the Plot tab: 📊 Load data → examples/calibration-demo.csv (a column
+# 'N' of observations), then ◎ Calibrate. flowloom fits 'r' (least normalised
+# RMSE) and writes the value back into this text — you'll see r jump to ~0.15.
+stock N [units] = 10
+
+param r = 0.05             # start wrong; Calibrate recovers it from the data
+
+flow growth = r * N
+
+change(N) = growth
+
+sim dt=1 to=20
+plot N`,
+  },
 ];
 
 export const DEFAULT_EXAMPLE = EXAMPLES[0]!;

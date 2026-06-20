@@ -1,0 +1,14 @@
+# Calibration demo — the growth rate starts deliberately wrong.
+# Under the Plot tab: 📊 Load data → examples/calibration-demo.csv (a column
+# 'N' of observations), then ◎ Calibrate. flowloom fits 'r' (least normalised
+# RMSE) and writes the value back into this text — you'll see r jump to ~0.15.
+stock N [units] = 10
+
+param r = 0.05             # start wrong; Calibrate recovers it from the data
+
+flow growth = r * N
+
+change(N) = growth
+
+sim dt=1 to=20
+plot N

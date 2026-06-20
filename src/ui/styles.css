@@ -133,6 +133,9 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .plot-ctrls button { font-size: 12px; padding: 4px 9px; }
 .plot-ctrls input[type=number] { width: 56px; }
 .plot-ctrls .ov-msg { color: var(--dim); font: 11px var(--mono); margin-left: 4px; }
+.plot-ctrls .cal-params { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--dim); }
+.plot-ctrls .cal-p { display: inline-flex; align-items: center; gap: 3px; }
+.plot-ctrls .cal-p input { margin: 0; }
 
 /* ── transport / playback bar ─────────────────────────────────────────── */
 .transport {

@@ -1,0 +1,15 @@
+# Noisy savings — compound returns with month-to-month volatility.
+# The return each step is a mean plus a Gaussian shock (random_normal).
+# Seeded, so the run is reproducible; the Monte Carlo button (under the Plot
+# tab) runs many seeds at once and shades the p05–p95 band.
+stock Balance [USD] = 1000
+
+param ret = 0.04           # mean monthly return
+param vol = 0.03           # volatility — standard deviation of the shock
+
+flow gain = Balance * (ret + random_normal(0, vol))
+
+change(Balance) = gain
+
+sim dt=1 to=60 seed=1
+plot Balance

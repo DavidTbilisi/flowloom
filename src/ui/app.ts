@@ -7,8 +7,22 @@ import {
   addStock, addVar, connectFlowToStock, pipeBetweenStocks, setEquation, setInit,
   renameSymbol, deleteSymbol, uniqueName, referencesTo, readLayout, setLayoutPos,
 } from "./model-build.js";
-import { parseModel, printExpr } from "../lang/index.js";
-import { simulate, monteCarlo, parseDataset, calibrate } from "../engine/index.js";
+import { parseModel, printExpr, type Model, type Expr } from "../lang/index.js";
+import { simulate, parseDataset, calibrate, RANDOM_FNS } from "../engine/index.js";
+
+/** Does any equation call a random*() builtin? (drives the Monte Carlo hint) */
+function modelUsesRandom(model: Model): boolean {
+  const hit = (e: Expr): boolean =>
+    e.kind === "call" ? RANDOM_FNS.has(e.name.toLowerCase()) || e.args.some(hit)
+      : e.kind === "binary" ? hit(e.left) || hit(e.right)
+      : e.kind === "unary" ? hit(e.arg)
+      : false;
+  return (
+    model.vars.some((v) => hit(v.expr)) ||
+    [...model.rates.values()].some((r) => hit(r.expr)) ||
+    model.stocks.some((s) => hit(s.initExpr))
+  );
+}
 import { renderHelp } from "./help.js";
 import { readHash, writeHash, shareUrl, downloadFlow, enableDropLoad } from "./persist.js";
 import { mountEditor } from "./editor.js";
@@ -297,26 +311,49 @@ export function mountApp(root: HTMLElement): Store {
   const clearOvBtn = $<HTMLButtonElement>("#clearOvBtn");
   const dataInput = $<HTMLInputElement>("#dataInput");
   const cmpInput = $<HTMLInputElement>("#cmpInput");
+  const calParamsEl = $<HTMLSpanElement>("#calParams");
+  const calExcluded = new Set<string>(); // params the user unchecked for calibration
+
+  function modelParams(): string[] {
+    return store.run.model ? store.run.model.vars.filter((v) => v.kind === "param").map((v) => v.name) : [];
+  }
+
+  // Checkboxes to pick which params Calibrate fits (state lives in calExcluded,
+  // so re-rendering on every structural notify is safe and preserves the choice).
+  function renderCalParams() {
+    const params = store.overlay.data ? modelParams() : [];
+    if (!params.length) { calParamsEl.innerHTML = ""; calParamsEl.hidden = true; return; }
+    calParamsEl.hidden = false;
+    calParamsEl.innerHTML = "fit: " + params
+      .map((p) => `<label class="cal-p"><input type="checkbox" data-p="${escapeHtml(p)}"${calExcluded.has(p) ? "" : " checked"}/>${escapeHtml(p)}</label>`)
+      .join("");
+    calParamsEl.querySelectorAll<HTMLInputElement>("input[data-p]").forEach((cb) => {
+      cb.onchange = () => { const p = cb.dataset.p!; cb.checked ? calExcluded.delete(p) : calExcluded.add(p); };
+    });
+  }
 
   function refreshOverlayCtrls() {
     const ov = store.overlay;
     clearOvBtn.hidden = !(ov.bands || ov.data || ov.compare);
     calBtn.disabled = !ov.data || !store.run.ok;
+    const flat = ov.bands && store.run.model && !modelUsesRandom(store.run.model);
     const bits: string[] = [];
-    if (ov.bands) bits.push(`${ov.bands.runs} runs`);
+    if (ov.bands) bits.push(`${ov.bands.runs} runs${flat ? " · flat (no random())" : ""}`);
     if (ov.data) bits.push(`data: ${[...ov.data.columns.keys()].join(", ")}`);
     if (ov.compare) bits.push("comparing");
     ovMsg.textContent = bits.join(" · ");
+    renderCalParams();
   }
 
   mcBtn.onclick = async () => {
     if (!store.run.ok || !store.run.model) return;
     const runs = Math.max(2, Math.floor(Number(mcRuns.value) || 100));
+    const vis = [...store.visible]; // empty ⇒ let the ensemble default (plot line / all) apply
     mcBtn.disabled = true;
     const prev = mcBtn.textContent;
     mcBtn.textContent = "running…";
     try {
-      store.setBands(await monteCarlo(store.run.model, { runs, series: [...store.visible] }));
+      store.setBands(await store.runEnsemble({ runs, ...(vis.length ? { series: vis } : {}) }));
     } catch (e) {
       ovMsg.textContent = `monte carlo: ${(e as Error).message}`;
     } finally {
@@ -350,8 +387,8 @@ export function mountApp(root: HTMLElement): Store {
   calBtn.onclick = async () => {
     const data = store.overlay.data;
     if (!data || !store.run.ok || !store.run.model) return;
-    const params = store.run.model.vars.filter((v) => v.kind === "param").map((v) => v.name);
-    if (!params.length) { ovMsg.textContent = "calibrate: model has no params to fit"; return; }
+    const params = modelParams().filter((p) => !calExcluded.has(p));
+    if (!params.length) { ovMsg.textContent = "calibrate: select at least one param to fit"; return; }
     calBtn.disabled = true;
     const prev = calBtn.textContent;
     calBtn.textContent = "fitting…";
@@ -770,6 +807,7 @@ const SHELL = `
         <button id="calBtn" class="ghost" title="fit params to the loaded data and write them back" data-help="ui:calibrate" disabled>◎ Calibrate</button>
         <button id="cmpBtn" class="ghost" title="overlay another .flow model's run (dashed)" data-help="ui:compare">⇄ Compare</button>
         <button id="clearOvBtn" class="ghost" title="remove all overlays" data-help="ui:clear-overlays" hidden>✕ overlays</button>
+        <span id="calParams" class="cal-params" data-help="ui:calibrate" hidden></span>
         <span id="ovMsg" class="ov-msg"></span>
         <input id="dataInput" type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style="display:none" />
         <input id="cmpInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />

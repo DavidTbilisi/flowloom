@@ -37,7 +37,8 @@ plot — none of it changes the canonical run:
   named columns) as hollow markers, to eyeball fit or to calibrate against.
 - **Calibrate** — enabled once data is loaded: fits the model's params to the
   data (least normalised-RMSE) and **writes the fitted values back into the
-  text**, keeping the model canonical.
+  text**, keeping the model canonical. Tick/untick params to choose which to fit.
+  Try the **Calibration demo** example with `examples/calibration-demo.csv`.
 - **Compare** — overlay another `.flow` model's run as a **dashed** line, to see
   how two models differ on the same axes.
 - **✕ overlays** — clear them all.

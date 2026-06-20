@@ -1,5 +1,5 @@
 import { parseModel, ModelError, type Model, type Diagnostic } from "../lang/index.js";
-import { simulate, analyzeLoops, type SimResult, type LoopReport, type EnsembleResult, type Dataset } from "../engine/index.js";
+import { simulate, analyzeLoops, monteCarlo, type SimResult, type LoopReport, type EnsembleResult, type Dataset } from "../engine/index.js";
 
 // ── Application state ────────────────────────────────────────────────────────
 // One observable store. Components subscribe; setters notify. The animation
@@ -61,6 +61,11 @@ export class Store {
   private frameListeners = new Set<Listener>();
   private worker: Worker | null = null;
   private gen = 0; // generation counter to drop stale worker results
+  // A separate worker for Monte Carlo ensembles, kept independent of the main-run
+  // `gen` staleness logic; requests are matched to replies by reqId.
+  private ensembleWorker: Worker | null = null;
+  private ensembleReqId = 0;
+  private ensemblePending = new Map<number, { resolve: (r: EnsembleResult) => void; reject: (e: Error) => void }>();
 
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
@@ -121,6 +126,33 @@ export class Store {
   clearOverlay() {
     this.overlay = {};
     this.notify();
+  }
+
+  /** Run a Monte Carlo ensemble off the main thread (falls back to in-process). */
+  runEnsemble(opts: { runs: number; seed?: number; series?: string[] }): Promise<EnsembleResult> {
+    const source = this.source;
+    try {
+      if (!this.ensembleWorker) {
+        this.ensembleWorker = new Worker(new URL("./sim-worker.ts", import.meta.url), { type: "module" });
+        this.ensembleWorker.onmessage = (e: MessageEvent) => {
+          const m = e.data as { kind?: string; reqId: number; ok: boolean; bands?: EnsembleResult; error?: string };
+          if (m.kind !== "ensemble") return;
+          const p = this.ensemblePending.get(m.reqId);
+          if (!p) return;
+          this.ensemblePending.delete(m.reqId);
+          if (m.ok && m.bands) p.resolve(m.bands);
+          else p.reject(new Error(m.error ?? "monte carlo failed"));
+        };
+      }
+      const reqId = ++this.ensembleReqId;
+      return new Promise<EnsembleResult>((resolve, reject) => {
+        this.ensemblePending.set(reqId, { resolve, reject });
+        this.ensembleWorker!.postMessage({ kind: "ensemble", reqId, source, ...opts });
+      });
+    } catch {
+      // no worker available — run in-process (blocks, but correct)
+      return monteCarlo(parseModel(source), opts);
+    }
   }
 
   /** Parse + simulate the current source, updating run state and default series. */
