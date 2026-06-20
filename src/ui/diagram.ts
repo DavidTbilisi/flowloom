@@ -37,6 +37,21 @@ export class Diagram {
   view: View = { x: 0, y: 0, k: 1 };
   /** small graphs animate every frame; large ones render once (static). */
   animated = true;
+  // ── visual-builder edit mode ──
+  editMode = false;
+  tool: "select" | "connect" = "select";
+  /** source node held while wiring a connection (Connect tool). */
+  connectFrom: string | null = null;
+  /** node whose inline editor is open (Select tool). */
+  selected: string | null = null;
+  /** fired when a named node is clicked in edit mode. */
+  onNodePick: ((name: string) => void) | null = null;
+  /** fired when a node is dragged to a new virtual position (edit mode). */
+  onNodeMove: ((name: string, x: number, y: number) => void) | null = null;
+  /** stored positions (from `# @pos` comments) that override auto-layout. */
+  private positions = new Map<string, { x: number; y: number }>();
+  /** last store seen, so pointer handlers can re-render during a node drag. */
+  private store: Store | null = null;
   private onView: ((k: number) => void) | null = null;
 
   constructor(private svg: SVGSVGElement) {
@@ -45,23 +60,39 @@ export class Diagram {
 
   setOnView(fn: (k: number) => void) { this.onView = fn; }
 
+  /** Supply stored node positions (parsed from `# @pos` comments) before setModel. */
+  setPositions(p: Map<string, { x: number; y: number }>) { this.positions = p; }
+
   /** Recompute layout when the model changes, then frame it. */
   setModel(store: Store): void {
     const run = store.run;
     if (!run.ok || !run.loops || !run.result) {
+      // In edit mode a transient error (mid-edit) shouldn't blank the canvas —
+      // keep the last good layout so the user can keep clicking to fix it.
+      if (this.editMode && this.layout) return;
       this.layout = null;
       this.svg.innerHTML = `<text x="20" y="30" fill="#9aa3b2" font-size="12">run a model to see its causal diagram</text>`;
       return;
     }
-    this.layout = buildLayout(run.loops.graph, run.loops.loops, run.result);
+    this.layout = buildLayout(run.loops.graph, run.loops.loops, run.result, this.positions);
     this.animated = this.layout.order.length <= ANIM_LIMIT;
     this.render(store);
-    this.fit(); // frame the whole graph on load
+    // frame the graph on load, but never yank the view while the user edits
+    if (!this.editMode) this.fit();
   }
 
-  /** Per-frame hook: only re-render (for animation) when the graph is small. */
+  /** Per-frame hook: only re-render (for animation) when the graph is small.
+   *  Edit mode renders statically so selection/connect cues hold still. */
   tick(store: Store): void {
-    if (this.animated) this.render(store);
+    if (this.animated && !this.editMode) this.render(store);
+  }
+
+  /** Enter/leave builder edit mode; clears any in-flight selection. */
+  setEditMode(on: boolean): void {
+    this.editMode = on;
+    this.connectFrom = null;
+    this.selected = null;
+    this.svg.classList.toggle("editing", on);
   }
 
   render(store: Store): void {
@@ -71,7 +102,9 @@ export class Diagram {
     this.svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     this.svg.setAttribute("height", String(H));
 
-    const result = store.run.result!;
+    this.store = store;
+    const result = store.run.result;
+    if (!result) return; // model errored after a good layout (edit mode) — keep last paint
     const frame = store.frame;
     const N = L.order.length;
     const hi = this.highlight;
@@ -91,7 +124,7 @@ export class Diagram {
         const op = hlEdges ? (on ? 1 : 0.06) : simplified ? 0.5 : 0.8;
         const w = hlEdges && on ? 3.4 : 1.7;
         const A = L.pos.get(e.from)!, B = L.pos.get(e.to)!;
-        const march = this.animated && on;
+        const march = this.animated && on && !this.editMode;
         const dash = march ? `stroke-dasharray="7 5" stroke-dashoffset="${-this.dash}"` : "";
         const marker = simplified ? "" : `marker-end="url(#fa-${c.slice(1)})"`;
         if (e.from === e.to) {
@@ -148,6 +181,13 @@ export class Diagram {
         g += `<text x="${p.x}" y="${p.y - 1}" text-anchor="middle" font-size="10.5" fill="#cdd3df" opacity="${dim}" font-family="monospace">${esc(short(internal ? "delay" : n))}</text>`;
         if (value != null && Number.isFinite(value))
           g += `<text x="${p.x}" y="${p.y + 11}" text-anchor="middle" font-size="10" fill="#8b93a3" opacity="${dim}" font-family="monospace">${fmtShort(value)}</text>`;
+      }
+      // builder cue: ring the connect-source (green) or selected (accent) node
+      if (this.editMode && (n === this.connectFrom || n === this.selected)) {
+        const stockN = L.isStock.has(n);
+        const bw = stockN ? 94 : 88, bh = stockN ? 46 : 40;
+        const c = n === this.connectFrom ? "#5fd17a" : "#6ad1c7";
+        g = `<rect x="${p.x - bw / 2}" y="${p.y - bh / 2}" width="${bw}" height="${bh}" rx="${stockN ? 10 : 20}" fill="none" stroke="${c}" stroke-width="2" stroke-dasharray="4 3"/>` + g;
       }
       body += `<g data-help="${helpKey}"${named}>${g}</g>`;
     }
@@ -219,21 +259,39 @@ export class Diagram {
       this.zoomBy(factor, e.clientX - rect.left, e.clientY - rect.top);
     }, { passive: false });
 
-    let dragging = false, lx = 0, ly = 0;
+    let dragging = false, lx = 0, ly = 0, downX = 0, downY = 0, downNode: string | null = null;
     svg.addEventListener("pointerdown", (e) => {
       if (!this.layout) return;
-      dragging = true; lx = e.clientX; ly = e.clientY;
+      dragging = true; lx = e.clientX; ly = e.clientY; downX = e.clientX; downY = e.clientY;
+      // in edit mode, pressing on a node drags that node; empty space pans
+      downNode = this.editMode ? nodeNameAt(e.target) : null;
       svg.setPointerCapture(e.pointerId);
       svg.style.cursor = "grabbing";
     });
     svg.addEventListener("pointermove", (e) => {
       if (!dragging) return;
-      this.view.x += e.clientX - lx;
-      this.view.y += e.clientY - ly;
+      const dx = e.clientX - lx, dy = e.clientY - ly;
       lx = e.clientX; ly = e.clientY;
-      this.applyTransform();
+      if (downNode && this.layout) {
+        // move just this node in virtual space (screen delta ÷ zoom)
+        const p = this.layout.pos.get(downNode);
+        if (p) { p.x += dx / this.view.k; p.y += dy / this.view.k; if (this.store) this.render(this.store); }
+      } else {
+        this.view.x += dx; this.view.y += dy;
+        this.applyTransform();
+      }
     });
-    const end = (e: PointerEvent) => { dragging = false; svg.style.cursor = "grab"; try { svg.releasePointerCapture(e.pointerId); } catch { /* */ } };
+    const end = (e: PointerEvent) => {
+      dragging = false; svg.style.cursor = "grab"; try { svg.releasePointerCapture(e.pointerId); } catch { /* */ }
+      if (this.editMode && downNode) {
+        const moved = Math.hypot(e.clientX - downX, e.clientY - downY);
+        const p = this.layout?.pos.get(downNode);
+        // a press with no real movement is a pick; a drag persists the new position
+        if (moved < 5) this.onNodePick?.(downNode);
+        else if (p) this.onNodeMove?.(downNode, p.x, p.y);
+      }
+      downNode = null;
+    };
     svg.addEventListener("pointerup", end);
     svg.addEventListener("pointercancel", end);
     svg.style.cursor = "grab";
@@ -241,7 +299,7 @@ export class Diagram {
 }
 
 // ── layout ────────────────────────────────────────────────────────────────────
-function buildLayout(graph: InfluenceGraph, loops: Loop[], result: SimResult): Layout {
+function buildLayout(graph: InfluenceGraph, loops: Loop[], result: SimResult, overrides?: Map<string, Pos>): Layout {
   const isStock = new Set(result.stockNames);
   const isInternal = new Set(graph.nodes.filter((n) => n.includes("#")));
 
@@ -270,6 +328,8 @@ function buildLayout(graph: InfluenceGraph, loops: Loop[], result: SimResult): L
   }
 
   const pos = layoutPositions(order, isStock);
+  // stored `# @pos` positions win over the computed auto-layout
+  if (overrides) for (const n of order) { const o = overrides.get(n); if (o) pos.set(n, { x: o.x, y: o.y }); }
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const p of pos.values()) { minX = Math.min(minX, p.x); minY = Math.min(minY, p.y); maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y); }
   if (!Number.isFinite(minX)) { minX = minY = 0; maxX = maxY = 1; }
@@ -299,6 +359,12 @@ function layoutPositions(order: string[], isStock: Set<string>): Map<string, Pos
     });
   }
   return pos;
+}
+
+/** The model name of the diagram node under an event target, if any. */
+function nodeNameAt(target: EventTarget | null): string | null {
+  const el = target instanceof Element ? target.closest("[data-name]") : null;
+  return el?.getAttribute("data-name") ?? null;
 }
 
 const idx = (order: string[], n: string) => order.indexOf(n);
