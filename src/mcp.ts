@@ -60,14 +60,24 @@ function loadModel(src: string, sets?: string[]): Model {
 // ── tool implementations (pure-ish; reused by the smoke test) ────────────────
 export const handlers = {
   flow_check({ model }: { model: string }): ToolResult {
+    let m: Model;
     try {
-      const m = parseModel(model);
-      const warnings = m.diagnostics.filter((d) => d.severity === "warning").map(diag);
-      return text({ ok: true, stocks: m.stocks.length, vars: m.vars.length, loops: analyzeLoops(m).loops.length, warnings, lint: lintModel(m).map(diag) });
+      m = parseModel(model);
     } catch (e) {
       if (e instanceof ModelError) return text({ ok: false, diagnostics: e.diagnostics.map(diag) });
       throw e;
     }
+    // Call validation (unknown function / wrong arity) rides in lint as severity
+    // "error": those expressions parse but won't run. Promote them to ok:false so
+    // `check` is trustworthy on its own — an agent must be able to treat ok:true
+    // as "this will run", not have a crashing error buried in the lint array.
+    // Doing it explicitly (rather than relying on a later analyzeLoops() throw)
+    // also guarantees the agent gets structured {line, message} diagnostics.
+    const lint = lintModel(m);
+    const errors = lint.filter((d) => d.severity === "error");
+    if (errors.length) return text({ ok: false, diagnostics: errors.map(diag) });
+    const warnings = m.diagnostics.filter((d) => d.severity === "warning").map(diag);
+    return text({ ok: true, stocks: m.stocks.length, vars: m.vars.length, loops: analyzeLoops(m).loops.length, warnings, lint: lint.map(diag) });
   },
 
   flow_lint({ model }: { model: string }): ToolResult {
