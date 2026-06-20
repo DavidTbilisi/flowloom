@@ -74,16 +74,36 @@ export const handlers = {
     return text({ warnings: lintModel(parseModel(model)).map(diag) });
   },
 
-  async flow_run({ model, plot, set }: { model: string; plot?: string[]; set?: string[] }): Promise<ToolResult> {
+  async flow_run({ model, plot, set, maxPoints }: { model: string; plot?: string[]; set?: string[]; maxPoints?: number }): Promise<ToolResult> {
     const res = await simulateAsync(loadModel(model, set));
     const cols = plot?.length ? plot : res.stockNames.length ? [...res.stockNames, ...res.varNames] : res.names;
+    // Safe-by-default payload: the model still integrates at full resolution
+    // (the numerics are untouched), but a long/fine run can be 100k+ samples —
+    // megabytes of JSON that would blow an agent's context. Downsample the
+    // *returned* arrays to a cap, keeping first and last, and say so. Small runs
+    // (the common case) are returned verbatim.
+    const cap = Math.max(2, Math.floor(maxPoints ?? 1000));
+    const N = res.t.length;
+    const stride = N > cap ? Math.ceil(N / cap) : 1;
+    const pick = <T>(a: T[]): T[] => (stride === 1 ? a : a.filter((_, i) => i % stride === 0 || i === N - 1));
     const series: Record<string, number[]> = {};
     for (const c of cols) {
       const arr = res.series.get(c);
       if (!arr) throw new Error(`no series named "${c}" (have: ${res.names.join(", ")})`);
-      series[c] = arr;
+      series[c] = pick(arr);
     }
-    return text({ dt: res.dt, method: res.method, steps: res.t.length, note: res.note, t: res.t, series });
+    const t = pick(res.t);
+    return text({
+      dt: res.dt,
+      method: res.method,
+      steps: N,
+      note: res.note,
+      ...(stride > 1
+        ? { sampled: { returned: t.length, of: N, note: `series downsampled to ~${cap} points (full-resolution run; every ${stride}th sample shown). Raise maxPoints for finer detail, or use flow_summary / a metric for exact values.` } }
+        : {}),
+      t,
+      series,
+    });
   },
 
   async flow_summary({ model, plot, set }: { model: string; plot?: string[]; set?: string[] }): Promise<ToolResult> {
@@ -228,6 +248,7 @@ export function buildServer(): McpServer {
       inputSchema: {
         model: modelArg,
         plot: z.array(z.string()).optional().describe("Series to return (default: stocks then aux/flows)."),
+        maxPoints: z.number().optional().describe("Cap on returned samples per series (default 1000). The model still integrates at full resolution; long/fine runs are evenly downsampled (first & last kept) so the payload stays small. Raise it for finer detail, or prefer flow_summary."),
         set: setArg,
       },
     },
