@@ -4,6 +4,7 @@ import {
   type RateDecl,
   type VarDecl,
   type TableDecl,
+  type DimDecl,
   type VarKind,
   type SimSettings,
   type Diagnostic,
@@ -44,6 +45,7 @@ interface Raw {
   vars: VarDecl[];
   varIndex: Map<string, VarDecl>;
   tables: Map<string, TableDecl>;
+  dims: Map<string, DimDecl>;
   settings: SimSettings;
   plot: string[];
   names: Set<string>;
@@ -51,8 +53,9 @@ interface Raw {
 }
 
 const RE = {
+  dim: /^dim\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   stock: /^stock\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
-  rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*\)\s*=\s*(.+)$/,
+  rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*(?:\[\s*[A-Za-z_]\w*\s*\])?\s*\)\s*=\s*(.+)$/,
   var: /^(flow|aux|param|const)\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
   table: /^table\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   sim: /^sim\s+(.+)$/,
@@ -67,6 +70,7 @@ export function parseModel(text: string): Model {
     vars: [],
     varIndex: new Map(),
     tables: new Map(),
+    dims: new Map(),
     settings: { ...DEFAULT_SETTINGS },
     plot: [],
     names: new Set(),
@@ -92,9 +96,16 @@ export function parseModel(text: string): Model {
     }
   }
 
+  // A bracket [X] is a subscript dimension when X names a declared `dim`; otherwise
+  // it's the legacy unit annotation. Resolve now that all dims are known.
+  for (const d of [...m.stocks, ...m.vars]) {
+    if (d.unit && m.dims.has(d.unit)) { d.dim = d.unit; d.unit = undefined; }
+  }
+
   const order = topoSort(m);
 
   validateReferences(m);
+  validateSubscripts(m);
 
   const model: Model = {
     stocks: m.stocks,
@@ -102,6 +113,7 @@ export function parseModel(text: string): Model {
     vars: m.vars,
     varIndex: m.varIndex,
     tables: m.tables,
+    dims: m.dims,
     settings: m.settings,
     plot: m.plot,
     order,
@@ -128,7 +140,13 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
   let mt: RegExpMatchArray | null;
 
   try {
-    if ((mt = line.match(RE.stock))) {
+    if ((mt = line.match(RE.dim))) {
+      const [, name, body] = mt;
+      const elements = body!.split(/[\s,]+/).filter(Boolean);
+      if (elements.length === 0) push(m, "error", loc, `dim ${name} needs at least one element`);
+      if (m.dims.has(name!)) push(m, "error", loc, `dim ${name} is defined twice`);
+      m.dims.set(name!, { name: name!, elements, loc });
+    } else if ((mt = line.match(RE.stock))) {
       const [, name, unit, expr] = mt;
       claim(m, name!, loc);
       m.stocks.push({ name: name!, initExpr: parseExpr(expr!, lineNo), unit: unit?.trim(), doc, loc });
@@ -306,3 +324,57 @@ function validateReferences(m: Raw): void {
 }
 
 const BUILTIN_CONSTS = new Set(["PI", "E"]);
+
+/** Check subscript usage: valid index refs, sum of a subscripted symbol, and no
+ *  bare reference to a vector outside sum(). Mirrors what scalarize.ts enforces,
+ *  but at parse time so the editor flags it. */
+function validateSubscripts(m: Raw): void {
+  const dimOf = new Map<string, string>();
+  for (const s of m.stocks) if (s.dim) dimOf.set(s.name, s.dim);
+  for (const v of m.vars) if (v.dim) dimOf.set(v.name, v.dim);
+  if (!m.dims.size && !dimOf.size) return; // nothing subscripted
+
+  const elems = (d: string) => m.dims.get(d)?.elements ?? [];
+
+  const walk = (e: Parameters<typeof freeVars>[0], loc: Loc, insideSum: boolean): void => {
+    switch (e.kind) {
+      case "ident":
+        if (dimOf.has(e.name) && !insideSum) {
+          push(m, "error", loc, `'${e.name}' is subscripted — index it (${e.name}[${dimOf.get(e.name)}]) or aggregate it (sum(${e.name}))`);
+        }
+        break;
+      case "index": {
+        const d = dimOf.get(e.name);
+        if (!d) push(m, "error", loc, `'${e.name}' is not subscripted, so '${e.name}[${e.sub}]' is invalid`);
+        else if (e.sub !== d && !elems(d).includes(e.sub)) {
+          push(m, "error", loc, m.dims.has(e.sub)
+            ? `'${e.name}[${e.sub}]' mixes dimensions — use '${d}' elementwise or a single element`
+            : `'${e.sub}' is not an element of dimension '${d}'`);
+        }
+        break;
+      }
+      case "unary":
+        walk(e.arg, loc, insideSum);
+        break;
+      case "binary":
+        walk(e.left, loc, insideSum);
+        walk(e.right, loc, insideSum);
+        break;
+      case "call": {
+        if (e.name.toLowerCase() === "sum") {
+          const a = e.args[0];
+          const base = a && (a.kind === "ident" || a.kind === "index") ? a.name : undefined;
+          if (!base || !dimOf.has(base)) push(m, "error", loc, "sum() needs a subscripted argument, e.g. sum(Population)");
+          e.args.forEach((arg) => walk(arg, loc, true));
+        } else {
+          e.args.forEach((arg) => walk(arg, loc, insideSum));
+        }
+        break;
+      }
+    }
+  };
+
+  for (const s of m.stocks) walk(s.initExpr, s.loc, false);
+  for (const v of m.vars) walk(v.expr, v.loc, false);
+  for (const r of m.rates.values()) walk(r.expr, r.loc, false);
+}

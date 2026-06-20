@@ -96,6 +96,18 @@ class Parser {
         }
         return { kind: "call", name: t.value, args, loc: this.loc(t) };
       }
+      if (this.peek().type === "lbracket") {
+        this.next(); // consume [
+        const sub = this.next();
+        if (sub.type !== "ident") {
+          throw new ExprSyntaxError(`expected a dimension or element name in ${t.value}[…]`, this.loc(sub));
+        }
+        const close = this.next();
+        if (close.type !== "rbracket") {
+          throw new ExprSyntaxError(`expected ']' after ${t.value}[${sub.value}`, this.loc(close));
+        }
+        return { kind: "index", name: t.value, sub: sub.value, loc: this.loc(t) };
+      }
       return { kind: "ident", name: t.value, loc: this.loc(t) };
     }
     if (t.type === "lparen") {
@@ -123,6 +135,10 @@ export function freeVars(e: Expr, out: Set<string> = new Set()): Set<string> {
     case "ident":
       out.add(e.name);
       break;
+    case "index":
+      // the base symbol is the dependency; the subscript is a dim/element label
+      out.add(e.name);
+      break;
     case "unary":
       freeVars(e.arg, out);
       break;
@@ -145,6 +161,8 @@ export function printExpr(e: Expr): string {
       return String(e.value);
     case "ident":
       return e.name;
+    case "index":
+      return `${e.name}[${e.sub}]`;
     case "unary":
       return `${e.op}${wrap(e.arg, e)}`;
     case "binary":

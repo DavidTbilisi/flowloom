@@ -133,6 +133,33 @@ feedback-loop detection.
 flow receiving = delay3(orders, leadTime)   # orders arrive after a delay
 ```
 
+## Subscripts (arrays)
+
+Model many similar things as one array. A `dim` declares a dimension — an ordered
+list of named elements — and a `[dim]` annotation makes a stock/flow/aux/param an
+array over it:
+
+```
+dim region = North, South, East
+stock Population[region] = 1000          # one stock per element
+param birthRate = 0.03                   # a plain scalar broadcasts to all elements
+flow  births[region] = birthRate * Population[region]   # elementwise
+change(Population[region]) = births[region]
+aux   Total = sum(Population)            # sum() collapses the dimension to a scalar
+```
+
+Equations are **elementwise**: every `[region]` reference iterates in lockstep.
+Reference a single element with a literal subscript (`Population[North]`), and
+collapse a whole dimension with `sum(X)`. Subscripts are **lowered to scalar
+stocks** at compile time (`Population.North`, …), so they simulate, animate, and
+appear in the diagram/plot exactly like hand-written scalars — and run on all
+backends identically. A bracket that doesn't name a declared `dim` is still a unit
+(`stock Tank [liters] = …`).
+
+v1 covers one-dimensional subscripts, elementwise equations, single-element
+indexing, and `sum`. Per-element parameter values, multi-dimensional subscripts,
+and other aggregations (`mean`/`min`/`max`) are planned.
+
 ## Simulation settings
 
 ```flow
@@ -168,6 +195,26 @@ its ceiling — the same single structural loop).
 - `unknown name '<name>'` — a reference that resolves to nothing.
 - `algebraic loop among: …` — instantaneous self-reference; route it through a stock.
 - `no stocks defined` — every model needs at least one stock.
+
+## Editing visually (the builder and `# @pos`)
+
+The text is canonical, but you don't have to type it. On the **Diagram** tab, **✎ Edit**
+turns on a visual builder:
+
+- **+ Stock / + Flow / + Aux / + Param** append a declaration and open an inline editor for its name and equation.
+- **Select** a node to rename it, change its equation (or a stock's initial value), or delete it (you're warned which lines reference it first).
+- **Connect** wires things up: click a flow/aux then a stock to fold it into that stock's `change()` (the **−/＋** toggle picks the sign), or click two stocks to create a flow that drains the first and fills the second.
+- **Drag** a node to position it.
+
+Every action rewrites the same `.flow` text — there is no separate diagram state — so an edit you make by clicking is identical to one you type, and ⌘/Ctrl-Z undoes either.
+
+Node positions are stored as a comment the parser ignores:
+
+```flow
+# @pos NAME X Y
+```
+
+Because it's a comment it doesn't change the model, but it travels with the text (including in a shared link), so a hand-arranged diagram is reproducible. Nodes without a `# @pos` fall back to automatic layout.
 
 ## A complete example
 

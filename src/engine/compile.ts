@@ -1,5 +1,6 @@
 import type { Expr, Model, TableDecl, VarDecl, Loc } from "../lang/types.js";
 import { freeVars } from "../lang/expr.js";
+import { scalarize } from "../lang/scalarize.js";
 
 // ── Compiler: expand stateful delays into internal stocks ───────────────────
 // SMOOTH / SMOOTHI / SMOOTH3 / DELAY1 / DELAY3 carry state over time, so they
@@ -35,7 +36,10 @@ export interface Compiled {
   userStocks: string[];
 }
 
-export function compile(model: Model): Compiled {
+export function compile(inModel: Model): Compiled {
+  // Expand subscript dimensions to scalars first, so everything below (and the
+  // whole engine) deals only with scalar names — see scalarize.ts.
+  const model = scalarize(inModel);
   const internal: StateVar[] = [];
   let counter = 0;
   const fresh = (): string => `delay#${counter++}`;
@@ -86,6 +90,7 @@ function rewriteExpr(
   switch (e.kind) {
     case "num":
     case "ident":
+    case "index": // subscripts are lowered to scalars before this pass (scalarize)
       return e;
     case "unary":
       return { ...e, arg: recur(e.arg) };

@@ -204,6 +204,29 @@ sim dt=1 to=60 seed=1
 plot Balance`,
   },
   {
+    name: "Regions (array / subscripts)",
+    blurb: "Three regions as one subscripted stock — elementwise growth coupled through a shared sum(Population).",
+    source: `# Subscripts — model many similar things as one array.
+# 'dim' declares a dimension; Population[region] is one stock per element.
+# Equations are elementwise; sum(Population) collapses the dimension to a scalar.
+dim region = North, South, East
+
+stock Population[region] = 1000
+
+param birthRate = 0.03
+param crowding  = 0.0001    # deaths rise with TOTAL population (shared limit)
+
+flow births[region] = birthRate * Population[region]
+flow deaths[region] = crowding * Population[region] * sum(Population)
+
+change(Population[region]) = births[region] - deaths[region]
+
+aux Total = sum(Population)
+
+sim dt=0.25 to=60 method=rk4
+plot Population Total`,
+  },
+  {
     name: "Calibration demo",
     blurb: "Fit a param to data: Load data (examples/calibration-demo.csv), then ◎ Calibrate to recover the growth rate.",
     source: `# Calibration demo — the growth rate starts deliberately wrong.

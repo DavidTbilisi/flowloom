@@ -37,6 +37,7 @@ const KEYWORDS: RefEntry[] = [
   { name: "param", kind: "keyword", signature: "param NAME [unit] = EXPR", doc: "vars", summary: "A constant knob — evaluated once. `const` is an alias." },
   { name: "const", kind: "keyword", signature: "const NAME [unit] = EXPR", doc: "vars", summary: "A constant knob (alias of param)." },
   { name: "table", kind: "keyword", signature: "table NAME = (x,y) (x,y) …", doc: "tables", summary: "A graphical lookup function; call it as NAME(x). Piecewise-linear, clamped past the ends." },
+  { name: "dim", kind: "keyword", signature: "dim NAME = A, B, C", doc: "subscripts", summary: "A subscript dimension (array index) with named elements. Declare arrays as stock X[NAME], use X[NAME] elementwise, and collapse with sum(X)." },
   { name: "sim", kind: "keyword", signature: "sim dt=.1 to=50 start=0 method=rk4", doc: "sim", summary: "Simulation settings. The toolbar edits this line — the text stays canonical." },
   { name: "plot", kind: "keyword", signature: "plot A B C", doc: "sim", summary: "Which series start visible on the plot and legend." },
 ];
@@ -53,6 +54,7 @@ const CONSTS: RefEntry[] = [
 // ── stateless builtins (math + test inputs) ──────────────────────────────────
 // Arity is attached from ARITY below, so it can't drift from the validator.
 const BUILTINS: Array<Omit<RefEntry, "arity">> = [
+  { name: "sum", kind: "builtin", signature: "sum(X)", doc: "subscripts", summary: "Total of a subscripted X over its dimension — collapses an array to a scalar (e.g. sum(Population))." },
   { name: "min", kind: "builtin", signature: "min(a, b, …)", summary: "Smallest of its arguments." },
   { name: "max", kind: "builtin", signature: "max(a, b, …)", summary: "Largest of its arguments." },
   { name: "abs", kind: "builtin", signature: "abs(x)", summary: "Absolute value." },

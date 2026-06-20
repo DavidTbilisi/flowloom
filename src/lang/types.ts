@@ -26,17 +26,29 @@ export type Expr =
   | { kind: "ident"; name: string; loc: Loc }
   | { kind: "unary"; op: "-" | "+"; arg: Expr; loc: Loc }
   | { kind: "binary"; op: BinOp; left: Expr; right: Expr; loc: Loc }
-  | { kind: "call"; name: string; args: Expr[]; loc: Loc };
+  | { kind: "call"; name: string; args: Expr[]; loc: Loc }
+  // Subscripted reference: `name[sub]`, where sub is a dimension name (elementwise
+  // / aggregate context) or a single element name. Lowered to scalars at compile.
+  | { kind: "index"; name: string; sub: string; loc: Loc };
 
 export type BinOp = "+" | "-" | "*" | "/" | "%" | "^";
 
 /** The declaration kinds a non-stock variable can have. */
 export type VarKind = "flow" | "aux" | "param";
 
+/** A subscript dimension: an ordered, named list of elements. */
+export interface DimDecl {
+  name: string;
+  elements: string[];
+  loc: Loc;
+}
+
 export interface StockDecl {
   name: string;
   initExpr: Expr;
   unit?: string;
+  /** Subscript dimension this stock is declared over (e.g. "region"), if any. */
+  dim?: string;
   doc?: string;
   loc: Loc;
 }
@@ -53,6 +65,8 @@ export interface VarDecl {
   kind: VarKind;
   expr: Expr;
   unit?: string;
+  /** Subscript dimension this var is declared over, if any. */
+  dim?: string;
   doc?: string;
   loc: Loc;
 }
@@ -82,6 +96,8 @@ export interface Model {
   vars: VarDecl[];
   varIndex: Map<string, VarDecl>;
   tables: Map<string, TableDecl>;
+  /** Declared subscript dimensions, by name. Consumed (emptied) by scalarization. */
+  dims: Map<string, DimDecl>;
   settings: SimSettings;
   /** Series chosen to be visible by default (the `plot` line). */
   plot: string[];

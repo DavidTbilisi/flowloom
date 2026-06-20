@@ -124,6 +124,25 @@ plot Walk Pot shock noise`;
     expect(Math.abs(walk.at(-1)!)).toBeGreaterThan(0);
   });
 
+  it("matches on a subscripted (array) model", async () => {
+    // Subscripts scalarize before codegen, so WASM just sees more scalar slots —
+    // parity should hold for free.
+    const src = `dim r = N, S, E
+stock Pop[r] = 50
+param k = 0.08
+flow grow[r] = k*Pop[r] + sum(Pop)*0.001
+change(Pop[r]) = grow[r]
+aux tot = sum(Pop)
+sim dt=0.5 to=30 method=rk4
+plot Pop tot`;
+    const { ts, wasm } = await runBoth(src);
+    expect(wasm.names).toEqual(ts.names);
+    for (const n of ts.names) {
+      const a = ts.series.get(n)!, b = wasm.series.get(n)!;
+      for (let i = 0; i < a.length; i++) expect(b[i], `${n}[${i}]`).toBeCloseTo(a[i]!, 9);
+    }
+  });
+
   it("matches under Euler too", async () => {
     const { ts, wasm } = await runBoth(
       "stock X = 1000\nparam r = 0.05\nflow interest = r*X\nd(X) = interest\nsim dt=1 to=40 method=euler\nplot X",

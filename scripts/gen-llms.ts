@@ -30,6 +30,8 @@ animation are all derived from it. Read and edit a model entirely as text.
   aux   NAME [unit] = EXPR              an instantaneous computed value, recomputed each step
   param NAME [unit] = EXPR              a constant knob, evaluated once (alias: const)
   table NAME = (x,y) (x,y) ...          piecewise-linear lookup; call it as NAME(x)
+  dim NAME = A, B, C                     a subscript dimension (array index) of named elements
+  stock NAME[dim] = EXPR                 an array: one stock per element; refer to NAME[dim] / NAME[A]; sum(NAME) collapses it
   sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4)
   plot A B C                            which series are visible by default
   # text after a hash is a comment; a trailing # on a decl is its doc string

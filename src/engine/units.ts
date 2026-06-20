@@ -169,6 +169,9 @@ export function inferDim(e: Expr, env: UnitEnv, out: Diagnostic[]): DimResult {
       if (e.name === "PI" || e.name === "E") return new Map();
       return env.names.get(e.name) ?? UNKNOWN;
     }
+    case "index":
+      // an element shares the base symbol's declared unit
+      return env.names.get(e.name) ?? UNKNOWN;
     case "unary":
       return inferDim(e.arg, env, out);
     case "binary": {
