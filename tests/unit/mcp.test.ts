@@ -45,6 +45,31 @@ describe("mcp handlers", () => {
     expect(r.series.Population[0]).toBe(5);
   });
 
+  it("flow_run downsamples a long run so the payload can't blow an agent's context", async () => {
+    // 100k+ steps at full resolution would be megabytes of JSON; the run still
+    // integrates at dt=0.01 but the returned arrays are capped.
+    const long = `stock S = 100\nparam k = 0.05\nflow grow = k * S\nchange(S) = grow\nsim dt=0.01 to=1000\nplot S`;
+    const r = parse(await handlers.flow_run({ model: long, plot: ["S"] }));
+    expect(r.steps).toBeGreaterThan(50000);          // full-resolution integration reported
+    expect(r.t.length).toBeLessThanOrEqual(1001);    // but a small payload returned
+    expect(r.series.S.length).toBe(r.t.length);      // t and series stay aligned
+    expect(r.sampled.of).toBe(r.steps);              // tells the agent it was downsampled
+    expect(r.sampled.note).toMatch(/maxPoints|flow_summary/);
+    // first and last samples are preserved (the endpoints an agent cares about)
+    expect(r.series.S[0]).toBe(100);
+    expect(r.series.S.at(-1)).toBeGreaterThan(100);  // k>0 ⇒ growth
+  });
+
+  it("flow_run honors maxPoints and returns short runs verbatim", async () => {
+    const long = `stock S = 1\nparam k = 0.1\nchange(S) = k * S\nsim dt=0.01 to=1000`;
+    const coarse = parse(await handlers.flow_run({ model: long, plot: ["S"], maxPoints: 50 }));
+    expect(coarse.t.length).toBeLessThanOrEqual(51);
+    // a short run is untouched — no downsampling, no `sampled` field
+    const short = parse(await handlers.flow_run({ model: SRC, plot: ["Population"] }));
+    expect(short).not.toHaveProperty("sampled");
+    expect(short.t.length).toBe(short.steps);
+  });
+
   it("flow_run honors a --set override", async () => {
     const base = parse(await handlers.flow_run({ model: SRC, plot: ["Population"] }));
     const set = parse(await handlers.flow_run({ model: SRC, plot: ["Population"], set: ["Population=50"] }));
