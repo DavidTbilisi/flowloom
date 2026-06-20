@@ -123,6 +123,7 @@ plot Population
   flowloom check model.flow                        parse + lint; non-zero exit on parse error
   flowloom lint model.flow [--json]                non-fatal warnings (unused params, dead vars, units, bad τ)
   flowloom montecarlo model.flow --runs N          percentile bands across N seeded runs
+  flowloom calibrate model.flow --param a,b --data obs.csv   fit params to observed data
   flowloom reference --json                         this catalog as JSON
 
 Prefer `summary` over `run` when you only need to know *what the model did*
@@ -138,8 +139,10 @@ compact numbers, never raw series.
 For stochastic models, random()/random_uniform(lo,hi)/random_normal(mean,sd) draw
 seeded noise (set `sim seed=N`, default 0 ⇒ reproducible; resampled once per step).
 `montecarlo` runs N seeds and reports p05/p25/p50/p75/p95 + mean bands per series.
-Where you annotate `[unit]`s, `lint` runs a dimensional check (unlike-unit adds,
-dimensioned args to exp/ln/sin, a change(stock) that isn't stock-units per time).
+`calibrate` fits params to an observed CSV/TSV series by minimising normalised RMSE
+(derivative-free Nelder–Mead). Where you annotate `[unit]`s, `lint` runs a
+dimensional check (unlike-unit adds, dimensioned args to exp/ln/sin, a
+change(stock) that isn't stock-units per time).
 
 When a name is misspelled, the parse error carries a "did you mean 'X'?" hint
 (case included — birthrate vs birthRate). `check`/`lint` (and flow_check's
@@ -148,5 +151,5 @@ rate, and non-positive smooth/delay time constants — none of which stop a run.
 
 MCP: the `flowloom-mcp` server exposes the same engine as tools — flow_run,
 flow_summary, flow_sweep, flow_sensitivity, flow_solve, flow_montecarlo,
-flow_check, flow_lint, flow_loops, flow_describe, flow_explain, flow_examples —
-plus a flow://reference resource carrying this guide. Each tool takes the model as text.
+flow_calibrate, flow_check, flow_lint, flow_loops, flow_describe, flow_explain,
+flow_examples — plus a flow://reference resource carrying this guide. Each tool takes the model as text.

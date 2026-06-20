@@ -136,6 +136,8 @@ canonical source so they never drift.)
 - [x] compiled (slot-based) evaluator + a generated **WASM** backend for large
       models, run off-thread in a Web Worker
 - [x] units checking (dimensional analysis) from the `[unit]` annotations
+- [x] seeded randomness (`random`/`random_uniform`/`random_normal`) + Monte Carlo bands
+- [x] data import + calibration (fit params to an observed CSV by normalised-RMSE)
 - [x] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
 - [x] AI-facing surface — CLI `explain`/`describe`/`reference`, a generated
       `llms.txt` guide, and a `flowloom-mcp` MCP server over the same engine

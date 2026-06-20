@@ -95,6 +95,14 @@ plot Walk`;
     expect(walk.trajectory.t[0]).toBe(0);
   });
 
+  it("flow_calibrate fits a param to observed data", async () => {
+    const data = "t,Population\n0,5\n2,8\n4,12\n6,17";
+    const r = parse(await handlers.flow_calibrate({ model: SRC, params: ["birthRate"], data, map: { Population: "Population" } }));
+    expect(r).toHaveProperty("params");
+    expect(r.params).toHaveProperty("birthRate");
+    expect(r.perSeries.Population).toBeLessThan(1);
+  });
+
   it("flow_describe returns the model structure", () => {
     const r = parse(handlers.flow_describe({ model: SRC }));
     expect(r.stocks[0].name).toBe("Population");

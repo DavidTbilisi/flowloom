@@ -27,6 +27,8 @@ import {
   lintModel,
   solveParam,
   monteCarlo,
+  parseDataset,
+  calibrate,
   REFERENCE,
   type EnsembleResult,
 } from "./engine/index.js";
@@ -125,6 +127,15 @@ export const handlers = {
       ...(series?.length ? { series } : {}),
     });
     return text(compactEnsemble(r));
+  },
+
+  async flow_calibrate(
+    { model, params, data, map, set }:
+      { model: string; params: string[]; data: string; map?: Record<string, string>; set?: string[] },
+  ): Promise<ToolResult> {
+    const dataset = parseDataset(data);
+    const r = await calibrate(loadModel(model, set), { params, dataset, ...(map ? { map } : {}) });
+    return text(r);
   },
 
   flow_loops({ model }: { model: string }): ToolResult {
@@ -304,6 +315,23 @@ export function buildServer(): McpServer {
       },
     },
     guard(handlers.flow_montecarlo),
+  );
+
+  server.registerTool(
+    "flow_calibrate",
+    {
+      title: "Calibrate to data",
+      description:
+        "Fit model params to an observed time series (CSV/TSV text) by minimising normalised RMSE (derivative-free Nelder–Mead). Returns the fitted params, the starting values, and the achieved fit per series.",
+      inputSchema: {
+        model: modelArg,
+        params: z.array(z.string()).describe("Params (or stock inits) to fit."),
+        data: z.string().describe("Observed data as CSV/TSV text: a header row, one time column (t/time or the first), then named series columns."),
+        map: z.record(z.string(), z.string()).optional().describe('Model series → dataset column, e.g. {"Infected":"I"}. Defaults to columns whose name matches a series.'),
+        set: setArg,
+      },
+    },
+    guard(handlers.flow_calibrate),
   );
 
   server.registerTool(
