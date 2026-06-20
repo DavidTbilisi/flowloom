@@ -9,6 +9,7 @@ import {
 } from "./model-build.js";
 import { parseModel, printExpr, type Model, type Expr } from "../lang/index.js";
 import { simulate, parseDataset, calibrate, RANDOM_FNS } from "../engine/index.js";
+import { draftFlow, getStoredKey, setStoredKey } from "./ai-draft.js";
 
 /** Does any equation call a random*() builtin? (drives the Monte Carlo hint) */
 function modelUsesRandom(model: Model): boolean {
@@ -602,6 +603,47 @@ export function mountApp(root: HTMLElement): Store {
   });
   window.addEventListener("pointerup", endTune); // releases that land outside the track
 
+  // ── AI draft: prose → .flow (the headline AI-first feature) ───────────────
+  const aiPanel = $<HTMLDivElement>("#aiPanel");
+  const aiPromptEl = $<HTMLTextAreaElement>("#aiPrompt");
+  const aiKeyEl = $<HTMLInputElement>("#aiKey");
+  const aiMsg = $<HTMLElement>("#aiMsg");
+  const aiGo = $<HTMLButtonElement>("#aiGo");
+  aiKeyEl.value = getStoredKey();
+
+  function toggleAiPanel(show?: boolean) {
+    aiPanel.hidden = show === undefined ? !aiPanel.hidden : !show;
+    if (!aiPanel.hidden) { aiMsg.textContent = ""; (aiKeyEl.value ? aiPromptEl : aiKeyEl).focus(); }
+  }
+  $<HTMLButtonElement>("#ai").onclick = () => toggleAiPanel();
+  $<HTMLButtonElement>("#aiClose").onclick = () => toggleAiPanel(false);
+
+  async function runAiDraft() {
+    const prompt = aiPromptEl.value.trim();
+    const key = aiKeyEl.value.trim();
+    if (!prompt) { aiMsg.textContent = "describe a system first"; return; }
+    if (!key) { aiMsg.textContent = "paste your Anthropic API key"; aiKeyEl.focus(); return; }
+    setStoredKey(key);
+    aiGo.disabled = true; aiMsg.textContent = "drafting…";
+    try {
+      const flow = await draftFlow(prompt, key);
+      parseModel(flow); // verify it's a real model before adopting it; throws on garbage
+      commit(flow);     // undoable — replaces the editor text and runs it
+      store.setFrame(store.frameCount - 1);
+      toggleAiPanel(false);
+      aiPromptEl.value = "";
+    } catch (e) {
+      aiMsg.textContent = (e as Error).message;
+    } finally {
+      aiGo.disabled = false;
+      if (aiMsg.textContent === "drafting…") aiMsg.textContent = "";
+    }
+  }
+  aiGo.onclick = runAiDraft;
+  aiPromptEl.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); void runAiDraft(); }
+  });
+
   function renderLoopChips() {
     const run = store.run;
     if (!run.ok || !run.loops) { loopChips.innerHTML = ""; return; }
@@ -905,6 +947,7 @@ const SHELL = `
   <section class="left">
     <div class="toolbar">
       <button id="run" class="primary" data-help="ui:run">▶ Run</button>
+      <button id="ai" class="ghost" title="describe a system in English; AI writes the model">✨ AI</button>
       <label data-help="ui:dt">dt</label><input id="dt" type="number" step="0.01" value="0.1" data-help="ui:dt" />
       <label data-help="ui:to">to</label><input id="to" type="number" step="1" value="50" data-help="ui:to" />
       <label data-help="ui:method">method</label>
@@ -915,7 +958,15 @@ const SHELL = `
       <button id="open" class="ghost" title="open a .flow file" data-help="ui:open">📂</button>
       <input id="fileInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />
     </div>
-    <div class="editor-wrap"><textarea id="src" spellcheck="false"></textarea></div>
+    <div class="editor-wrap"><textarea id="src" spellcheck="false"></textarea>
+      <div class="ai-panel" id="aiPanel" hidden>
+        <div class="ai-head"><span class="ai-title">✨ Draft a model with AI</span><button class="ai-x" id="aiClose" title="close">✕</button></div>
+        <textarea id="aiPrompt" rows="3" spellcheck="false" placeholder="Describe a system in plain English… e.g. “a coffee shop where word-of-mouth drives growth but limited seating caps it”"></textarea>
+        <input id="aiKey" type="password" spellcheck="false" placeholder="Anthropic API key (sk-ant-…)" autocomplete="off" />
+        <div class="ai-row"><span class="ai-msg" id="aiMsg"></span><span class="spacer"></span><button class="primary" id="aiGo">Generate →</button></div>
+        <div class="ai-foot">Your key is stored only in this browser and sent only to Anthropic. The model the AI writes is parsed, checked, and run right here — so you see exactly what it built.</div>
+      </div>
+    </div>
     <div id="err" class="err"></div>
   </section>
   <section class="right">
