@@ -210,6 +210,24 @@ function referenceGuide(): string {
   }
 }
 
+// ── server-level orientation ─────────────────────────────────────────────────
+// Surfaced to the client on the MCP `initialize` handshake — the first thing an
+// agent reads about this server. It hands over the authoring loop and the few
+// gotchas that aren't guessable, so the agent doesn't have to discover the
+// workflow by trial and error across 14 flat tools.
+export const INSTRUCTIONS = `flowloom is a text-first systems-thinking studio (Vensim-style stocks, flows, and feedback loops). A model is plain .flow text, and that text is CANONICAL — every tool takes the model as a string and returns structured results.
+
+Don't guess the syntax. Read the resource flow://reference (a one-page grammar + builtins guide) before writing or editing a model.
+
+The authoring loop:
+1. flow_check — parse + lint cheaply. Do this after every edit; it returns {line, col, message} diagnostics with a "did you mean" / recovery hint, so fix those before running.
+2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
+3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops) — to understand an existing model before changing it.
+
+Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data). Most tools accept "set" overrides ("key=value") to try a what-if WITHOUT rewriting the text.
+
+Gotchas: every referenced name must be defined and a model needs ≥1 stock; a stock changes ONLY through its change()/d() rate; if(cond,a,b) evaluates BOTH branches (guard the operand, e.g. x/max(y,1e-9), not the branch). Start from flow_examples if you want a known-good template.`;
+
 // ── server wiring ────────────────────────────────────────────────────────────
 const modelArg = z.string().describe("The .flow model as text (the canonical representation).");
 const setArg = z.array(z.string()).optional().describe('Overrides as "key=value": a param, a stock init, or dt/to/start/method. Applied before the run.');
@@ -218,7 +236,7 @@ const metricArg = z
   .describe('A scalar read from a run: "<op>:<series>" where op is final|max|min|mean|time-to-peak|settle-time, or "at:<t>:<series>". E.g. "final:Cash", "max:Infected", "at:50:Inventory".');
 
 export function buildServer(): McpServer {
-  const server = new McpServer({ name: "flowloom", version: VERSION });
+  const server = new McpServer({ name: "flowloom", version: VERSION }, { instructions: INSTRUCTIONS });
 
   server.registerTool(
     "flow_run",

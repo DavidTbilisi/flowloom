@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { handlers } from "../../src/mcp.js";
+import { handlers, INSTRUCTIONS, buildServer } from "../../src/mcp.js";
 
 // Smoke test: exercise the MCP tool handlers in-process (no transport). They are
 // thin wrappers over the engine, so we just assert the shapes agents will see.
@@ -128,5 +128,47 @@ plot Walk`;
     expect(Array.isArray(list)).toBe(true);
     const one = parse(handlers.flow_examples({ name: list[0].name }));
     expect(one.source).toBeTruthy();
+  });
+});
+
+describe("agent orientation", () => {
+  // The server-level instructions are the first thing an agent reads on connect.
+  // Pin that they hand over the authoring loop rather than leaving 14 flat tools
+  // to be discovered by trial and error.
+  it("instructions name the check-first loop, the reference, and the canonical-text idea", () => {
+    expect(INSTRUCTIONS).toMatch(/flow:\/\/reference/); // points at the grammar
+    expect(INSTRUCTIONS).toMatch(/flow_check/);         // validate before running
+    expect(INSTRUCTIONS).toMatch(/flow_summary/);       // prefer the classified read
+    expect(INSTRUCTIONS).toMatch(/canonical/i);         // the core mental model
+  });
+
+  it("the built server carries the instructions to the client", () => {
+    // buildServer() must wire INSTRUCTIONS into the McpServer, not drop them.
+    const server = buildServer();
+    expect((server.server as unknown as { _instructions?: string })._instructions).toBe(INSTRUCTIONS);
+  });
+});
+
+describe("agent journey: cold build → error → fix → run", () => {
+  // The recoverable loop an agent actually walks. Each step's output must enable
+  // the next, ending in a usable run — no dead ends.
+  it("a check failure carries a recovery hint, and the fixed model runs", async () => {
+    // forgot to define `rate` — a classic LLM omission with no near-miss neighbour
+    const broken = `stock S = 1\nd(S) = rate * S\nsim dt=0.1 to=5`;
+    const bad = parse(handlers.flow_check({ model: broken }));
+    expect(bad.ok).toBe(false);
+    // the diagnostic names the offending symbol with a line, so the agent knows
+    // exactly what to fix (not just that something failed)
+    expect(bad.diagnostics[0]).toHaveProperty("line");
+    expect(bad.diagnostics[0].message).toMatch(/unknown name 'rate'/);
+
+    // apply the obvious fix the message implies
+    const fixed = `param rate = 0.5\n${broken}`;
+    expect(parse(handlers.flow_check({ model: fixed })).ok).toBe(true);
+
+    // and the fixed model actually produces a series
+    const run = parse(await handlers.flow_run({ model: fixed, plot: ["S"] }));
+    expect(run.series.S.length).toBe(run.steps);
+    expect(run.series.S.at(-1)).toBeGreaterThan(1); // rate>0 ⇒ growth
   });
 });
