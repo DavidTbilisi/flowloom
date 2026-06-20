@@ -57,6 +57,20 @@ export function mountApp(root: HTMLElement): Store {
   const diagram = new Diagram(diagramSvg);
   helpWrap.innerHTML = renderHelp();
 
+  // Hover-to-scrub: moving the pointer over the plot drags the time cursor, like
+  // a real charting tool. The cursor line, dots, legend values and table row all
+  // already read store.frame, so this single handler lights them all up. (x0/x1
+  // mirror plot.ts's pad.l / pad.r.)
+  plotCanvas.addEventListener("pointermove", (e) => {
+    const n = store.frameCount;
+    if (n <= 1) return;
+    const rect = plotCanvas.getBoundingClientRect();
+    const x0 = 60, x1 = rect.width - 16;
+    const frac = (e.clientX - rect.left - x0) / Math.max(1, x1 - x0);
+    if (store.playing) store.setPlaying(false);
+    store.setFrame(Math.max(0, Math.min(n - 1, Math.round(frac * (n - 1)))));
+  });
+
   // contextual-help status bar + the editor's highlight overlay (which feeds it)
   const statusbar = mountStatusBar(root, store, () => store.setTab("help"));
   const editor = mountEditor($<HTMLElement>(".editor-wrap"), src, store, statusbar.setHelp);

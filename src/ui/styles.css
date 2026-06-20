@@ -118,6 +118,7 @@ textarea#src.transparent-text { color: transparent; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 canvas { width: 100%; display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+#plot { cursor: crosshair; }
 
 .legend { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
 .legend label {
