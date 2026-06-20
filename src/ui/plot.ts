@@ -23,7 +23,7 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
 
   const r = store.run.result;
   if (!r) return;
-  const pad = { l: 60, r: 16, t: 14, b: 28 };
+  const pad = { l: 60, r: 16, t: 16, b: 28 };
   const x0 = pad.l, x1 = W - pad.r, y0 = H - pad.b, y1 = pad.t;
   const T = r.t;
   const tMin = T[0] ?? 0, tMax = T[T.length - 1] ?? 1;
@@ -43,24 +43,35 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
   if (ov.data) for (const [name, col] of ov.data.columns) if (vis.includes(name)) for (const v of col) grow(v);
   if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
   if (lo === hi) { hi = lo + 1; lo -= 1; }
-  const padY = (hi - lo) * 0.06; lo -= padY; hi += padY;
+  // Frame the y-axis on *round* numbers (0, 250, 500…) rather than padded data
+  // extremes — the difference between a chart that looks designed and one that
+  // looks dumped. niceScale also gives us the gridline values for free.
+  const yScale = niceScale(lo, hi, 5);
+  lo = yScale.lo; hi = yScale.hi;
 
   const sx = (t: number) => x0 + ((t - tMin) / (tMax - tMin || 1)) * (x1 - x0);
   const sy = (v: number) => y0 - ((v - lo) / (hi - lo || 1)) * (y0 - y1);
 
-  // grid + axes
+  // horizontal gridlines + y labels at nice ticks
   g.font = "11px ui-monospace, monospace";
   g.lineWidth = 1;
-  for (let k = 0; k <= 4; k++) {
-    const v = lo + ((hi - lo) * k) / 4, y = sy(v);
-    g.strokeStyle = "#2a2f3a"; g.globalAlpha = 0.35;
+  g.textBaseline = "middle";
+  for (const v of yScale.ticks) {
+    const y = sy(v);
+    if (y < y1 - 0.5 || y > y0 + 0.5) continue;
+    const zero = Math.abs(v) < (hi - lo) * 1e-9;
+    g.strokeStyle = zero ? "#3a4150" : "#2a2f3a";
+    g.globalAlpha = zero ? 0.9 : 0.4;
     g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
-    g.globalAlpha = 1; g.fillStyle = "#9aa3b2"; g.fillText(fmt(v), 6, y + 3);
+    g.globalAlpha = 1; g.fillStyle = "#9aa3b2"; g.textAlign = "right"; g.fillText(fmt(v), x0 - 8, y);
   }
-  for (let k = 0; k <= 5; k++) {
-    const t = tMin + ((tMax - tMin) * k) / 5, x = sx(t);
-    g.fillStyle = "#9aa3b2"; g.fillText(fmt(t), x - 8, H - 8);
+  // x labels at nice time ticks
+  g.textBaseline = "alphabetic"; g.textAlign = "center";
+  for (const t of niceScale(tMin, tMax, 6).ticks) {
+    if (t < tMin - 1e-9 || t > tMax + 1e-9) continue;
+    g.fillStyle = "#9aa3b2"; g.fillText(fmt(t), sx(t), H - 8);
   }
+  g.textAlign = "left";
   g.strokeStyle = "#3a4150";
   g.beginPath(); g.moveTo(x0, y1); g.lineTo(x0, y0); g.lineTo(x1, y0); g.stroke();
 
@@ -113,11 +124,37 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
     }
   }
 
-  // series
-  g.lineWidth = 2;
+  // series — a soft gradient fill under each line, then the line itself with
+  // round joins. The fill is what reads as "a real chart"; it's kept subtle
+  // (and skipped when several series overlap so they don't muddy each other).
+  g.lineJoin = "round"; g.lineCap = "round";
+  const fillBase = Math.max(y1, Math.min(y0, sy(0))); // fill down to the zero line (clamped)
+  const single = vis.length === 1;
   for (const n of vis) {
     const arr = r.series.get(n)!;
-    g.strokeStyle = colorFor(r, n);
+    const col = colorFor(r, n);
+
+    if (single || vis.length <= 3) {
+      const grad = g.createLinearGradient(0, y1, 0, y0);
+      grad.addColorStop(0, col + (single ? "38" : "22")); // ~22%/13% alpha at top
+      grad.addColorStop(1, col + "00");
+      g.fillStyle = grad;
+      g.beginPath();
+      let open = false;
+      for (let i = 0; i < arr.length; i++) {
+        if (!Number.isFinite(arr[i]!)) continue;
+        const X = sx(T[i]!), Y = sy(arr[i]!);
+        if (!open) { g.moveTo(X, fillBase); g.lineTo(X, Y); open = true; } else g.lineTo(X, Y);
+      }
+      if (open) {
+        // close back down to the baseline at the last finite x
+        let lastX = x0;
+        for (let i = arr.length - 1; i >= 0; i--) { if (Number.isFinite(arr[i]!)) { lastX = sx(T[i]!); break; } }
+        g.lineTo(lastX, fillBase); g.closePath(); g.fill();
+      }
+    }
+
+    g.lineWidth = 2.25; g.strokeStyle = col;
     g.beginPath();
     let started = false;
     for (let i = 0; i < arr.length; i++) {
@@ -149,4 +186,32 @@ export function fmt(v: number): string {
   const a = Math.abs(v);
   if (a !== 0 && (a < 1e-3 || a >= 1e5)) return v.toExponential(1);
   return (Math.round(v * 1000) / 1000).toString();
+}
+
+/** Round a number to a "nice" 1/2/5 × 10ⁿ value (for axis steps). */
+function niceNum(range: number, round: boolean): number {
+  if (range <= 0 || !Number.isFinite(range)) return 1;
+  const exp = Math.floor(Math.log10(range));
+  const f = range / Math.pow(10, exp);
+  const nf = round
+    ? (f < 1.5 ? 1 : f < 3 ? 2 : f < 7 ? 5 : 10)
+    : (f <= 1 ? 1 : f <= 2 ? 2 : f <= 5 ? 5 : 10);
+  return nf * Math.pow(10, exp);
+}
+
+/**
+ * A "nice" axis scale: bounds snapped outward to round numbers and the tick
+ * values between them. Turns a data range like [-3.9, 1063.9] into
+ * [0, 1000] step 250 — the classic Heckbert axis algorithm.
+ */
+export function niceScale(lo: number, hi: number, maxTicks: number): { lo: number; hi: number; ticks: number[] } {
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || lo === hi) return { lo, hi, ticks: [lo, hi] };
+  const step = niceNum(niceNum(hi - lo, false) / Math.max(1, maxTicks - 1), true);
+  const niceLo = Math.floor(lo / step) * step;
+  const niceHi = Math.ceil(hi / step) * step;
+  const ticks: number[] = [];
+  for (let v = niceLo; v <= niceHi + step * 0.5; v += step) {
+    ticks.push(Math.abs(v) < step * 1e-9 ? 0 : v); // clean up −0 / float dust
+  }
+  return { lo: niceLo, hi: niceHi, ticks };
 }
