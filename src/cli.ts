@@ -28,6 +28,9 @@ import {
   sensitivity,
   lintModel,
   solveParam,
+  monteCarlo,
+  parseDataset,
+  calibrate,
   REFERENCE,
   type SimResult,
   type RunSummary,
@@ -35,6 +38,8 @@ import {
   type SensitivityResult,
   type SolveResult,
   type SolveOptions,
+  type EnsembleResult,
+  type CalibrateResult,
   type LoopReport,
 } from "./engine/index.js";
 
@@ -56,10 +61,14 @@ interface Args {
   target?: number; // --target N for solve
   bracket?: string; // --bracket A..B for solve
   tol?: number; // --tol T for solve
+  runs?: number; // --runs N for montecarlo
+  seed?: number; // --seed N base seed for montecarlo
+  data?: string; // --data FILE.csv for calibrate
+  against: string[]; // --against Series=column mappings for calibrate
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", format: "table", plot: [], sets: [], rows: 21, chart: false, params: [], frac: 0.1 };
+  const a: Args = { cmd: "", format: "table", plot: [], sets: [], rows: 21, chart: false, params: [], frac: 0.1, against: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -79,6 +88,10 @@ function parseArgs(argv: string[]): Args {
       case "--target": a.target = Number(need(argv, ++i, arg)); break;
       case "--bracket": a.bracket = need(argv, ++i, arg); break;
       case "--tol": a.tol = Number(need(argv, ++i, arg)); break;
+      case "--runs": a.runs = Math.max(1, Math.floor(Number(need(argv, ++i, arg)))); break;
+      case "--seed": a.seed = Number(need(argv, ++i, arg)); break;
+      case "--data": a.data = need(argv, ++i, arg); break;
+      case "--against": a.against.push(...splitList(need(argv, ++i, arg))); break;
       default:
         if (arg.startsWith("--plot=")) a.plot.push(...splitList(arg.slice(7)));
         else if (arg.startsWith("--set=")) a.sets.push(arg.slice(6));
@@ -90,6 +103,10 @@ function parseArgs(argv: string[]): Args {
         else if (arg.startsWith("--target=")) a.target = Number(arg.slice(9));
         else if (arg.startsWith("--bracket=")) a.bracket = arg.slice(10);
         else if (arg.startsWith("--tol=")) a.tol = Number(arg.slice(6));
+        else if (arg.startsWith("--runs=")) a.runs = Math.max(1, Math.floor(Number(arg.slice(7))));
+        else if (arg.startsWith("--seed=")) a.seed = Number(arg.slice(7));
+        else if (arg.startsWith("--data=")) a.data = arg.slice(7);
+        else if (arg.startsWith("--against=")) a.against.push(...splitList(arg.slice(10)));
         else if (arg !== "-" && arg.startsWith("-")) die(`unknown flag: ${arg}`);
         else rest.push(arg); // positional, including "-" for stdin
     }
@@ -391,6 +408,78 @@ async function cmdSolve(args: Args): Promise<void> {
   out(args.format === "json" ? JSON.stringify(r, null, 2) : renderSolve(r));
 }
 
+function renderMonteCarlo(r: EnsembleResult): string {
+  const head = `monte carlo — ${r.runs} runs, seeds ${r.baseSeed}…${r.baseSeed + r.runs - 1}`;
+  const N = r.t.length;
+  const every = Math.max(1, Math.floor(N / 14));
+  const idx: number[] = [];
+  for (let i = 0; i < N; i += every) idx.push(i);
+  if (idx[idx.length - 1] !== N - 1) idx.push(N - 1);
+
+  const blocks = r.series.map((name) => {
+    const b = r.bands.get(name)!;
+    const cols: Array<[string, number[]]> = [
+      ["t", r.t], ["p05", b.p05], ["p25", b.p25], ["p50", b.p50], ["p75", b.p75], ["p95", b.p95], ["mean", b.mean],
+    ];
+    const widths = cols.map(([h, arr]) => Math.max(h.length, ...idx.map((i) => fmt(arr[i]!).length)));
+    const header = cols.map(([h], c) => h.padStart(widths[c]!)).join("  ");
+    const rows = idx.map((i) => cols.map(([, arr], c) => fmt(arr[i]!).padStart(widths[c]!)).join("  "));
+    return `${name}\n  ${header}\n` + rows.map((row) => `  ${row}`).join("\n");
+  });
+  const notes = r.notes?.length ? "\n\n" + r.notes.map((n) => `note: ${n}`).join("\n") : "";
+  return [head, ...blocks].join("\n\n") + notes;
+}
+
+async function cmdMonteCarlo(args: Args): Promise<void> {
+  const model = load(args);
+  let r: EnsembleResult;
+  try {
+    r = await monteCarlo(model, {
+      runs: args.runs ?? 100,
+      ...(args.seed !== undefined && Number.isFinite(args.seed) ? { seed: args.seed } : {}),
+      ...(args.plot.length ? { series: args.plot } : {}),
+    });
+  } catch (e) {
+    die((e as Error).message);
+  }
+  // bands is a Map (idiomatic, like SimResult.series) — flatten for JSON output.
+  out(args.format === "json" ? JSON.stringify({ ...r, bands: Object.fromEntries(r.bands) }, null, 2) : renderMonteCarlo(r));
+}
+
+function renderCalibrate(r: CalibrateResult): string {
+  const head = `calibrate — ${r.converged ? "converged" : "stopped"} after ${r.evals} run${plural(r.evals)} (residual nrmse ${fmt(r.residual)})`;
+  const wp = Math.max(...Object.keys(r.params).map((p) => p.length));
+  const params = Object.entries(r.params).map(([p, v]) => `  ${p.padEnd(wp)}  ${fmt(r.start[p]!)} → ${fmt(v)}`);
+  const fits = Object.entries(r.perSeries).map(([s, e]) => `  ${s}: nrmse ${fmt(e)}`);
+  return [head, "fitted params:", ...params, "fit per series:", ...fits].join("\n");
+}
+
+async function cmdCalibrate(args: Args): Promise<void> {
+  const model = load(args);
+  if (!args.params.length) die("calibrate needs --param NAME[,NAME] (the knobs to fit)");
+  if (!args.data) die("calibrate needs --data FILE.csv (observed series to fit against)");
+  let text: string;
+  try {
+    text = readFileSync(args.data, "utf8");
+  } catch (e) {
+    die(`cannot read ${args.data}: ${(e as Error).message}`);
+  }
+  const map: Record<string, string> = {};
+  for (const spec of args.against) {
+    const [series, col] = spec.split("=");
+    if (!series || !col) die(`--against expects Series=column, got "${spec}"`);
+    map[series] = col;
+  }
+  let r: CalibrateResult;
+  try {
+    const dataset = parseDataset(text!);
+    r = await calibrate(model, { params: args.params, dataset, ...(Object.keys(map).length ? { map } : {}) });
+  } catch (e) {
+    die((e as Error).message);
+  }
+  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderCalibrate(r));
+}
+
 function cmdReference(args: Args): void {
   if (args.format === "json") { out(JSON.stringify(REFERENCE, null, 2)); return; }
   const groups: Array<[string, typeof REFERENCE[number]["kind"]]> = [
@@ -430,6 +519,8 @@ usage:
   flowloom sweep    <model.flow> --param P --range A..B[/N] --metric SPEC [--json]
   flowloom sensitivity <model.flow> --metric SPEC [--param a,b] [--frac F] [--json]
   flowloom solve    <model.flow> --param P --metric SPEC --target N [--bracket A..B] [--json]
+  flowloom montecarlo <model.flow> [--runs N] [--seed N] [--plot a,b] [--json]
+  flowloom calibrate <model.flow> --param a,b --data obs.csv [--against S=col] [--json]
   flowloom reference [--json]                the .flow language + builtins catalog
   flowloom <model.flow>                       shorthand for: run
 
@@ -458,6 +549,8 @@ examples:
   flowloom sweep examples/logistic-growth.flow --param carrying --range 500..2000/7 --metric final:Population
   flowloom sensitivity examples/sir-epidemic.flow --metric max:I
   flowloom solve examples/sir-epidemic.flow --param beta --metric max:I --target 300
+  flowloom montecarlo model.flow --runs 200 --seed 1 --plot Revenue
+  flowloom calibrate model.flow --param a,b --data observed.csv --against Infected=I
   flowloom run model.flow --set yield=0.03 --set to=240 --csv > out.csv
   cat model.flow | flowloom loops -`;
 
@@ -477,6 +570,8 @@ async function main(): Promise<void> {
     case "sweep": await cmdSweep(args); break;
     case "sensitivity": await cmdSensitivity(args); break;
     case "solve": await cmdSolve(args); break;
+    case "montecarlo": await cmdMonteCarlo(args); break;
+    case "calibrate": await cmdCalibrate(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");
     default: die(`unknown command "${args.cmd}" — try `+"`flowloom --help`");

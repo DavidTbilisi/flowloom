@@ -69,6 +69,10 @@ export interface SimSettings {
   to: number;
   start: number;
   method: "euler" | "rk4";
+  /** Optional name of the time unit, used by units checking (e.g. "month"). */
+  timeunit?: string;
+  /** RNG seed for random*() builtins. Defaults to 0 ⇒ runs are reproducible. */
+  seed?: number;
 }
 
 /** A fully parsed, validated model ready to simulate. */

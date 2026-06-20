@@ -8,7 +8,7 @@ param carrying  = 1000     # carrying capacity (the ceiling)
 
 flow growth = birthRate * Population * (1 - Population / carrying)
 
-d(Population) = growth
+change(Population) = growth
 
 sim dt=0.1 to=25 method=rk4
 plot Population

@@ -8,6 +8,7 @@
 
 import type { SimPlan, DerivBackend } from "../codegen.js";
 import { lookupTable } from "../builtins.js";
+import { runif, rnorm } from "../rng.js";
 import { compileWasm, type WasmProgram } from "./codegen.js";
 
 export function wasmAvailable(): boolean {
@@ -32,6 +33,8 @@ function imports(program: WasmProgram): WebAssembly.Imports {
         return slope * (Math.min(t, t1) - t0);
       },
       lookup: (id: number, x: number) => lookupTable(tp[id]!, x),
+      // Same functions the TS backend calls ⇒ bit-identical seeded randomness.
+      runif, rnorm,
     },
   };
 }

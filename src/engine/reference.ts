@@ -29,8 +29,9 @@ export interface RefEntry {
 
 // ── line keywords ────────────────────────────────────────────────────────────
 const KEYWORDS: RefEntry[] = [
-  { name: "stock", kind: "keyword", signature: "stock NAME [unit] = EXPR", doc: "stocks", summary: "An accumulator (an integral). EXPR is its initial value; it then changes only through its d() rate." },
-  { name: "d", kind: "keyword", signature: "d(NAME) = EXPR", doc: "stocks", summary: "The net rate of change of a stock — literally dNAME/dt. This line is the engine; flowloom integrates it." },
+  { name: "stock", kind: "keyword", signature: "stock NAME [unit] = EXPR", doc: "stocks", summary: "An accumulator (an integral). EXPR is its initial value; it then changes only through its change() rate." },
+  { name: "change", kind: "keyword", signature: "change(NAME) = EXPR", doc: "stocks", summary: "The net rate of change of a stock — literally dNAME/dt. This line is the engine; flowloom integrates it." },
+  { name: "d", kind: "keyword", signature: "d(NAME) = EXPR", doc: "stocks", summary: "Shorthand alias of change(NAME) — the net rate of change of a stock (dNAME/dt)." },
   { name: "flow", kind: "keyword", signature: "flow NAME [unit] = EXPR", doc: "vars", summary: "A named rate. Same maths as aux, but drawn as a flow on the diagram." },
   { name: "aux", kind: "keyword", signature: "aux NAME [unit] = EXPR", doc: "vars", summary: "An instantaneous computed value (a converter/variable) recomputed every step." },
   { name: "param", kind: "keyword", signature: "param NAME [unit] = EXPR", doc: "vars", summary: "A constant knob — evaluated once. `const` is an alias." },
@@ -73,6 +74,9 @@ const BUILTINS: Array<Omit<RefEntry, "arity">> = [
   { name: "step", kind: "builtin", signature: "step(height, t0)", doc: "inputs", summary: "0 before t0, then height — a sudden change." },
   { name: "pulse", kind: "builtin", signature: "pulse(t0, width)", doc: "inputs", summary: "1 during [t0, t0+width), else 0 — a temporary kick." },
   { name: "ramp", kind: "builtin", signature: "ramp(slope, t0, t1)", doc: "inputs", summary: "A linear ramp of the given slope between two times." },
+  { name: "random", kind: "builtin", signature: "random()", doc: "inputs", summary: "A uniform random number in [0, 1), resampled each step. Seed with `sim seed=…` (default 0, so runs are reproducible)." },
+  { name: "random_uniform", kind: "builtin", signature: "random_uniform(lo, hi)", doc: "inputs", summary: "A uniform random number in [lo, hi), resampled each step." },
+  { name: "random_normal", kind: "builtin", signature: "random_normal(mean, sd)", doc: "inputs", summary: "A normally-distributed random number with the given mean and standard deviation." },
 ];
 
 // ── stateful builtins (compiled into internal stocks; see compile.ts) ─────────

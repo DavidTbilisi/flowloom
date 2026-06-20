@@ -35,7 +35,7 @@ describe("mcp handlers", () => {
 
   it("flow_lint reports non-fatal warnings", () => {
     const r = parse(handlers.flow_lint({ model: "stock X = 1\nstock Frozen = 5\nd(X) = 1" }));
-    expect(r.warnings.some((d: { message: string }) => /has no d\(Frozen\) rate/.test(d.message))).toBe(true);
+    expect(r.warnings.some((d: { message: string }) => /has no change\(Frozen\) rate/.test(d.message))).toBe(true);
   });
 
   it("flow_run returns t and the requested series", async () => {
@@ -79,6 +79,28 @@ describe("mcp handlers", () => {
     expect(r.converged).toBe(true);
     expect(r.achieved).toBeCloseTo(20, 2);
     expect(r).toHaveProperty("value");
+  });
+
+  it("flow_montecarlo returns percentile bands for a stochastic model", async () => {
+    const src = `stock Walk = 0
+flow shock = random_normal(0, 1)
+d(Walk) = shock
+sim dt=1 to=20 method=rk4 seed=1
+plot Walk`;
+    const r = parse(await handlers.flow_montecarlo({ model: src, runs: 50, seed: 1 }));
+    expect(r.runs).toBe(50);
+    const walk = r.series.find((s: { name: string }) => s.name === "Walk");
+    expect(walk.final.p05).toBeLessThanOrEqual(walk.final.p50);
+    expect(walk.final.p50).toBeLessThanOrEqual(walk.final.p95);
+    expect(walk.trajectory.t[0]).toBe(0);
+  });
+
+  it("flow_calibrate fits a param to observed data", async () => {
+    const data = "t,Population\n0,5\n2,8\n4,12\n6,17";
+    const r = parse(await handlers.flow_calibrate({ model: SRC, params: ["birthRate"], data, map: { Population: "Population" } }));
+    expect(r).toHaveProperty("params");
+    expect(r.params).toHaveProperty("birthRate");
+    expect(r.perSeries.Population).toBeLessThan(1);
   });
 
   it("flow_describe returns the model structure", () => {

@@ -1,6 +1,7 @@
 import type { Expr } from "../lang/types.js";
 import type { Compiled } from "./compile.js";
 import { lookupTable } from "./builtins.js";
+import { runif, rnorm, RANDOM_FNS, drawSlots } from "./rng.js";
 
 // ── Compiled evaluation plan (shared by the TS and WASM backends) ───────────
 // The tree-walking interpreter (eval.ts) re-reads a string-keyed scope object on
@@ -14,10 +15,16 @@ import { lookupTable } from "./builtins.js";
 // still uses it. This module is only the simulation hot path.
 
 export interface SimPlan {
-  /** Number of f64 slots in the scope vector (t, time, state, vars). */
+  /** Number of f64 slots in the scope vector (t, time, seed, step, state, vars). */
   size: number;
   tSlot: number;
   timeSlot: number;
+  /** Scope slot holding the run's RNG seed (written once by runPlan). */
+  seedSlot: number;
+  /** Scope slot holding the current integer step index (written each step). */
+  stepSlot: number;
+  /** Draw index assigned to each random*() call node (random_normal uses k & k+1). */
+  drawIndex: Map<Expr, number>;
   /** Scope slot of each integration state var, in `Compiled.state` order. */
   stateSlots: number[];
   /** Variables to evaluate each step, in topological order, with their slot. */
@@ -45,8 +52,40 @@ export function buildPlan(c: Compiled): SimPlan {
   };
   const tSlot = slot("t");
   const timeSlot = slot("time");
+  // Reserved slots for the RNG. The `#` names can't collide with user identifiers
+  // (same trick as compile.ts's delay#N internal stocks).
+  const seedSlot = slot("#seed");
+  const stepSlot = slot("#step");
   const stateSlots = c.state.map((s) => slot(s.name));
   const varSteps = c.order.map((v) => ({ slot: slot(v.name), expr: v.expr }));
+
+  // Assign each random*() call node a stable draw index in a single AST walk, so
+  // every backend reads the same map keyed on node identity (no per-backend drift).
+  const drawIndex = new Map<Expr, number>();
+  let nextDraw = 0;
+  const scanDraws = (e: Expr): void => {
+    switch (e.kind) {
+      case "call":
+        if (RANDOM_FNS.has(e.name.toLowerCase()) && !drawIndex.has(e)) {
+          drawIndex.set(e, nextDraw);
+          nextDraw += drawSlots(e.name.toLowerCase());
+        }
+        for (const a of e.args) scanDraws(a);
+        break;
+      case "binary":
+        scanDraws(e.left);
+        scanDraws(e.right);
+        break;
+      case "unary":
+        scanDraws(e.arg);
+        break;
+    }
+  };
+  for (const v of c.order) scanDraws(v.expr);
+  for (const s of c.state) {
+    if (s.rateExpr) scanDraws(s.rateExpr);
+    scanDraws(s.initExpr);
+  }
 
   const outVars = c.order.filter((v) => v.kind !== "param");
   const stockNames = c.userStocks.slice();
@@ -58,6 +97,9 @@ export function buildPlan(c: Compiled): SimPlan {
     size: slotOf.size,
     tSlot,
     timeSlot,
+    seedSlot,
+    stepSlot,
+    drawIndex,
     stateSlots,
     varSteps,
     rateExprs: c.state.map((s) => s.rateExpr),
@@ -126,11 +168,23 @@ function compileWith(e: Expr, slots: Map<string, number>, plan: SimPlan): Fn {
         return (m) => lookupTable(pts, x(m));
       }
       const name = e.name.toLowerCase();
+      if (RANDOM_FNS.has(name)) return compileRandom(name, e, slots, plan);
       const A = e.args.map((a) => compileWith(a, slots, plan));
       return builtinClosure(name, A, tSlot, e.name);
     }
   }
   throw new Error("malformed expression");
+}
+
+/** random*() reads seed/step from reserved slots and a compile-time draw index. */
+function compileRandom(name: string, e: Expr & { kind: "call" }, slots: Map<string, number>, plan: SimPlan): Fn {
+  const k = plan.drawIndex.get(e)!;
+  const ss = plan.seedSlot, ps = plan.stepSlot;
+  if (name === "random") return (m) => runif(m[ss]!, m[ps]!, k, 0, 1);
+  const lo = compileWith(e.args[0]!, slots, plan);
+  const hi = compileWith(e.args[1]!, slots, plan);
+  if (name === "random_uniform") return (m) => runif(m[ss]!, m[ps]!, k, lo(m), hi(m));
+  return (m) => rnorm(m[ss]!, m[ps]!, k, lo(m), hi(m));
 }
 
 /** Closures that replicate builtins.ts exactly, without per-call allocation. */
@@ -224,6 +278,9 @@ export function runIntegration(
 
   for (let i = 0; i <= steps; i++) {
     const time = start + i * dt;
+    // random() is resampled once per step and held across the four RK4 sub-stages,
+    // which all read this same slot — so the integrated vector field is well-defined.
+    mem[plan.stepSlot] = i;
     backend.deriv(time);
     for (let j = 0; j < ns; j++) k1[j] = rates[j]!;
 

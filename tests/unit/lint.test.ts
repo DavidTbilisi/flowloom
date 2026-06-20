@@ -39,7 +39,7 @@ describe("lintModel", () => {
   });
 
   it("flags a stock with no rate", () => {
-    expect(messages(`stock X = 1\nstock Frozen = 5\nd(X) = 1`)).toContain("stock 'Frozen' has no d(Frozen) rate — it never changes");
+    expect(messages(`stock X = 1\nstock Frozen = 5\nd(X) = 1`)).toContain("stock 'Frozen' has no change(Frozen) rate — it never changes");
   });
 
   it("flags a non-positive time constant — literal or resolved param", () => {

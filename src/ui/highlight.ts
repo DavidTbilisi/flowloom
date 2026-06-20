@@ -34,6 +34,7 @@ export interface Tok {
 /** Line-leading keywords of the .flow grammar. */
 export const KEYWORDS = new Set([
   "stock",
+  "change",
   "d",
   "flow",
   "aux",

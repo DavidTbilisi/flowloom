@@ -26,7 +26,11 @@ import {
   sensitivity,
   lintModel,
   solveParam,
+  monteCarlo,
+  parseDataset,
+  calibrate,
   REFERENCE,
+  type EnsembleResult,
 } from "./engine/index.js";
 import { EXAMPLES } from "./examples/index.js";
 
@@ -113,6 +117,27 @@ export const handlers = {
     return text(r);
   },
 
+  async flow_montecarlo(
+    { model, runs, seed, series, set }:
+      { model: string; runs?: number; seed?: number; series?: string[]; set?: string[] },
+  ): Promise<ToolResult> {
+    const r = await monteCarlo(loadModel(model, set), {
+      runs: runs ?? 100,
+      ...(seed !== undefined ? { seed } : {}),
+      ...(series?.length ? { series } : {}),
+    });
+    return text(compactEnsemble(r));
+  },
+
+  async flow_calibrate(
+    { model, params, data, map, set }:
+      { model: string; params: string[]; data: string; map?: Record<string, string>; set?: string[] },
+  ): Promise<ToolResult> {
+    const dataset = parseDataset(data);
+    const r = await calibrate(loadModel(model, set), { params, dataset, ...(map ? { map } : {}) });
+    return text(r);
+  },
+
   flow_loops({ model }: { model: string }): ToolResult {
     const rep = analyzeLoops(loadModel(model));
     return text({ counts: rep.counts, capped: rep.capped, loops: rep.loops.map((l) => ({ polarity: l.polarity, nodes: l.nodes })) });
@@ -133,6 +158,26 @@ export const handlers = {
     return text({ name: ex.name, blurb: ex.blurb, source: ex.source });
   },
 };
+
+/**
+ * Shrink an ensemble to an agent-friendly payload: the final-step distribution
+ * per series, plus a downsampled p05/p50/p95 trajectory (≤ 25 points).
+ */
+function compactEnsemble(r: EnsembleResult) {
+  const N = r.t.length;
+  const every = Math.max(1, Math.ceil(N / 25));
+  const pick = <T>(a: T[]) => a.filter((_, i) => i % every === 0 || i === N - 1);
+  const series = r.series.map((name) => {
+    const b = r.bands.get(name)!;
+    const last = N - 1;
+    return {
+      name,
+      final: { p05: b.p05[last], p25: b.p25[last], p50: b.p50[last], p75: b.p75[last], p95: b.p95[last], mean: b.mean[last] },
+      trajectory: { t: pick(r.t), p05: pick(b.p05), p50: pick(b.p50), p95: pick(b.p95) },
+    };
+  });
+  return { runs: r.runs, baseSeed: r.baseSeed, series, ...(r.notes ? { notes: r.notes } : {}) };
+}
 
 /** Wrap a handler so thrown errors (incl. parse diagnostics) become tool errors. */
 function guard<A>(fn: (a: A) => ToolResult | Promise<ToolResult>) {
@@ -253,6 +298,40 @@ export function buildServer(): McpServer {
       },
     },
     guard(handlers.flow_solve),
+  );
+
+  server.registerTool(
+    "flow_montecarlo",
+    {
+      title: "Monte Carlo ensemble",
+      description:
+        "Run a stochastic model (one using random()/random_uniform/random_normal) under N seeds and return percentile bands (p05/p25/p50/p75/p95 + mean): the final-step distribution per series plus a downsampled p05/p50/p95 trajectory.",
+      inputSchema: {
+        model: modelArg,
+        runs: z.number().optional().describe("Number of runs / seeds (default 100)."),
+        seed: z.number().optional().describe("Base seed; run i uses seed+i (default: the model's sim seed, else 0)."),
+        series: z.array(z.string()).optional().describe("Series to band (default: the model's plot line, else every output)."),
+        set: setArg,
+      },
+    },
+    guard(handlers.flow_montecarlo),
+  );
+
+  server.registerTool(
+    "flow_calibrate",
+    {
+      title: "Calibrate to data",
+      description:
+        "Fit model params to an observed time series (CSV/TSV text) by minimising normalised RMSE (derivative-free Nelder–Mead). Returns the fitted params, the starting values, and the achieved fit per series.",
+      inputSchema: {
+        model: modelArg,
+        params: z.array(z.string()).describe("Params (or stock inits) to fit."),
+        data: z.string().describe("Observed data as CSV/TSV text: a header row, one time column (t/time or the first), then named series columns."),
+        map: z.record(z.string(), z.string()).optional().describe('Model series → dataset column, e.g. {"Infected":"I"}. Defaults to columns whose name matches a series.'),
+        set: setArg,
+      },
+    },
+    guard(handlers.flow_calibrate),
   );
 
   server.registerTool(

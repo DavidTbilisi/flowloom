@@ -19,7 +19,7 @@ import { suggestName } from "./suggest.js";
 // IS the contract an AI reads and writes — keep it small, regular, and obvious.
 //
 //   stock NAME [unit] = EXPR        # an accumulator; EXPR is its initial value
-//   d(NAME) = EXPR                  # dNAME/dt — the net rate of change
+//   change(NAME) = EXPR             # the net rate of change of a stock (d(NAME) is an alias)
 //   flow  NAME [unit] = EXPR        # a named rate (drawn as a flow)
 //   aux   NAME [unit] = EXPR        # an instantaneous computed value
 //   param NAME [unit] = EXPR        # a constant knob
@@ -52,7 +52,7 @@ interface Raw {
 
 const RE = {
   stock: /^stock\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
-  rate: /^d\(\s*([A-Za-z_]\w*)\s*\)\s*=\s*(.+)$/,
+  rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*\)\s*=\s*(.+)$/,
   var: /^(flow|aux|param|const)\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
   table: /^table\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   sim: /^sim\s+(.+)$/,
@@ -88,7 +88,7 @@ export function parseModel(text: string): Model {
   // Every d(NAME) must target a real stock.
   for (const [name, r] of m.rates) {
     if (!m.stocks.some((s) => s.name === name)) {
-      push(m, "error", r.loc, `d(${name}) has no matching \`stock ${name}\``);
+      push(m, "error", r.loc, `change(${name}) has no matching \`stock ${name}\``);
     }
   }
 
@@ -134,7 +134,7 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
       m.stocks.push({ name: name!, initExpr: parseExpr(expr!, lineNo), unit: unit?.trim(), doc, loc });
     } else if ((mt = line.match(RE.rate))) {
       const [, name, expr] = mt;
-      if (m.rates.has(name!)) push(m, "error", loc, `d(${name}) is defined twice`);
+      if (m.rates.has(name!)) push(m, "error", loc, `change(${name}) is defined twice`);
       m.rates.set(name!, { target: name!, expr: parseExpr(expr!, lineNo), loc });
     } else if ((mt = line.match(RE.var))) {
       const [, kw, name, unit, expr] = mt;
@@ -192,7 +192,9 @@ function parseSim(m: Raw, body: string, loc: Loc): void {
     else if (k === "method") {
       if (v === "euler" || v === "rk4") m.settings.method = v;
       else push(m, "error", loc, `unknown method '${v}' (use euler or rk4)`);
-    } else {
+    } else if (k === "timeunit") m.settings.timeunit = v;
+    else if (k === "seed") m.settings.seed = num(m, v, loc, "seed");
+    else {
       push(m, "warning", loc, `unknown sim setting '${k}'`);
     }
   }

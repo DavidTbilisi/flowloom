@@ -46,6 +46,7 @@ export function startTour(tour: Tour, ctx: TourCtx): TourHandle {
       <div class="tour-head"><span class="tour-progress"></span><button class="tour-skip" title="close">✕</button></div>
       <h3 class="tour-title"></h3>
       <p class="tour-body"></p>
+      <p class="tour-hint" hidden></p>
       <div class="tour-nav">
         <button class="tour-back ghost">Back</button>
         <button class="tour-next primary">Next</button>
@@ -57,6 +58,7 @@ export function startTour(tour: Tour, ctx: TourCtx): TourHandle {
   const card = overlay.querySelector(".tour-card") as HTMLElement;
   const titleEl = overlay.querySelector(".tour-title") as HTMLElement;
   const bodyEl = overlay.querySelector(".tour-body") as HTMLElement;
+  const hintEl = overlay.querySelector(".tour-hint") as HTMLElement;
   const progEl = overlay.querySelector(".tour-progress") as HTMLElement;
   const backBtn = overlay.querySelector(".tour-back") as HTMLButtonElement;
   const nextBtn = overlay.querySelector(".tour-next") as HTMLButtonElement;
@@ -77,9 +79,16 @@ export function startTour(tour: Tour, ctx: TourCtx): TourHandle {
       const ok = step.validate(ctx);
       nextBtn.disabled = !ok;
       nextBtn.classList.toggle("waiting", !ok);
+      // Explain why Next is still disabled: a model error means the gate can
+      // never pass until it's fixed, so surface it instead of a dead button.
+      const err = ok ? null : ctx.store.run.error;
+      hintEl.hidden = !err;
+      hintEl.textContent = err ? `⚠ ${err}` : "";
     } else {
       nextBtn.disabled = false;
       nextBtn.classList.remove("waiting");
+      hintEl.hidden = true;
+      hintEl.textContent = "";
     }
   }
 

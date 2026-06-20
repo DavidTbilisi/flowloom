@@ -13,8 +13,8 @@ flow kills    = predation * Prey * Predators
 flow predGain = predEfficiency * Prey * Predators
 flow predLoss = predDeath * Predators
 
-d(Prey)      = births - kills
-d(Predators) = predGain - predLoss
+change(Prey)      = births - kills
+change(Predators) = predGain - predLoss
 
 sim dt=0.05 to=60 method=rk4
 plot Prey Predators

@@ -10,7 +10,7 @@ stock Population = 5
 param birthRate = 0.7
 param carrying  = 1000
 flow growth = birthRate * Population * (1 - Population / carrying)
-d(Population) = growth
+change(Population) = growth
 ```
 → Run → an S-curve, an animated causal diagram, and its reinforcing loop, found
 automatically.
@@ -26,7 +26,7 @@ reads is always what ran.
 
 ## What's in it
 
-- **A real language** — `stock`, `d()`, `flow`, `aux`, `param`, `table`, with a
+- **A real language** — `stock`, `change()`, `flow`, `aux`, `param`, `table`, with a
   safe AST interpreter (no `eval`). See [`docs/language.md`](docs/language.md).
 - **A proper engine** — Euler and classical **RK4** integration; `step`/`pulse`/
   `ramp` test inputs; graphical **lookup tables**; first- and third-order
@@ -135,7 +135,9 @@ canonical source so they never drift.)
 - [x] save/load `.flow` files (drag-drop) and shareable URL state
 - [x] compiled (slot-based) evaluator + a generated **WASM** backend for large
       models, run off-thread in a Web Worker
-- [ ] units checking from the `[unit]` annotations
+- [x] units checking (dimensional analysis) from the `[unit]` annotations
+- [x] seeded randomness (`random`/`random_uniform`/`random_normal`) + Monte Carlo bands
+- [x] data import + calibration (fit params to an observed CSV by normalised-RMSE)
 - [x] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
 - [x] AI-facing surface — CLI `explain`/`describe`/`reference`, a generated
       `llms.txt` guide, and a `flowloom-mcp` MCP server over the same engine

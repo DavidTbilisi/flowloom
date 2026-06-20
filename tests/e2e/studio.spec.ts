@@ -131,3 +131,28 @@ test("table tab shows sampled series with the playback cursor", async ({ page })
   await page.evaluate(() => (window as any).flowloom.setFrame(0));
   await expect(page.locator("#tableWrap tr.cursor")).toHaveCount(1);
 });
+
+test("clicking a legend entry toggles series visibility", async ({ page }) => {
+  const name = await page.evaluate(() => (window as any).flowloom.run.result.names[0]);
+  const before = await page.evaluate((n) => (window as any).flowloom.visible.has(n), name);
+  await page.locator(`#legend label[data-name="${name}"]`).click();
+  const after = await page.evaluate((n) => (window as any).flowloom.visible.has(n), name);
+  expect(after).toBe(!before);
+});
+
+test("a seeded random model runs and reproduces the same trajectory", async ({ page }) => {
+  const src = "stock W = 0\nflow s = random_normal(0, 1)\nchange(W) = s\nsim dt=1 to=30 seed=7\nplot W";
+  await page.locator("#src").fill(src);
+  await page.locator("#run").click();
+  await page.waitForFunction(() => (window as any).flowloom.run.ok === true);
+  const endpoint = () =>
+    page.evaluate(() => {
+      const arr = (window as any).flowloom.run.result.series.get("W");
+      return arr[arr.length - 1];
+    });
+  const a = await endpoint();
+  await page.locator("#run").click();
+  const b = await endpoint();
+  expect(b).toBe(a); // same seed ⇒ identical run
+  expect(Math.abs(a as number)).toBeGreaterThan(0); // the noise actually moved the stock
+});

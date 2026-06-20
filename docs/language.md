@@ -31,26 +31,31 @@ stock Population [people] = 5      # the starting headcount
 | `sim dt=… to=… start=… method=…` | Simulation settings. The toolbar edits this line. |
 | `plot A B C` | Which series are visible by default. |
 
-The `[unit]` annotation is optional and is carried through for labelling and
-future units checking. It does not affect the numbers.
+The `[unit]` annotation is optional. It does not affect the numbers, but where
+you supply it, `lint`/`check` run a **dimensional analysis**: it flags adding
+unlike units, passing a dimensioned value to `exp`/`ln`/`sin`/…, and a
+`change(stock)` that isn't the stock's units per unit of time. Un-annotated names
+are treated as *unknown* (not dimensionless), so checking is opt-in and only fires
+where you've annotated enough to make the claim. Set the time unit with
+`sim timeunit=month` (defaults to `time`).
 
 ### Stocks and rates — the engine
 
 A stock is the running integral of its net flow:
 
 ```
-stock(t + dt) = stock(t) + dt · d(stock)
+stock(t + dt) = stock(t) + dt · change(stock)
 ```
 
-You write the derivative with `d(NAME) = …`; flowloom integrates it. A stock
-with **no** `d()` line stays constant. Every `d(NAME)` must refer to a declared
-`stock NAME`.
+You write the derivative with `change(NAME) = …`; flowloom integrates it. A stock
+with **no** `change()` line stays constant. Every `change(NAME)` must refer to a
+declared `stock NAME`. `d(NAME)` is accepted as a shorthand alias.
 
 ```flow
 stock Water = 80
 param inflow = 5
 flow draining = 0.1 * Water
-d(Water) = inflow - draining     # net rate: in minus out
+change(Water) = inflow - draining     # net rate: in minus out
 ```
 
 ### Variables: `flow`, `aux`, `param`
@@ -159,7 +164,7 @@ its ceiling — the same single structural loop).
 ## Errors the parser will give you
 
 - `'<name>' is defined twice` / `'<name>' is a reserved name` (`t`, `time`, `dt`, `PI`, `E`).
-- `d(<name>) has no matching stock <name>`.
+- `change(<name>) has no matching stock <name>`.
 - `unknown name '<name>'` — a reference that resolves to nothing.
 - `algebraic loop among: …` — instantaneous self-reference; route it through a stock.
 - `no stocks defined` — every model needs at least one stock.
@@ -179,9 +184,9 @@ param N     = 1000    # total population
 flow infection = beta * S * I / N
 flow recovery  = gamma * I
 
-d(S) = -infection
-d(I) = infection - recovery
-d(R) = recovery
+change(S) = -infection
+change(I) = infection - recovery
+change(R) = recovery
 
 sim dt=0.25 to=120 method=rk4
 plot S I R

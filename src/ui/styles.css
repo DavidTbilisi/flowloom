@@ -57,16 +57,28 @@ button:disabled { opacity: .45; cursor: default; }
 
 /* editor: a highlight <pre> sits exactly behind a transparent-text textarea.
    The two MUST share every metric or the colors drift off the characters. */
-.editor-wrap { position: relative; flex: 1; min-height: 0; background: #0c0e12; }
+.editor-wrap { position: relative; flex: 1; min-height: 0; background: #0c0e12; --gutter: 2.6em; }
+/* static line-number gutter strip — pinned, so it never scrolls horizontally */
+.editor-wrap::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; z-index: 0; pointer-events: none;
+  width: calc(14px + var(--gutter) + 4px); background: #0a0c10; border-right: 1px solid var(--line);
+}
 #hl, textarea#src {
   position: absolute; inset: 0; margin: 0; border: 0; overflow: auto;
-  padding: 12px 14px; font: 13px/1.6 var(--mono); tab-size: 2;
+  padding: 12px 14px; padding-left: calc(14px + var(--gutter) + 12px);
+  font: 13px/1.6 var(--mono); tab-size: 2;
   white-space: pre-wrap; overflow-wrap: break-word;
 }
-#hl { pointer-events: none; z-index: 0; color: var(--ink); background: transparent; }
+#hl { pointer-events: none; z-index: 1; color: var(--ink); background: transparent; counter-reset: ln; }
+.ln { position: relative; min-height: 1lh; counter-increment: ln; }
+.ln::before {
+  content: counter(ln);
+  position: absolute; left: calc(-1 * var(--gutter) - 12px); width: var(--gutter);
+  text-align: right; color: var(--dim); font-weight: 400;
+}
 textarea#src {
   width: 100%; height: 100%; resize: none; outline: none;
-  background: transparent; color: var(--ink); caret-color: var(--accent); z-index: 1;
+  background: transparent; color: var(--ink); caret-color: var(--accent); z-index: 2;
 }
 textarea#src.transparent-text { color: transparent; }
 .tok-keyword { color: var(--blue); font-weight: 600; }
@@ -125,11 +137,16 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .transport input[type=range] { flex: 1; accent-color: var(--accent); }
 .transport .clock { font: 12px var(--mono); color: var(--accent); min-width: 92px; text-align: right; }
 
-table { border-collapse: collapse; font: 12px/1.5 var(--mono); width: 100%; }
-th, td { text-align: left; padding: 4px 10px; border-bottom: 1px solid var(--line); }
-th { color: var(--dim); font-weight: 600; }
-td.num { text-align: right; }
-tr.cursor td { background: #1b2530; }
+table { border-collapse: collapse; font: 12px/1.6 var(--mono); width: 100%; }
+th, td { text-align: left; padding: 5px 14px; border-bottom: 1px solid var(--line);
+  font-variant-numeric: tabular-nums; }
+thead th { position: sticky; top: -12px; background: var(--panel2); color: var(--dim);
+  font-weight: 600; z-index: 1; }
+th.num, td.num { text-align: right; }
+.tcol { color: var(--accent); }
+tbody tr:nth-child(even) td { background: rgba(255, 255, 255, 0.018); }
+tbody tr.cursor td { background: #1b2530; }
+tbody tr.cursor td.tcol { box-shadow: inset 2px 0 0 var(--accent); }
 
 svg { width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
 #diagram { touch-action: none; cursor: grab; display: block; }
@@ -233,6 +250,8 @@ a { color: var(--accent); }
 .tour-skip { background: transparent; border: 0; color: var(--dim); cursor: pointer; font-size: 14px; padding: 0; }
 .tour-title { margin: 6px 0; font-size: 15px; color: var(--ink); }
 .tour-body { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--dim); }
+.tour-hint { margin: 0 0 12px; padding: 6px 9px; border-radius: 6px; font-size: 12px;
+  line-height: 1.45; color: var(--red); background: #1a1113; white-space: pre-wrap; }
 .tour-nav { display: flex; gap: 8px; justify-content: flex-end; }
 .tour-nav button { padding: 5px 14px; }
 .tour-next.waiting { opacity: .5; cursor: default; }

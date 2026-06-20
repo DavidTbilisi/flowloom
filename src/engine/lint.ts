@@ -8,6 +8,7 @@
 import type { Model, Diagnostic, Expr, Loc } from "../lang/index.js";
 import { freeVars } from "../lang/index.js";
 import { operatingPoint } from "./loops.js";
+import { checkUnits } from "./units.js";
 
 /** Stateful builtins whose 2nd argument is a time constant τ that must be > 0. */
 const TAU_BUILTINS = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3"]);
@@ -35,12 +36,13 @@ export function lintModel(model: Model): Diagnostic[] {
     else out.push(warn(v.loc, `${v.kind} '${v.name}' is computed but never used (not referenced and not plotted)`));
   }
 
-  // A stock with no d() rate can never change — almost always an oversight.
+  // A stock with no change() rate can never change — almost always an oversight.
   for (const s of model.stocks) {
-    if (!model.rates.has(s.name)) out.push(warn(s.loc, `stock '${s.name}' has no d(${s.name}) rate — it never changes`));
+    if (!model.rates.has(s.name)) out.push(warn(s.loc, `stock '${s.name}' has no change(${s.name}) rate — it never changes`));
   }
 
   checkTimeConstants(model, out);
+  checkUnits(model, out);
   return out;
 }
 

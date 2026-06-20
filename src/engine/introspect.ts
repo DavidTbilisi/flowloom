@@ -88,7 +88,7 @@ export function explainModel(model: Model): string {
       const unit = s.unit ? ` [${s.unit}]` : "";
       const rate = rateOf.get(s.name);
       const doc = s.doc ? ` — ${s.doc}` : "";
-      lines.push(`  • ${s.name}${unit} starts at ${s.init}${rate ? `; d(${s.name}) = ${rate}` : "; no rate"}${doc}`);
+      lines.push(`  • ${s.name}${unit} starts at ${s.init}${rate ? `; change(${s.name}) = ${rate}` : "; no rate"}${doc}`);
     }
   }
 

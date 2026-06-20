@@ -7,7 +7,7 @@ param k    = 0.3       # cooling constant
 
 flow cooling = k * (Temp - room)
 
-d(Temp) = -cooling
+change(Temp) = -cooling
 
 sim dt=0.1 to=20 method=rk4
 plot Temp

@@ -28,7 +28,7 @@ describe("WASM encoder", () => {
     const mod = new WebAssembly.Module(buildModule(body, 1) as BufferSource);
     const noop = () => 0;
     const e = Object.fromEntries(
-      ["sin", "cos", "tan", "exp", "ln", "log10", "sign", "round", "pow", "rem", "step", "pulse", "ramp", "lookup"].map((n) => [n, noop]),
+      ["sin", "cos", "tan", "exp", "ln", "log10", "sign", "round", "pow", "rem", "step", "pulse", "ramp", "lookup", "runif", "rnorm"].map((n) => [n, noop]),
     );
     const inst = new WebAssembly.Instance(mod, { e });
     const mem = new Float64Array((inst.exports.memory as WebAssembly.Memory).buffer);
@@ -99,6 +99,29 @@ plot Inventory receiving smoothed`;
       const a = ts.series.get(n)!, b = wasm.series.get(n)!;
       for (let i = 0; i < a.length; i++) expect(b[i], `${n}[${i}]`).toBeCloseTo(a[i]!, 8);
     }
+  });
+
+  it("matches on a model using seeded randomness", async () => {
+    // Seeded random*() is pure, so WASM (which imports the same rng.ts helpers as
+    // the TS backend) must match it bit-for-bit — the whole point of the design.
+    const src = `
+stock Walk = 0
+stock Pot [dollars] = 100
+param vol = 1
+flow shock = random_normal(0, vol)
+flow noise = random_uniform(-1, 1) + random()
+d(Walk) = shock
+d(Pot) = noise
+sim dt=0.5 to=40 method=rk4 seed=12345
+plot Walk Pot shock noise`;
+    const { ts, wasm } = await runBoth(src);
+    for (const n of ts.names) {
+      const a = ts.series.get(n)!, b = wasm.series.get(n)!;
+      for (let i = 0; i < a.length; i++) expect(b[i], `${n}[${i}]`).toBeCloseTo(a[i]!, 9);
+    }
+    // And the randomness is actually doing something (not a constant zero series).
+    const walk = ts.series.get("Walk")!;
+    expect(Math.abs(walk.at(-1)!)).toBeGreaterThan(0);
   });
 
   it("matches under Euler too", async () => {

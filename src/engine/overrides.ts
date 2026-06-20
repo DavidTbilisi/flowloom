@@ -22,7 +22,7 @@ export function applyOverride(model: Model, spec: string): string[] {
     model.settings.method = raw;
     return warnings;
   }
-  if (key === "dt" || key === "to" || key === "start") {
+  if (key === "dt" || key === "to" || key === "start" || key === "seed") {
     const v = Number(raw);
     if (!Number.isFinite(v)) throw new Error(`${key} must be a number, got "${raw}"`);
     model.settings[key] = v;

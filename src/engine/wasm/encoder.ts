@@ -19,6 +19,7 @@ export const IMPORTS = [
   "step", "pulse",                                             // (f64,f64,f64)->f64
   "ramp",                                                      // (f64,f64,f64,f64)->f64
   "lookup",                                                    // (i32,f64)->f64
+  "runif", "rnorm",                                            // (f64,f64,f64,f64,f64)->f64
 ] as const;
 
 /** Function index of each import (and of the defined `deriv`). */
@@ -109,13 +110,15 @@ const T_B = 1; // (f64,f64)->f64
 const T_C = 2; // (f64,f64,f64)->f64
 const T_D = 3; // (f64,f64,f64,f64)->f64
 const T_L = 4; // (i32,f64)->f64
-const T_DERIV = 5; // (f64)->()
+const T_E = 5; // (f64,f64,f64,f64,f64)->f64
+const T_DERIV = 6; // (f64)->()
 
 const importTypeIndex = (name: string): number => {
   if (["pow", "rem"].includes(name)) return T_B;
   if (["step", "pulse"].includes(name)) return T_C;
   if (name === "ramp") return T_D;
   if (name === "lookup") return T_L;
+  if (["runif", "rnorm"].includes(name)) return T_E;
   return T_A;
 };
 
@@ -131,6 +134,7 @@ export function buildModule(body: number[], pages: number): Uint8Array {
     funcType([F64, F64, F64], [F64]),
     funcType([F64, F64, F64, F64], [F64]),
     funcType([I32, F64], [F64]),
+    funcType([F64, F64, F64, F64, F64], [F64]),
     funcType([F64], []),
   ]);
 
