@@ -10,6 +10,7 @@ import {
 import { parseModel, printExpr, type Model, type Expr } from "../lang/index.js";
 import { simulate, parseDataset, calibrate, RANDOM_FNS } from "../engine/index.js";
 import { draftFlow, getStoredKey, setStoredKey } from "./ai-draft.js";
+import { initTheme, applyTheme, currentTheme } from "./theme.js";
 
 /** Does any equation call a random*() builtin? (drives the Monte Carlo hint) */
 function modelUsesRandom(model: Model): boolean {
@@ -38,6 +39,7 @@ import { UI_TOUR, LESSONS, WALKTHROUGHS } from "./tutorials.js";
 
 export function mountApp(root: HTMLElement): Store {
   const store = new Store();
+  initTheme(); // apply the saved light/dark theme before the first paint
   root.innerHTML = SHELL;
 
   const $ = <T extends Element>(sel: string) => root.querySelector(sel) as T;
@@ -644,6 +646,18 @@ export function mountApp(root: HTMLElement): Store {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") { e.preventDefault(); void runAiDraft(); }
   });
 
+  // ── light / dark theme ────────────────────────────────────────────────────
+  const themeBtn = $<HTMLButtonElement>("#theme");
+  const reflectTheme = () => { themeBtn.textContent = currentTheme() === "light" ? "☀️" : "🌙"; };
+  reflectTheme();
+  themeBtn.onclick = () => {
+    applyTheme(currentTheme() === "light" ? "dark" : "light");
+    reflectTheme();
+    // the CSS repaints itself; the canvas/SVG layers must be told to repaint
+    drawPlot(plotCanvas, store);
+    diagram.render(store);
+  };
+
   function renderLoopChips() {
     const run = store.run;
     if (!run.ok || !run.loops) { loopChips.innerHTML = ""; return; }
@@ -936,6 +950,7 @@ const SHELL = `
   <h1><b>flow</b>loom</h1>
   <span class="tag">think in systems — as text, with AI · stocks · flows · loops, simulated</span>
   <span class="spacer"></span>
+  <button id="theme" class="ghost" title="toggle light / dark theme">🌙</button>
   <label class="tag" for="example">example</label>
   <select id="example" data-help="ui:example"></select>
   <div class="learn-wrap">

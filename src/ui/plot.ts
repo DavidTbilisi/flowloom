@@ -1,5 +1,6 @@
 import type { Store } from "./store.js";
 import type { SimResult } from "../engine/index.js";
+import { cssVar } from "./theme.js";
 
 // Time-series plot on a canvas. Draws the visible series and a vertical cursor
 // at the animation frame, with a dot on each series at the current time.
@@ -52,6 +53,9 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
   const sx = (t: number) => x0 + ((t - tMin) / (tMax - tMin || 1)) * (x1 - x0);
   const sy = (v: number) => y0 - ((v - lo) / (hi - lo || 1)) * (y0 - y1);
 
+  // chrome colours come from the active theme (so light/dark both look native)
+  const cGrid = cssVar("--line"), cAxis = cssVar("--axis"), cLabel = cssVar("--dim"), cInk = cssVar("--ink");
+
   // horizontal gridlines + y labels at nice ticks
   g.font = "11px ui-monospace, monospace";
   g.lineWidth = 1;
@@ -60,19 +64,19 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
     const y = sy(v);
     if (y < y1 - 0.5 || y > y0 + 0.5) continue;
     const zero = Math.abs(v) < (hi - lo) * 1e-9;
-    g.strokeStyle = zero ? "#3a4150" : "#2a2f3a";
+    g.strokeStyle = zero ? cAxis : cGrid;
     g.globalAlpha = zero ? 0.9 : 0.4;
     g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
-    g.globalAlpha = 1; g.fillStyle = "#9aa3b2"; g.textAlign = "right"; g.fillText(fmt(v), x0 - 8, y);
+    g.globalAlpha = 1; g.fillStyle = cLabel; g.textAlign = "right"; g.fillText(fmt(v), x0 - 8, y);
   }
   // x labels at nice time ticks
   g.textBaseline = "alphabetic"; g.textAlign = "center";
   for (const t of niceScale(tMin, tMax, 6).ticks) {
     if (t < tMin - 1e-9 || t > tMax + 1e-9) continue;
-    g.fillStyle = "#9aa3b2"; g.fillText(fmt(t), sx(t), H - 8);
+    g.fillStyle = cLabel; g.fillText(fmt(t), sx(t), H - 8);
   }
   g.textAlign = "left";
-  g.strokeStyle = "#3a4150";
+  g.strokeStyle = cAxis;
   g.beginPath(); g.moveTo(x0, y1); g.lineTo(x0, y0); g.lineTo(x1, y0); g.stroke();
 
   // ── overlays (drawn behind the canonical series) ──
@@ -115,7 +119,7 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
     for (const n of vis) {
       const col = ov.data.columns.get(n);
       if (!col) continue;
-      g.strokeStyle = colorFor(r, n); g.fillStyle = "#11151c"; g.lineWidth = 1.5;
+      g.strokeStyle = colorFor(r, n); g.fillStyle = cssVar("--panel"); g.lineWidth = 1.5;
       for (let i = 0; i < ov.data.t.length; i++) {
         const v = col[i]!;
         if (!Number.isFinite(v)) continue;
@@ -169,7 +173,7 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
   const fi = store.frame;
   if (fi >= 0 && fi < T.length) {
     const cx = sx(T[fi]!);
-    g.strokeStyle = "#e6e9ef"; g.globalAlpha = 0.5; g.lineWidth = 1;
+    g.strokeStyle = cInk; g.globalAlpha = 0.5; g.lineWidth = 1;
     g.beginPath(); g.moveTo(cx, y1); g.lineTo(cx, y0); g.stroke();
     g.globalAlpha = 1;
     for (const n of vis) {

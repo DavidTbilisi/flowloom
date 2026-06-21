@@ -1,6 +1,7 @@
 import type { Store } from "./store.js";
 import type { SimResult, InfluenceGraph, Loop } from "../engine/index.js";
 import { colorFor } from "./plot.js";
+import { cssVar } from "./theme.js";
 
 // ── Animated causal diagram on an infinite (pan/zoom) canvas ─────────────────
 // Nodes live in a fixed *virtual* coordinate space sized to the node count, so
@@ -72,7 +73,7 @@ export class Diagram {
       // keep the last good layout so the user can keep clicking to fix it.
       if (this.editMode && this.layout) return;
       this.layout = null;
-      this.svg.innerHTML = `<text x="20" y="30" fill="#9aa3b2" font-size="12">run a model to see its causal diagram</text>`;
+      this.svg.innerHTML = `<text x="20" y="30" fill="${cssVar('--dim')}" font-size="12">run a model to see its causal diagram</text>`;
       return;
     }
     this.layout = buildLayout(run.loops.graph, run.loops.loops, run.result, this.positions);
@@ -131,7 +132,13 @@ export class Diagram {
     const hlNodes = hi != null ? new Set(L.loops[hi]!.nodes) : null;
     const simplified = N > FULL_LIMIT;
     const straightEdges = simplified || N > GRID_LIMIT; // curves only for small radial graphs
-    const col = (s: number) => (s > 0 ? "#5fd17a" : s < 0 ? "#f0746a" : "#7a8294");
+    // chrome from the active theme — light and dark both paint natively
+    const cInk = cssVar("--ink"), cDim = cssVar("--dim"), cAxis = cssVar("--axis"),
+      cNodeFill = cssVar("--node-fill"), cPillFill = cssVar("--pill-fill"),
+      cPillStroke = cssVar("--pill-stroke"), cPillText = cssVar("--pill-text"),
+      cMuted = cssVar("--node-muted"), cAccent = cssVar("--accent"),
+      cGreen = cssVar("--green"), cRed = cssVar("--red"), cWarn = cssVar("--warn");
+    const col = (s: number) => (s > 0 ? cGreen : s < 0 ? cRed : cMuted);
 
     let body = "";
 
@@ -196,7 +203,7 @@ export class Diagram {
       if (simplified) {
         // dot-map: a coloured dot is enough to navigate; details on hover
         const r = L.isStock.has(n) ? 5 : 3.5;
-        const fill = L.isStock.has(n) ? nodeColor : internal ? "#3a4150" : "#7a8294";
+        const fill = L.isStock.has(n) ? nodeColor : internal ? cAxis : cMuted;
         body += `<g data-help="${helpKey}"${named}><circle cx="${p.x}" cy="${p.y}" r="${r}" fill="${fill}" opacity="${dim}"/></g>`;
         continue;
       }
@@ -206,25 +213,25 @@ export class Diagram {
         const rng = L.range.get(n)!;
         const frac = value != null && Number.isFinite(value) ? clamp01((value - rng.lo) / (rng.hi - rng.lo || 1)) : 0;
         const bw = 84, bh = 36, bx = p.x - bw / 2, by = p.y - bh / 2;
-        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="#11161e" stroke="${nodeColor}" stroke-width="1.6" opacity="${dim}"/>`;
+        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7" fill="${cNodeFill}" stroke="${nodeColor}" stroke-width="1.6" opacity="${dim}"/>`;
         const fh = bh * frac;
         g += `<clipPath id="clip-${cssId(n)}"><rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="7"/></clipPath>`;
         g += `<rect clip-path="url(#clip-${cssId(n)})" x="${bx}" y="${by + bh - fh}" width="${bw}" height="${fh}" fill="${nodeColor}" opacity="${0.22 * dim}"/>`;
-        g += `<text x="${p.x}" y="${by - 5}" text-anchor="middle" font-size="11" fill="#e6e9ef" opacity="${dim}" font-family="monospace">${esc(short(n))}</text>`;
+        g += `<text x="${p.x}" y="${by - 5}" text-anchor="middle" font-size="11" fill="${cInk}" opacity="${dim}" font-family="monospace">${esc(short(n))}</text>`;
         g += `<text x="${p.x}" y="${p.y + 5}" text-anchor="middle" font-size="12" fill="${nodeColor}" opacity="${dim}" font-family="monospace">${value != null ? fmtShort(value) : ""}</text>`;
       } else {
-        const stroke = internal ? "#3a4150" : "#4a5566";
+        const stroke = internal ? cAxis : cPillStroke;
         const bw = 78, bh = 30, bx = p.x - bw / 2, by = p.y - bh / 2;
-        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="15" fill="#141821" stroke="${stroke}" stroke-width="1.3" opacity="${dim}"/>`;
-        g += `<text x="${p.x}" y="${p.y - 1}" text-anchor="middle" font-size="10.5" fill="#cdd3df" opacity="${dim}" font-family="monospace">${esc(short(internal ? "delay" : n))}</text>`;
+        g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="15" fill="${cPillFill}" stroke="${stroke}" stroke-width="1.3" opacity="${dim}"/>`;
+        g += `<text x="${p.x}" y="${p.y - 1}" text-anchor="middle" font-size="10.5" fill="${cPillText}" opacity="${dim}" font-family="monospace">${esc(short(internal ? "delay" : n))}</text>`;
         if (value != null && Number.isFinite(value))
-          g += `<text x="${p.x}" y="${p.y + 11}" text-anchor="middle" font-size="10" fill="#8b93a3" opacity="${dim}" font-family="monospace">${fmtShort(value)}</text>`;
+          g += `<text x="${p.x}" y="${p.y + 11}" text-anchor="middle" font-size="10" fill="${cMuted}" opacity="${dim}" font-family="monospace">${fmtShort(value)}</text>`;
       }
       // builder cue: ring the connect-source (green) or selected (accent) node
       if (this.editMode && (n === this.connectFrom || n === this.selected)) {
         const stockN = L.isStock.has(n);
         const bw = stockN ? 94 : 88, bh = stockN ? 46 : 40;
-        const c = n === this.connectFrom ? "#5fd17a" : "#6ad1c7";
+        const c = n === this.connectFrom ? cGreen : cAccent;
         g = `<rect x="${p.x - bw / 2}" y="${p.y - bh / 2}" width="${bw}" height="${bh}" rx="${stockN ? 10 : 20}" fill="none" stroke="${c}" stroke-width="2" stroke-dasharray="4 3"/>` + g;
       }
       body += `<g data-help="${helpKey}"${named}>${g}</g>`;
@@ -236,11 +243,11 @@ export class Diagram {
       const c = ns.reduce((a, n) => ({ x: a.x + L.pos.get(n)!.x, y: a.y + L.pos.get(n)!.y }), { x: 0, y: 0 });
       c.x /= ns.length; c.y /= ns.length;
       const k = L.loops[hi]!.polarity;
-      const kc = k === "R" ? "#5fd17a" : k === "B" ? "#f0c14b" : "#9aa3b2";
-      body += `<circle cx="${c.x}" cy="${c.y}" r="16" fill="${kc}"/><text x="${c.x}" y="${c.y + 6}" text-anchor="middle" font-size="16" font-weight="700" fill="#06231f">${k}</text>`;
+      const kc = k === "R" ? cGreen : k === "B" ? cWarn : cDim;
+      body += `<circle cx="${c.x}" cy="${c.y}" r="16" fill="${kc}"/><text x="${c.x}" y="${c.y + 6}" text-anchor="middle" font-size="16" font-weight="700" fill="${cssVar("--chip-ink")}">${k}</text>`;
     }
 
-    const cols = ["#5fd17a", "#f0746a", "#7a8294"];
+    const cols = [cGreen, cRed, cMuted];
     const defs = cols
       .map((c) => `<marker id="fa-${c.slice(1)}" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${c}"/></marker>`)
       .join("");
@@ -248,9 +255,9 @@ export class Diagram {
     const t = this.view;
     // a hint when the graph is too big to wire up edges
     const note = N > EDGE_LIMIT
-      ? `<text x="14" y="${H - 14}" fill="#9aa3b2" font-size="12" font-family="monospace">${N} nodes — edges hidden; dot-map only. Use Plot/Table for data, scroll to zoom.</text>`
+      ? `<text x="14" y="${H - 14}" fill="${cDim}" font-size="12" font-family="monospace">${N} nodes — edges hidden; dot-map only. Use Plot/Table for data, scroll to zoom.</text>`
       : simplified
-        ? `<text x="14" y="${H - 14}" fill="#9aa3b2" font-size="12" font-family="monospace">${N} nodes — simplified dot-map. Hover a dot for details; scroll to zoom.</text>`
+        ? `<text x="14" y="${H - 14}" fill="${cDim}" font-size="12" font-family="monospace">${N} nodes — simplified dot-map. Hover a dot for details; scroll to zoom.</text>`
         : "";
     this.svg.innerHTML = `<defs>${defs}</defs><g class="vp" transform="translate(${t.x} ${t.y}) scale(${t.k})">${body}</g>${note}`;
     this.onView?.(this.view.k);
