@@ -115,20 +115,175 @@ decay/growth, the compound-interest recurrence) and conserved quantities (SIR
 population invariance). The e2e tests drive the real app: boot, edit-reruns,
 errors, diagram, loops, and playback.
 
-## The format in one table
+## The language, by example
+
+A `.flow` model is just a list of statements, **one per line**. Blank lines are
+ignored; `#` starts a comment to end of line (a trailing comment on a declaration
+becomes that symbol's doc string). Here's every construct, each with a snippet you
+can paste into the editor.
+
+**The seven line forms at a glance:**
 
 | line | meaning |
 |---|---|
-| `stock NAME [unit] = EXPR` | an accumulator (an integral); EXPR is its initial value |
-| `d(NAME) = EXPR` | the net rate of change of a stock — `dNAME/dt`. **The engine.** |
-| `flow NAME = EXPR` | a named rate; drawn as a flow |
-| `aux NAME = EXPR` | an instantaneous computed value |
-| `param NAME = EXPR` | a constant knob |
+| `stock NAME [unit] = EXPR` | an accumulator (an integral); `EXPR` is its value at `start` |
+| `change(NAME) = EXPR` / `d(NAME) = EXPR` | the net rate of change of a stock — `dNAME/dt`. **The engine.** |
+| `flow NAME [unit] = EXPR` | a named rate; drawn as a flow valve |
+| `aux NAME [unit] = EXPR` | an instantaneous computed value (a "converter") |
+| `param NAME [unit] = EXPR` | a constant knob (`const` is an alias) |
 | `table NAME = (x,y) …` | a graphical lookup function, called `NAME(x)` |
 | `sim dt=.1 to=50 method=rk4` | simulation settings |
 | `plot A B C` | which series start visible |
 
-Full reference: [`docs/language.md`](docs/language.md) ·
+### Stocks and `change()` — the engine
+
+A **stock** accumulates; you write its derivative with `change(NAME)` (or the
+alias `d(NAME)`), and flowloom integrates it:
+
+```flow
+stock Water [liters] = 80         # value at t = start
+param inflow = 5
+flow draining = 0.1 * Water        # drains faster when fuller
+change(Water) = inflow - draining  # net rate: in minus out  →  stock(t+dt) = stock(t) + dt·change
+```
+
+A stock with **no** `change()` line stays constant. Every `change(NAME)` must name
+a declared `stock`. At least one stock is required — that's what makes it a
+dynamic model.
+
+### Variables: `flow`, `aux`, `param`
+
+All three are expressions recomputed each step; they differ only in **role and
+diagram appearance**:
+
+```flow
+param birthRate = 0.03            # a constant knob — evaluated once, gets a UI slider
+aux   gap = target - Inventory    # an intermediate calculation
+flow  births = birthRate * Pop    # an aux that represents a rate — drawn as a flow
+```
+
+Variables may reference stocks, params, and each other — but **not in an
+algebraic loop** (a flow can't instantaneously depend on itself). Route real
+feedback through a stock or a delay; flowloom orders variables automatically and
+reports algebraic loops as errors.
+
+### Expressions
+
+Standard infix math with the usual precedence:
+
+```flow
+aux a = (x + y) * 2 ^ 3           # + - * / %, ^ for power (right-assoc; ** also works)
+aux b = Cash > 0 && !paused       # comparisons == != < <= > >= return 1/0; && || ! (or: and/or/not)
+aux c = if(Cash > 0 && !paused, hireRate, 0)   # if(cond, a, b)
+aux d = clamp(level, 0, 100)      # the current time is `t` (or `time`); constants PI, E
+```
+
+`if(cond, a, b)` is a **pure function, not control flow** — all three arguments are
+evaluated, then one result is selected. Don't use the untaken branch to dodge a
+divide-by-zero; guard the operand instead (`x / max(y, 1e-9)`).
+
+**Pure math functions:** `min max abs exp ln log log10 sqrt pow sin cos tan floor
+ceil round sign clamp(x,lo,hi) if(cond,a,b)`.
+
+### Test inputs — drive a model over time
+
+```flow
+flow shock = step(100, 20)        # 0 before t=20, then 100
+flow blip  = pulse(5, 2)          # 1 during [5, 7), else 0
+flow rise  = ramp(3, 10, 40)      # slope-3 line between t=10 and t=40, frozen after
+```
+
+### Delays and smoothing (stateful)
+
+These carry state across time — flowloom compiles each into hidden internal
+stocks, so they integrate correctly under RK4 **and** show up in loop detection:
+
+```flow
+flow receiving = delay3(orders, leadTime)   # orders arrive after a 3rd-order delay
+aux  expected  = smooth(demand, 8)          # 1st-order exponential smoothing, τ=8
+```
+
+`smooth(in,τ)`, `smoothi(in,τ,init)`, `smooth3(in,τ)`, `delay1(in,τ)`,
+`delay3(in,τ)`.
+
+### Tables (graphical functions)
+
+A piecewise-linear lookup; `x` values must strictly increase, and it clamps to the
+end values outside the range:
+
+```flow
+table drainCurve = (0,0) (20,2) (40,5) (60,9) (80,14)
+flow draining = drainCurve(Water)
+```
+
+### Randomness (seeded, reproducible)
+
+```flow
+flow gain = Balance * (ret + random_normal(0, vol))   # also random(), random_uniform(lo,hi)
+sim dt=1 to=60 seed=1                                  # same seed → identical run every time
+```
+
+### Subscripts (arrays)
+
+Model many similar things as one array. `dim` declares an ordered dimension;
+equations over `[dim]` are **elementwise**:
+
+```flow
+dim region = North, South, East
+stock Population[region] = 1000               # one stock per element
+flow  births[region] = 0.03 * Population[region]
+change(Population[region]) = births[region]
+aux   Total = sum(Population)                 # sum() collapses the dimension to a scalar
+```
+
+Index one element with a literal (`Population[North]`). A bracket that doesn't name
+a declared `dim` is still treated as a unit (`stock Tank [liters] = …`).
+
+### Units — opt-in dimensional analysis
+
+The `[unit]` annotation never changes the numbers, but where you supply it,
+`check`/`lint` flag adding unlike units, passing a dimensioned value to
+`exp`/`ln`/`sin`, or a `change(stock)` whose units aren't the stock's-per-time.
+Un-annotated names are *unknown* (not dimensionless), so checking only fires where
+you've annotated enough to make the claim. Set the time unit with
+`sim timeunit=month`.
+
+### Simulation settings and `plot`
+
+```flow
+sim dt=0.1 to=50 start=0 method=rk4   # dt: step (smaller = more accurate, slower)
+plot S I R                            # method: rk4 (default, accurate) or euler
+```
+
+The toolbar's dt / to / method controls rewrite this exact line, so the text
+always reflects what ran. `plot` only sets which series start visible — it's
+cosmetic.
+
+### A complete model
+
+```flow
+# SIR epidemic — Susceptible -> Infected -> Recovered.
+stock S [people] = 999
+stock I [people] = 1
+stock R [people] = 0
+
+param beta  = 0.4     # infections per S-I contact
+param gamma = 0.1     # recovery rate
+param N     = 1000    # total population
+
+flow infection = beta * S * I / N
+flow recovery  = gamma * I
+
+change(S) = -infection
+change(I) = infection - recovery
+change(R) = recovery
+
+sim dt=0.25 to=120 method=rk4
+plot S I R
+```
+
+Full reference (every edge case, parser errors, the `# @pos` builder comments):
+[`docs/language.md`](docs/language.md) ·
 Architecture: [`docs/architecture.md`](docs/architecture.md).
 
 ## Examples
