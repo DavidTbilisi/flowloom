@@ -8,7 +8,7 @@
 // analyzeLoops — so what an agent reads here is exactly what ran.
 
 import type { Expr, Model, VarKind } from "../lang/index.js";
-import { printExpr, freeVars } from "../lang/index.js";
+import { printExpr, freeVars, declExprs } from "../lang/index.js";
 import { analyzeLoops } from "./loops.js";
 
 export interface ModelDescription {
@@ -39,7 +39,12 @@ export function describeModel(model: Model): ModelDescription {
   const own = ownNames(model);
   const rep = analyzeLoops(model);
   // A per-element decl prints its full `a, b, …` list; otherwise the single expr.
-  const rhs = (single: Expr, list?: Expr[]) => (list ? list.map(printExpr).join(", ") : printExpr(single));
+  const rhs = (single: Expr, list?: Expr[]) => declExprs(single, list).map(printExpr).join(", ");
+  const allDeps = (single: Expr, list?: Expr[]) => {
+    const fv = new Set<string>();
+    for (const e of declExprs(single, list)) freeVars(e, fv);
+    return [...fv].filter((n) => own.has(n));
+  };
   return {
     stocks: model.stocks.map((s) => ({
       name: s.name,
@@ -54,7 +59,7 @@ export function describeModel(model: Model): ModelDescription {
       expr: rhs(v.expr, v.elemExprs),
       ...(v.unit ? { unit: v.unit } : {}),
       ...(v.doc ? { doc: v.doc } : {}),
-      deps: [...new Set((v.elemExprs ?? [v.expr]).flatMap((e) => [...freeVars(e)]))].filter((n) => own.has(n)),
+      deps: allDeps(v.expr, v.elemExprs),
     })),
     tables: [...model.tables.values()].map((t) => ({ name: t.name, points: t.points })),
     settings: model.settings,

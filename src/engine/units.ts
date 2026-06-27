@@ -12,6 +12,7 @@
 // That makes units checking opt-in and incremental instead of a wall of noise.
 
 import type { Model, Diagnostic, Expr, Loc } from "../lang/index.js";
+import { declExprs } from "../lang/index.js";
 
 /** A dimension: base-unit token → exponent. Empty map = dimensionless. */
 export type Dim = Map<string, number>;
@@ -372,9 +373,12 @@ export function checkUnits(model: Model, out: Diagnostic[]): void {
   const env = buildUnitEnv(model, out);
 
   // Var bodies and stock initialisers are checked for their own internal mismatches.
-  for (const v of model.vars) inferDim(v.expr, env, out);
+  for (const v of model.vars) for (const e of declExprs(v.expr, v.elemExprs)) inferDim(e, env, out);
   for (const s of model.stocks) {
     const declared = env.names.get(s.name);
+    // Per-element initials all share the stock's declared unit; check each, compare
+    // the first against the declared dimension (the rest are peers of it).
+    for (const e of declExprs(s.initExpr, s.elemExprs).slice(1)) inferDim(e, env, out);
     const init = inferDim(s.initExpr, env, out);
     // A bare numeric initial value is read as "in the stock's units" (idiomatic),
     // so only a concretely dimensioned, conflicting initial value is a mismatch.

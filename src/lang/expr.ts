@@ -141,6 +141,13 @@ export function parseExpr(src: string, line: number): Expr {
   return new Parser(line, src).parse();
 }
 
+/** The expressions of a declaration: its per-element list if present, else the
+ *  single expr. The one accessor every consumer should use so per-element values
+ *  (`name[dim] = a, b`) are never silently reduced to element 0. */
+export function declExprs(single: Expr, list?: Expr[]): Expr[] {
+  return list ?? [single];
+}
+
 /** All identifier names referenced by an expression (variables + function names excluded). */
 export function freeVars(e: Expr, out: Set<string> = new Set()): Set<string> {
   switch (e.kind) {

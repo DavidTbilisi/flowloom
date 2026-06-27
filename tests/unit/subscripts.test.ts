@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { parseModel, printExpr, parseExpr } from "../../src/lang/index.js";
 import { simulate } from "../../src/engine/index.js";
+import { applyOverride } from "../../src/engine/overrides.js";
+import { lintModel } from "../../src/engine/lint.js";
 
 const series = (src: string, name: string) => simulate(parseModel(src)).series.get(name)!;
 
@@ -250,6 +252,62 @@ plot Trade out_by_from in_by_to grand`));
       catch (e) { return (e as Error).message; }
     })();
     expect(err).toMatch(/leaves dimension 'from' free/);
+  });
+});
+
+describe("subscripts — review regressions", () => {
+  const parseErr = (src: string) => {
+    try { parseModel(src); return ""; } catch (e) { return (e as Error).message; }
+  };
+
+  it("rejects a duplicated sum axis instead of double-counting (#3)", () => {
+    expect(parseErr(`dim from = A, B\ndim to = X, Y\nstock Trade[from, to] = 1\nchange(Trade[from, to]) = 0\naux row[from] = sum(Trade, to, to)`))
+      .toMatch(/dimension 'to' more than once/);
+  });
+
+  it("rejects a literal pin / reorder on a sum argument instead of silently dropping it (#4)", () => {
+    expect(parseErr(`dim from = A, B\ndim to = X, Y\nstock Trade[from, to] = 1\nchange(Trade[from, to]) = 0\naux row[from] = sum(Trade[A, to], to)`))
+      .toMatch(/can't pin or reorder/);
+  });
+
+  it("flags a stray comma in a per-element value list instead of swallowing it (#6)", () => {
+    expect(parseErr(`dim r = N, S\nstock Pop[r] = 10, , 20\nchange(Pop[r]) = 0`)).not.toBe("");
+    expect(parseErr(`param x = 1,\nstock S = x\nchange(S) = 0`)).not.toBe("");
+  });
+
+  it("gives a clean located error for sum() in a model with no dimensions (#7)", () => {
+    const msg = parseErr(`param a = 1\nparam b = 2\nstock S = 0\nflow g = sum(a, b)\nchange(S) = g`);
+    expect(msg).toMatch(/sum\(\) needs a subscripted argument/);
+    expect(msg).toMatch(/line \d+/); // located, not a line-less codegen throw
+  });
+
+  it("rejects garbage subscripts in a change() target (#8)", () => {
+    expect(parseErr(`dim from = A, B\ndim to = X, Y\nstock Trade[from, to] = 1\nchange(Trade[$$$]) = 0`)).not.toBe("");
+  });
+
+  it("flags a bare elementwise reference used outside its dimension's scope (#9)", () => {
+    expect(parseErr(`dim region = N, S\nstock Pop[region] = 5\nchange(Pop[region]) = 0\naux total = Pop[region]`))
+      .toMatch(/isn't in an elementwise context|dimension 'region'/);
+  });
+
+  it("an override of a per-element param broadcasts to every element (#1)", () => {
+    const model = parseModel(`dim product = Food, Tools
+param growth[product] = 0.1, 0.5
+stock Inv[product] = 10
+change(Inv[product]) = growth[product] * Inv[product]
+sim dt=0.5 to=2 method=rk4
+plot Inv`);
+    applyOverride(model, "growth=0.3");
+    const r = simulate(model);
+    // both elements now grow at 0.3 (the override), not the old 0.1 / 0.5
+    expect(r.series.get("Inv.Food")!.at(-1)!).toBeCloseTo(10 * Math.exp(0.3 * 2), 4);
+    expect(r.series.get("Inv.Tools")!.at(-1)!).toBeCloseTo(10 * Math.exp(0.3 * 2), 4);
+  });
+
+  it("validates calls inside non-first per-element expressions (#5)", () => {
+    const model = parseModel(`dim d = X, Y\nparam p[d] = 1, sqrt(2, 3)\nstock S = p[X]\nchange(S) = 0`);
+    const errs = lintModel(model).filter((g) => g.severity === "error");
+    expect(errs.some((g) => /sqrt/.test(g.message))).toBe(true);
   });
 });
 

@@ -7,7 +7,7 @@
 // validate.ts, which is severity "error" — those calls won't run at all.
 
 import type { Model, Diagnostic, Expr, Loc } from "../lang/index.js";
-import { freeVars } from "../lang/index.js";
+import { freeVars, declExprs } from "../lang/index.js";
 import { operatingPoint } from "./loops.js";
 import { checkUnits } from "./units.js";
 import { validateModel } from "./validate.js";
@@ -30,9 +30,9 @@ export function lintModel(model: Model): Diagnostic[] {
   const collect = (e: Expr) => {
     for (const id of freeVars(e)) referenced.add(id);
   };
-  for (const v of model.vars) collect(v.expr);
+  for (const v of model.vars) for (const e of declExprs(v.expr, v.elemExprs)) collect(e);
   for (const r of model.rates.values()) collect(r.expr);
-  for (const s of model.stocks) collect(s.initExpr);
+  for (const s of model.stocks) for (const e of declExprs(s.initExpr, s.elemExprs)) collect(e);
   for (const name of model.plot) referenced.add(name);
 
   // Dead knobs and dead computations.

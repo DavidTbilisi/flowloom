@@ -92,6 +92,10 @@ export function scalarize(model: Model): Model {
     const base = arg && (arg.kind === "ident" || arg.kind === "index") ? arg.name : undefined;
     const dims = base ? dimsOf.get(base) : undefined;
     if (!base || !dims) throw new ScalarizeError("sum() needs a subscripted argument, e.g. sum(Population)", e.loc);
+    // A literal pin / reorder on the array arg is silently discarded below — reject
+    // it (parser flags this too; this guards models built without going through it).
+    if (arg!.kind === "index" && (arg!.subs.length !== dims.length || arg!.subs.some((s, i) => s !== dims[i])))
+      throw new ScalarizeError(`sum()'s argument '${base}[${arg!.subs.join(", ")}]' can't pin or reorder dimensions — use sum(${base}) or sum(${base}, axis)`, e.loc);
 
     const axes = e.args.length === 1
       ? dims.slice() // no axis given ⇒ collapse all
@@ -100,6 +104,7 @@ export function scalarize(model: Model): Model {
             throw new ScalarizeError(`sum()'s axis must be a dimension of '${base}' (one of ${dims.join(", ")})`, a.loc);
           return a.name;
         });
+    if (new Set(axes).size !== axes.length) throw new ScalarizeError(`sum() lists a dimension more than once`, e.loc);
     const collapsed = new Set(axes);
 
     const axisTuples = product(axes.map(elements));

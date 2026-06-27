@@ -11,7 +11,7 @@ import {
   type Loc,
   DEFAULT_SETTINGS,
 } from "./types.js";
-import { parseExpr, freeVars } from "./expr.js";
+import { parseExpr, freeVars, declExprs } from "./expr.js";
 import { ExprSyntaxError } from "./tokenizer.js";
 import { suggestName, suggestSuffix } from "./suggest.js";
 
@@ -55,7 +55,7 @@ interface Raw {
 const RE = {
   dim: /^dim\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   stock: /^stock\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
-  rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*\)\s*=\s*(.+)$/,
+  rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*(?:\[\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\])?\s*\)\s*=\s*(.+)$/,
   var: /^(flow|aux|param|const)\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
   table: /^table\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   sim: /^sim\s+(.+)$/,
@@ -147,7 +147,9 @@ function stripComment(raw: string): string {
 }
 
 /** Split a declaration RHS on top-level commas (not nested in `()`/`[]`), so a
- *  subscripted decl can list one value per element while `min(a, b)` stays whole. */
+ *  subscripted decl can list one value per element while `min(a, b)` stays whole.
+ *  Empty parts are KEPT (not filtered) so a stray/trailing comma surfaces as an
+ *  "expected a value" parse error rather than being silently swallowed. */
 function splitTopLevel(src: string): string[] {
   const parts: string[] = [];
   let depth = 0, start = 0;
@@ -158,12 +160,12 @@ function splitTopLevel(src: string): string[] {
     else if (c === "," && depth === 0) { parts.push(src.slice(start, i)); start = i + 1; }
   }
   parts.push(src.slice(start));
-  return parts.map((p) => p.trim()).filter((p) => p.length > 0);
+  return parts.map((p) => p.trim());
 }
 
 /** The expressions of a declaration: its per-element list if present, else the one. */
-const stockExprs = (s: StockDecl) => s.elemExprs ?? [s.initExpr];
-const varExprs = (v: VarDecl) => v.elemExprs ?? [v.expr];
+const stockExprs = (s: StockDecl) => declExprs(s.initExpr, s.elemExprs);
+const varExprs = (v: VarDecl) => declExprs(v.expr, v.elemExprs);
 
 function extractDoc(raw: string): string | undefined {
   const m = raw.match(/#\s*(.+?)\s*$/);
@@ -376,7 +378,9 @@ function validateSubscripts(m: Raw): void {
   const dimsOf = new Map<string, string[]>();
   for (const s of m.stocks) if (s.dims) dimsOf.set(s.name, s.dims);
   for (const v of m.vars) if (v.dims) dimsOf.set(v.name, v.dims);
-  if (!m.dims.size && !dimsOf.size) return; // nothing subscripted
+  // No early-out even when nothing is subscripted: a stray `X[i]` or a `sum(…)`
+  // in a dimensionless model must still be flagged here (a clean, located error)
+  // rather than slipping through to a line-less "unknown function" at codegen.
 
   const elems = (d: string) => m.dims.get(d)?.elements ?? [];
 
@@ -398,7 +402,15 @@ function validateSubscripts(m: Raw): void {
         }
         e.subs.forEach((s, i) => {
           const di = dims[i]!;
-          if (s === di || elems(di).includes(s)) return; // elementwise, or a literal element
+          if (s === di) {
+            // Elementwise reference: the dimension must be in scope (the enclosing
+            // declaration is subscripted over it), else there's no element to bind.
+            if (!insideSum && !scope.has(di)) {
+              push(m, "error", loc, `'${e.name}[${e.subs.join(", ")}]' uses dimension '${di}' but isn't in an elementwise context over it — index a single element or aggregate with sum()`);
+            }
+            return;
+          }
+          if (elems(di).includes(s)) return; // a literal element
           push(m, "error", loc, m.dims.has(s)
             ? `'${e.name}[${e.subs.join(", ")}]' indexes position ${i + 1} with dimension '${s}', but that position is '${di}'`
             : `'${s}' is not an element of dimension '${di}'`);
@@ -418,13 +430,22 @@ function validateSubscripts(m: Raw): void {
           const base = a && (a.kind === "ident" || a.kind === "index") ? a.name : undefined;
           const dims = base ? dimsOf.get(base) : undefined;
           if (!base || !dims) { push(m, "error", loc, "sum() needs a subscripted argument, e.g. sum(Population)"); break; }
-          walk(a!, loc, true, scope); // the array arg may itself be an index expression
-          // Trailing args name the axes to collapse; each must be a dim of `base`.
+          // The array arg may be written `Trade[from, to]`, but only as the plain
+          // dimensions in order — a literal pin or reorder is silently dropped at
+          // lowering, so reject it here instead of returning a wrong result.
+          if (a!.kind === "index" && (a!.subs.length !== dims.length || a!.subs.some((s, i) => s !== dims[i]))) {
+            push(m, "error", loc, `sum()'s argument '${base}[${a!.subs.join(", ")}]' can't pin or reorder dimensions — use sum(${base}) or sum(${base}, axis)`);
+            break;
+          }
+          // Trailing args name the axes to collapse; each must be a distinct dim of `base`.
           const axes: string[] = [];
           let badAxis = false;
           for (const ax of e.args.slice(1)) {
             if (ax.kind !== "ident" || !dims.includes(ax.name)) {
               push(m, "error", loc, `sum()'s axis must be a dimension of '${base}' (one of ${dims.join(", ")})`);
+              badAxis = true;
+            } else if (axes.includes(ax.name)) {
+              push(m, "error", loc, `sum() lists dimension '${ax.name}' more than once`);
               badAxis = true;
             } else axes.push(ax.name);
           }

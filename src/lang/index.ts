@@ -1,5 +1,5 @@
 export * from "./types.js";
 export { parseModel, ModelError } from "./parser.js";
-export { parseExpr, freeVars, printExpr } from "./expr.js";
+export { parseExpr, freeVars, printExpr, declExprs } from "./expr.js";
 export { tokenize, ExprSyntaxError } from "./tokenizer.js";
 export { scalarize, elemName } from "./scalarize.js";

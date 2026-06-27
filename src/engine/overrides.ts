@@ -56,12 +56,18 @@ export function applyOverride(model: Model, spec: string): string[] {
   const node: Expr = { kind: "num", value: v, loc: { line: 0, col: 0 } };
 
   // VarDecl objects are shared across vars/varIndex/order, so mutating .expr in
-  // place rebinds the name everywhere the compiler will look.
+  // place rebinds the name everywhere the compiler will look. Clear any per-element
+  // list too: a single override value broadcasts to every element (and scalarize
+  // prefers elemExprs, so leaving it would silently ignore the override).
   if (decl) {
     if (decl.kind !== "param") warnings.push(`overriding ${decl.kind} "${key}" with a constant`);
+    if (decl.dims && decl.elemExprs) warnings.push(`"${key}" is subscripted — setting every element to ${v}`);
     decl.expr = node;
+    decl.elemExprs = undefined;
     return warnings;
   }
+  if (stock!.dims && stock!.elemExprs) warnings.push(`"${key}" is subscripted — setting every element to ${v}`);
   stock!.initExpr = node;
+  stock!.elemExprs = undefined;
   return warnings;
 }
