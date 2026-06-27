@@ -27,9 +27,10 @@ export type Expr =
   | { kind: "unary"; op: "-" | "+" | "!"; arg: Expr; loc: Loc }
   | { kind: "binary"; op: BinOp; left: Expr; right: Expr; loc: Loc }
   | { kind: "call"; name: string; args: Expr[]; loc: Loc }
-  // Subscripted reference: `name[sub]`, where sub is a dimension name (elementwise
-  // / aggregate context) or a single element name. Lowered to scalars at compile.
-  | { kind: "index"; name: string; sub: string; loc: Loc };
+  // Subscripted reference: `name[sub, …]`, one entry per dimension of `name`
+  // (positional). Each sub is a dimension name (elementwise / aggregate context)
+  // or a single element name. Lowered to scalars at compile (scalarize.ts).
+  | { kind: "index"; name: string; subs: string[]; loc: Loc };
 
 export type BinOp =
   | "+" | "-" | "*" | "/" | "%" | "^"
@@ -52,9 +53,13 @@ export interface DimDecl {
 export interface StockDecl {
   name: string;
   initExpr: Expr;
+  /** Per-element initial values for a subscripted stock, in Cartesian-product
+   *  order (`= a, b, …`). When set, overrides initExpr per element; initExpr holds
+   *  the first entry so single-expr consumers still see a value. */
+  elemExprs?: Expr[];
   unit?: string;
-  /** Subscript dimension this stock is declared over (e.g. "region"), if any. */
-  dim?: string;
+  /** Subscript dimensions this stock is declared over (e.g. ["region"]), if any. */
+  dims?: string[];
   doc?: string;
   loc: Loc;
 }
@@ -70,9 +75,12 @@ export interface VarDecl {
   name: string;
   kind: VarKind;
   expr: Expr;
+  /** Per-element expressions for a subscripted var, in Cartesian-product order
+   *  (`= a, b, …`). When set, overrides expr per element; expr holds the first. */
+  elemExprs?: Expr[];
   unit?: string;
-  /** Subscript dimension this var is declared over, if any. */
-  dim?: string;
+  /** Subscript dimensions this var is declared over, if any. */
+  dims?: string[];
   doc?: string;
   loc: Loc;
 }

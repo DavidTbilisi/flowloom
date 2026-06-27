@@ -22,7 +22,7 @@ const EXTRA_ARITY: Record<string, [number, number]> = {
   smooth3: [2, 2],
   delay1: [2, 2],
   delay3: [2, 2],
-  sum: [1, 1],
+  sum: [1, Infinity], // sum(X) collapses all dims; sum(X, axis, …) collapses named axes
 };
 
 const err = (loc: Loc, message: string): Diagnostic => ({ severity: "error", loc, message });

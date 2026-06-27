@@ -54,7 +54,7 @@ change() rate; everything else is recomputed every step.
   E     Euler's number e ≈ 2.71828.
 
 ### Builtins (stateless)
-  sum(X)                   Total of a subscripted X over its dimension — collapses an array to a scalar (e.g. sum(Population)).
+  sum(X, axis?, …)         Total of a subscripted X. sum(X) collapses every dimension to a scalar; sum(X, dim) collapses only that axis and keeps the rest (e.g. row[from] = sum(Trade, to)).
   min(a, b, …)             Smallest of its arguments.
   max(a, b, …)             Largest of its arguments.
   abs(x)                   Absolute value.

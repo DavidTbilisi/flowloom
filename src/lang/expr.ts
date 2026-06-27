@@ -106,15 +106,21 @@ class Parser {
       }
       if (this.peek().type === "lbracket") {
         this.next(); // consume [
-        const sub = this.next();
-        if (sub.type !== "ident") {
-          throw new ExprSyntaxError(`expected a dimension or element name in ${t.value}[…]`, this.loc(sub));
+        const subs: string[] = [];
+        for (;;) {
+          const sub = this.next();
+          if (sub.type !== "ident") {
+            throw new ExprSyntaxError(`expected a dimension or element name in ${t.value}[…]`, this.loc(sub));
+          }
+          subs.push(sub.value);
+          if (this.peek().type === "comma") { this.next(); continue; }
+          break;
         }
         const close = this.next();
         if (close.type !== "rbracket") {
-          throw new ExprSyntaxError(`expected ']' after ${t.value}[${sub.value}`, this.loc(close));
+          throw new ExprSyntaxError(`expected ']' after ${t.value}[${subs.join(", ")}`, this.loc(close));
         }
-        return { kind: "index", name: t.value, sub: sub.value, loc: this.loc(t) };
+        return { kind: "index", name: t.value, subs, loc: this.loc(t) };
       }
       return { kind: "ident", name: t.value, loc: this.loc(t) };
     }
@@ -155,8 +161,13 @@ export function freeVars(e: Expr, out: Set<string> = new Set()): Set<string> {
       freeVars(e.right, out);
       break;
     case "call":
-      // function name is not a free variable; its args may be
-      for (const a of e.args) freeVars(a, out);
+      // function name is not a free variable; its args may be. sum()'s trailing
+      // arguments are axis (dimension) labels, not value references — skip them.
+      if (e.name.toLowerCase() === "sum") {
+        if (e.args[0]) freeVars(e.args[0], out);
+      } else {
+        for (const a of e.args) freeVars(a, out);
+      }
       break;
   }
   return out;
@@ -170,7 +181,7 @@ export function printExpr(e: Expr): string {
     case "ident":
       return e.name;
     case "index":
-      return `${e.name}[${e.sub}]`;
+      return `${e.name}[${e.subs.join(", ")}]`;
     case "unary":
       return `${e.op}${wrap(e.arg, e)}`;
     case "binary":

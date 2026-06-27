@@ -55,7 +55,7 @@ interface Raw {
 const RE = {
   dim: /^dim\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   stock: /^stock\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
-  rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*(?:\[\s*[A-Za-z_]\w*\s*\])?\s*\)\s*=\s*(.+)$/,
+  rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*(?:\[[^\]]*\])?\s*\)\s*=\s*(.+)$/,
   var: /^(flow|aux|param|const)\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
   table: /^table\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   sim: /^sim\s+(.+)$/,
@@ -96,10 +96,27 @@ export function parseModel(text: string): Model {
     }
   }
 
-  // A bracket [X] is a subscript dimension when X names a declared `dim`; otherwise
-  // it's the legacy unit annotation. Resolve now that all dims are known.
+  // A bracket [X] (or [X, Y, …]) is a subscript dimension list when every token
+  // names a declared `dim`; otherwise it's the legacy unit annotation. Resolve now
+  // that all dims are known.
   for (const d of [...m.stocks, ...m.vars]) {
-    if (d.unit && m.dims.has(d.unit)) { d.dim = d.unit; d.unit = undefined; }
+    if (!d.unit) continue;
+    const toks = d.unit.split(/[\s,]+/).filter(Boolean);
+    if (toks.length && toks.every((t) => m.dims.has(t))) { d.dims = toks; d.unit = undefined; }
+  }
+
+  // Per-element value lists (`name[dim] = a, b`) need a subscript, and as many
+  // values as the dimensions have element tuples (the Cartesian product).
+  for (const d of [...m.stocks, ...m.vars]) {
+    if (!d.elemExprs) continue;
+    if (!d.dims) {
+      push(m, "error", d.loc, `'${d.name}' has a comma-separated value but no subscript — per-element values need a dimension, e.g. ${d.name}[dim] = a, b`);
+      continue;
+    }
+    const n = d.dims.reduce((acc, dim) => acc * (m.dims.get(dim)?.elements.length ?? 0), 1);
+    if (d.elemExprs.length !== n) {
+      push(m, "error", d.loc, `'${d.name}[${d.dims.join(", ")}]' has ${n} element(s) but ${d.elemExprs.length} value(s) were given`);
+    }
   }
 
   const order = topoSort(m);
@@ -129,6 +146,25 @@ function stripComment(raw: string): string {
   return raw.replace(/#.*$/, "").trim();
 }
 
+/** Split a declaration RHS on top-level commas (not nested in `()`/`[]`), so a
+ *  subscripted decl can list one value per element while `min(a, b)` stays whole. */
+function splitTopLevel(src: string): string[] {
+  const parts: string[] = [];
+  let depth = 0, start = 0;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === "(" || c === "[") depth++;
+    else if (c === ")" || c === "]") depth--;
+    else if (c === "," && depth === 0) { parts.push(src.slice(start, i)); start = i + 1; }
+  }
+  parts.push(src.slice(start));
+  return parts.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+/** The expressions of a declaration: its per-element list if present, else the one. */
+const stockExprs = (s: StockDecl) => s.elemExprs ?? [s.initExpr];
+const varExprs = (v: VarDecl) => v.elemExprs ?? [v.expr];
+
 function extractDoc(raw: string): string | undefined {
   const m = raw.match(/#\s*(.+?)\s*$/);
   return m ? m[1] : undefined;
@@ -149,7 +185,10 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
     } else if ((mt = line.match(RE.stock))) {
       const [, name, unit, expr] = mt;
       claim(m, name!, loc);
-      m.stocks.push({ name: name!, initExpr: parseExpr(expr!, lineNo), unit: unit?.trim(), doc, loc });
+      const exprs = splitTopLevel(expr!).map((p) => parseExpr(p, lineNo));
+      const s: StockDecl = { name: name!, initExpr: exprs[0]!, unit: unit?.trim(), doc, loc };
+      if (exprs.length > 1) s.elemExprs = exprs;
+      m.stocks.push(s);
     } else if ((mt = line.match(RE.rate))) {
       const [, name, expr] = mt;
       if (m.rates.has(name!)) push(m, "error", loc, `change(${name}) is defined twice`);
@@ -158,7 +197,9 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
       const [, kw, name, unit, expr] = mt;
       claim(m, name!, loc);
       const kind: VarKind = kw === "const" ? "param" : (kw as VarKind);
-      const v: VarDecl = { name: name!, kind, expr: parseExpr(expr!, lineNo), unit: unit?.trim(), doc, loc };
+      const exprs = splitTopLevel(expr!).map((p) => parseExpr(p, lineNo));
+      const v: VarDecl = { name: name!, kind, expr: exprs[0]!, unit: unit?.trim(), doc, loc };
+      if (exprs.length > 1) v.elemExprs = exprs;
       m.vars.push(v);
       m.varIndex.set(name!, v);
     } else if ((mt = line.match(RE.table))) {
@@ -255,8 +296,10 @@ function topoSort(m: Raw): VarDecl[] {
 
   for (const v of m.vars) {
     const d = new Set<string>();
-    for (const id of freeVars(v.expr)) {
-      if (varNames.has(id) && id !== v.name) d.add(id);
+    for (const ex of varExprs(v)) {
+      for (const id of freeVars(ex)) {
+        if (varNames.has(id) && id !== v.name) d.add(id);
+      }
     }
     deps.set(v.name, d);
     indeg.set(v.name, d.size);
@@ -312,8 +355,8 @@ function validateReferences(m: Raw): void {
     }
   };
 
-  for (const s of m.stocks) check(s.initExpr, s.loc);
-  for (const v of m.vars) check(v.expr, v.loc);
+  for (const s of m.stocks) for (const ex of stockExprs(s)) check(ex, s.loc);
+  for (const v of m.vars) for (const ex of varExprs(v)) check(ex, v.loc);
   for (const r of m.rates.values()) check(r.expr, r.loc);
 
   for (const name of m.plot) {
@@ -330,52 +373,78 @@ const BUILTIN_CONSTS = new Set(["PI", "E"]);
  *  bare reference to a vector outside sum(). Mirrors what scalarize.ts enforces,
  *  but at parse time so the editor flags it. */
 function validateSubscripts(m: Raw): void {
-  const dimOf = new Map<string, string>();
-  for (const s of m.stocks) if (s.dim) dimOf.set(s.name, s.dim);
-  for (const v of m.vars) if (v.dim) dimOf.set(v.name, v.dim);
-  if (!m.dims.size && !dimOf.size) return; // nothing subscripted
+  const dimsOf = new Map<string, string[]>();
+  for (const s of m.stocks) if (s.dims) dimsOf.set(s.name, s.dims);
+  for (const v of m.vars) if (v.dims) dimsOf.set(v.name, v.dims);
+  if (!m.dims.size && !dimsOf.size) return; // nothing subscripted
 
   const elems = (d: string) => m.dims.get(d)?.elements ?? [];
 
-  const walk = (e: Parameters<typeof freeVars>[0], loc: Loc, insideSum: boolean): void => {
+  // `scope` is the set of dimensions bound by the declaration being checked (its
+  // own subscripts), so a partial sum can tell which leftover axis would escape.
+  const walk = (e: Parameters<typeof freeVars>[0], loc: Loc, insideSum: boolean, scope: Set<string>): void => {
     switch (e.kind) {
       case "ident":
-        if (dimOf.has(e.name) && !insideSum) {
-          push(m, "error", loc, `'${e.name}' is subscripted — index it (${e.name}[${dimOf.get(e.name)}]) or aggregate it (sum(${e.name}))`);
+        if (dimsOf.has(e.name) && !insideSum) {
+          push(m, "error", loc, `'${e.name}' is subscripted — index it (${e.name}[${dimsOf.get(e.name)!.join(", ")}]) or aggregate it (sum(${e.name}))`);
         }
         break;
       case "index": {
-        const d = dimOf.get(e.name);
-        if (!d) push(m, "error", loc, `'${e.name}' is not subscripted, so '${e.name}[${e.sub}]' is invalid`);
-        else if (e.sub !== d && !elems(d).includes(e.sub)) {
-          push(m, "error", loc, m.dims.has(e.sub)
-            ? `'${e.name}[${e.sub}]' mixes dimensions — use '${d}' elementwise or a single element`
-            : `'${e.sub}' is not an element of dimension '${d}'`);
+        const dims = dimsOf.get(e.name);
+        if (!dims) { push(m, "error", loc, `'${e.name}' is not subscripted, so '${e.name}[${e.subs.join(", ")}]' is invalid`); break; }
+        if (e.subs.length !== dims.length) {
+          push(m, "error", loc, `'${e.name}' has ${dims.length} dimension(s) [${dims.join(", ")}] but is indexed with ${e.subs.length}`);
+          break;
         }
+        e.subs.forEach((s, i) => {
+          const di = dims[i]!;
+          if (s === di || elems(di).includes(s)) return; // elementwise, or a literal element
+          push(m, "error", loc, m.dims.has(s)
+            ? `'${e.name}[${e.subs.join(", ")}]' indexes position ${i + 1} with dimension '${s}', but that position is '${di}'`
+            : `'${s}' is not an element of dimension '${di}'`);
+        });
         break;
       }
       case "unary":
-        walk(e.arg, loc, insideSum);
+        walk(e.arg, loc, insideSum, scope);
         break;
       case "binary":
-        walk(e.left, loc, insideSum);
-        walk(e.right, loc, insideSum);
+        walk(e.left, loc, insideSum, scope);
+        walk(e.right, loc, insideSum, scope);
         break;
       case "call": {
         if (e.name.toLowerCase() === "sum") {
           const a = e.args[0];
           const base = a && (a.kind === "ident" || a.kind === "index") ? a.name : undefined;
-          if (!base || !dimOf.has(base)) push(m, "error", loc, "sum() needs a subscripted argument, e.g. sum(Population)");
-          e.args.forEach((arg) => walk(arg, loc, true));
+          const dims = base ? dimsOf.get(base) : undefined;
+          if (!base || !dims) { push(m, "error", loc, "sum() needs a subscripted argument, e.g. sum(Population)"); break; }
+          walk(a!, loc, true, scope); // the array arg may itself be an index expression
+          // Trailing args name the axes to collapse; each must be a dim of `base`.
+          const axes: string[] = [];
+          let badAxis = false;
+          for (const ax of e.args.slice(1)) {
+            if (ax.kind !== "ident" || !dims.includes(ax.name)) {
+              push(m, "error", loc, `sum()'s axis must be a dimension of '${base}' (one of ${dims.join(", ")})`);
+              badAxis = true;
+            } else axes.push(ax.name);
+          }
+          if (badAxis) break;
+          // Whatever isn't collapsed must be supplied by the surrounding context.
+          const collapsed = new Set(axes.length ? axes : dims);
+          for (const d of dims) {
+            if (!collapsed.has(d) && !scope.has(d)) {
+              push(m, "error", loc, `sum() over ${(axes.length ? axes : dims).join(", ")} leaves dimension '${d}' free — declare the result over '[${d}]'`);
+            }
+          }
         } else {
-          e.args.forEach((arg) => walk(arg, loc, insideSum));
+          e.args.forEach((arg) => walk(arg, loc, insideSum, scope));
         }
         break;
       }
     }
   };
 
-  for (const s of m.stocks) walk(s.initExpr, s.loc, false);
-  for (const v of m.vars) walk(v.expr, v.loc, false);
-  for (const r of m.rates.values()) walk(r.expr, r.loc, false);
+  for (const s of m.stocks) { const scope = new Set(s.dims ?? []); for (const ex of stockExprs(s)) walk(ex, s.loc, false, scope); }
+  for (const v of m.vars) { const scope = new Set(v.dims ?? []); for (const ex of varExprs(v)) walk(ex, v.loc, false, scope); }
+  for (const r of m.rates.values()) walk(r.expr, r.loc, false, new Set(dimsOf.get(r.target) ?? []));
 }
