@@ -7,8 +7,8 @@
 // Both are built from the same primitives the studio uses — printExpr, freeVars,
 // analyzeLoops — so what an agent reads here is exactly what ran.
 
-import type { Model, VarKind } from "../lang/index.js";
-import { printExpr, freeVars } from "../lang/index.js";
+import type { Expr, Model, VarKind } from "../lang/index.js";
+import { printExpr, freeVars, declExprs } from "../lang/index.js";
 import { analyzeLoops } from "./loops.js";
 
 export interface ModelDescription {
@@ -38,10 +38,17 @@ function ownNames(model: Model): Set<string> {
 export function describeModel(model: Model): ModelDescription {
   const own = ownNames(model);
   const rep = analyzeLoops(model);
+  // A per-element decl prints its full `a, b, …` list; otherwise the single expr.
+  const rhs = (single: Expr, list?: Expr[]) => declExprs(single, list).map(printExpr).join(", ");
+  const allDeps = (single: Expr, list?: Expr[]) => {
+    const fv = new Set<string>();
+    for (const e of declExprs(single, list)) freeVars(e, fv);
+    return [...fv].filter((n) => own.has(n));
+  };
   return {
     stocks: model.stocks.map((s) => ({
       name: s.name,
-      init: printExpr(s.initExpr),
+      init: rhs(s.initExpr, s.elemExprs),
       ...(s.unit ? { unit: s.unit } : {}),
       ...(s.doc ? { doc: s.doc } : {}),
     })),
@@ -49,10 +56,10 @@ export function describeModel(model: Model): ModelDescription {
     vars: model.vars.map((v) => ({
       name: v.name,
       kind: v.kind,
-      expr: printExpr(v.expr),
+      expr: rhs(v.expr, v.elemExprs),
       ...(v.unit ? { unit: v.unit } : {}),
       ...(v.doc ? { doc: v.doc } : {}),
-      deps: [...freeVars(v.expr)].filter((n) => own.has(n)),
+      deps: allDeps(v.expr, v.elemExprs),
     })),
     tables: [...model.tables.values()].map((t) => ({ name: t.name, points: t.points })),
     settings: model.settings,

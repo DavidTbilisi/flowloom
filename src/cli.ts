@@ -16,7 +16,7 @@
 
 import { readFileSync } from "node:fs";
 import process from "node:process";
-import { parseModel, ModelError, type Model } from "./lang/index.js";
+import { parseModel, scalarize, ModelError, type Model } from "./lang/index.js";
 import {
   simulateAsync,
   analyzeLoops,
@@ -164,12 +164,16 @@ function load(args: Args): Model {
 }
 
 /** Which series to show: explicit --plot, else the model's `plot` line, else stocks. */
-function columns(args: Args, res: SimResult): string[] {
-  const want = args.plot.length ? args.plot : [];
-  if (want.length) {
-    for (const c of want) if (!res.series.has(c)) die(`no series named "${c}" (have: ${res.names.join(", ")})`);
-    return want;
+function columns(args: Args, res: SimResult, model: Model): string[] {
+  if (args.plot.length) {
+    for (const c of args.plot) if (!res.series.has(c)) die(`no series named "${c}" (have: ${res.names.join(", ")})`);
+    return args.plot;
   }
+  // Honor the model's `plot` line, expanded to scalar series (a subscripted
+  // `plot Trade` becomes Trade.A.X, …). Shown in full — it's an explicit choice.
+  const plotted = scalarize(model).plot.filter((n) => res.series.has(n));
+  if (plotted.length) return plotted;
+  // No plot line: fall back to stocks + a few vars, capped so big models don't flood.
   return res.stockNames.length ? [...res.stockNames, ...res.varNames].slice(0, 8) : res.names;
 }
 
@@ -257,7 +261,7 @@ function renderSummary(sum: RunSummary): string {
 async function cmdRun(args: Args): Promise<void> {
   const model = load(args);
   const res = await simulateAsync(model);
-  const cols = columns(args, res);
+  const cols = columns(args, res, model);
   if (args.format === "csv") out(renderDelimited(res, cols, ","));
   else if (args.format === "tsv") out(renderDelimited(res, cols, "\t"));
   else if (args.format === "json") out(renderJson(res, cols));
@@ -324,7 +328,7 @@ function cmdExplain(args: Args): void {
 async function cmdSummary(args: Args): Promise<void> {
   const model = load(args);
   const res = await simulateAsync(model);
-  const cols = columns(args, res);
+  const cols = columns(args, res, model);
   const sum = summarizeRun(res, cols);
   out(args.format === "json" ? JSON.stringify(sum, null, 2) : renderSummary(sum));
 }

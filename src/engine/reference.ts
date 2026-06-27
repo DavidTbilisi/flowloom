@@ -54,7 +54,7 @@ const CONSTS: RefEntry[] = [
 // ── stateless builtins (math + test inputs) ──────────────────────────────────
 // Arity is attached from ARITY below, so it can't drift from the validator.
 const BUILTINS: Array<Omit<RefEntry, "arity">> = [
-  { name: "sum", kind: "builtin", signature: "sum(X)", doc: "subscripts", summary: "Total of a subscripted X over its dimension — collapses an array to a scalar (e.g. sum(Population))." },
+  { name: "sum", kind: "builtin", signature: "sum(X, axis?, …)", doc: "subscripts", summary: "Total of a subscripted X. sum(X) collapses every dimension to a scalar; sum(X, dim) collapses only that axis and keeps the rest (e.g. row[from] = sum(Trade, to))." },
   { name: "min", kind: "builtin", signature: "min(a, b, …)", summary: "Smallest of its arguments." },
   { name: "max", kind: "builtin", signature: "max(a, b, …)", summary: "Largest of its arguments." },
   { name: "abs", kind: "builtin", signature: "abs(x)", summary: "Absolute value." },

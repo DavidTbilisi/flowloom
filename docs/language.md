@@ -166,9 +166,53 @@ appear in the diagram/plot exactly like hand-written scalars — and run on all
 backends identically. A bracket that doesn't name a declared `dim` is still a unit
 (`stock Tank [liters] = …`).
 
-v1 covers one-dimensional subscripts, elementwise equations, single-element
-indexing, and `sum`. Per-element parameter values, multi-dimensional subscripts,
-and other aggregations (`mean`/`min`/`max`) are planned.
+Multiple dimensions compose as a **Cartesian product** — list them positionally:
+
+```
+dim region  = North, South
+dim product = Food, Tools
+stock Inventory[region, product] = 10                   # 4 scalar stocks: Inventory.North.Food, …
+flow  restock[region, product] = 0.2 * Inventory[region, product]
+change(Inventory[region, product]) = restock[region, product]
+aux   Total = sum(Inventory)                            # collapses every element → one scalar
+```
+
+A reference's subscripts are matched **by position** to the symbol's declared
+dimensions, so `Inventory[region, product]` and `Inventory[North, Food]` both
+resolve against `[region, product]` in order. `sum(X)` collapses *all* of `X`'s
+dimensions.
+
+Give each element its own value with a **comma-separated list** on the right-hand
+side, in Cartesian-product order (first dimension outermost); a single expression
+still broadcasts to all elements:
+
+```
+dim product = Food, Tools
+param growth[product]     = 0.1, 0.5             # Food → 0.1, Tools → 0.5
+stock Inventory[region, product] = 10, 20, 30, 40   # North.Food, North.Tools, South.Food, South.Tools
+flow  restock[region, product]   = growth[product] * Inventory[region, product]   # one expr, broadcast
+```
+
+The list length must equal the number of element tuples. Commas inside a call
+(`max(a, b)`) are not element separators.
+
+`sum(X)` collapses *every* dimension of `X` to a scalar. To collapse just one axis
+of a multi-dimensional array and keep the rest, name it: `sum(X, dim)`. The result
+is still indexed by the remaining dimensions, so it goes in a declaration over them:
+
+```
+flow outflow[from] = sum(Trade, to)     # row sum: for each `from`, total over `to`
+aux  inflow[to]    = sum(Trade, from)   # column sum: for each `to`, total over `from`
+aux  grand         = sum(Trade)         # everything → one scalar
+```
+
+The axis must be a dimension of the array, and whatever you don't collapse has to
+be supplied by the surrounding declaration's subscripts (`sum(Trade, to)` leaves
+`from`, so it belongs on a `[from]` result).
+
+Covered today: multi-dimensional subscripts, elementwise equations, single-element
+indexing, per-element values, full and partial/axis `sum`. Other reducers
+(`mean`/`min`/`max`) are planned.
 
 ## Simulation settings
 

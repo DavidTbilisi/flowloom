@@ -11,6 +11,7 @@
 // unknown-name check.
 
 import type { Model, Diagnostic, Expr, Loc } from "../lang/index.js";
+import { declExprs } from "../lang/index.js";
 import { ARITY, STATEFUL } from "./builtins.js";
 import { suggestSuffix } from "../lang/suggest.js";
 
@@ -22,7 +23,7 @@ const EXTRA_ARITY: Record<string, [number, number]> = {
   smooth3: [2, 2],
   delay1: [2, 2],
   delay3: [2, 2],
-  sum: [1, 1],
+  sum: [1, Infinity], // sum(X) collapses all dims; sum(X, axis, …) collapses named axes
 };
 
 const err = (loc: Loc, message: string): Diagnostic => ({ severity: "error", loc, message });
@@ -70,8 +71,8 @@ export function validateModel(model: Model): Diagnostic[] {
     }
   };
 
-  for (const s of model.stocks) visit(s.initExpr, s.loc);
-  for (const v of model.vars) visit(v.expr, v.loc);
+  for (const s of model.stocks) for (const e of declExprs(s.initExpr, s.elemExprs)) visit(e, s.loc);
+  for (const v of model.vars) for (const e of declExprs(v.expr, v.elemExprs)) visit(e, v.loc);
   for (const r of model.rates.values()) visit(r.expr, r.loc);
   return out;
 }
