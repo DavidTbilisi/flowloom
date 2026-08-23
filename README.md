@@ -59,6 +59,9 @@ dynamics, and check the numbers. Validate, don't vibe.
   loop that flips is marked `R~B`, and loops that never engage are listed as
   inactive with the flat link named. `loops --metric` ranks the active loops by
   **knockout** (cut a link, re-run, measure) — which loop is running the system.
+  `loops --basis` gives the **shortest independent loop set** — the cycle-rank
+  many loops every other loop is a combination of (270 loops → a basis of 21),
+  complete even when enumeration is capped.
 - **An animated diagram on an infinite canvas** — press play and watch stocks
   fill to their level while signed causal links march; hover a loop to trace it
   with its R/B badge. **Scroll to zoom, drag to pan, Fit to frame** — large

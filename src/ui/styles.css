@@ -203,6 +203,9 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 /* ── loops: inactive + flipping ───────────────────────────────────────── */
 .loopnote { color: var(--dim); font-size: 11px; }
 .loop.inactive { opacity: 0.6; }
+.loop .basismark { margin-left: auto; font-size: 11px; color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
+.basistoggle { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); cursor: pointer; }
+.basistoggle input { margin: 0; }
 .lnk.dead { opacity: 0.55; }
 .deadloops { margin-top: 10px; }
 .deadloops > summary { cursor: pointer; color: var(--dim); font-size: 12px; line-height: 1.45; }

@@ -52,6 +52,7 @@ export const HELP: Record<string, HelpEntry> = {
   "ui:badge-R": { title: "R — reinforcing loop", body: "A loop that compounds change: more leads to more (or less to less). Drives growth or collapse." },
   "ui:badge-B": { title: "B — balancing loop", body: "A goal-seeking loop that resists change and settles toward an equilibrium." },
   "ui:badge-Q": { title: "inactive in this run", body: "One of the loop's links is flat at every sampled point of the run — an untaken if() branch or a gate that never opens — so the loop never engages. Flip a switch or pick a scenario to bring it alive." },
+  "ui:basis": { title: "Basis — the independent loops", body: "The shortest independent loop set: as many loops as the graph's cycle rank, every other loop a combination of these. The bounded, complete read of the feedback structure when a model has hundreds of loops. Live loops are preferred." },
   "ui:loop": { title: "Feedback loop", body: "A closed chain of cause → effect, with its polarity read along the actual run (not just at t=0). \"from t=…\" is when a gated loop first engages; R~B means it flips. Hover it to trace it on the diagram." },
   "ui:legend": { title: "Legend", body: "Click a series to show or hide it. The number is its value at the cursor." },
   "ui:montecarlo": { title: "Monte Carlo", body: "Run the model under many seeds (for models using random*()) and shade p05–p95 percentile bands behind each visible series." },

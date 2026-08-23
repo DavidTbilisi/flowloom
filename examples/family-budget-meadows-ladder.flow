@@ -160,6 +160,7 @@ scenario recovery_engine  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0
 expect final:Cash == 8000.92 ± 0.01                  # the teaching baseline's three-year balance
 expect min:Cash == -2490.35 ± 0.01                   # … and its floor
 expect loops:active == 9                              # nine loops engage in the base run
+expect loops:rank == 21                               # … of a basis of 21 independent loops (270 enumerated)
 expect rung10_separate min:Cash >= 0                 # Profit First keeps the family out of the card
 expect rung2_enough min:Cash >= 0                    # so does "enough"
 expect rung3_goal min:Cash >= 0                      # and the runway goal with vacations waiting

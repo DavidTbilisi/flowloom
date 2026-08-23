@@ -49,7 +49,7 @@ change() rate; everything else is recomputed every step.
   switch NAME = on|off                                           A two-state policy toggle (a param that is only ever 0 or 1). Use it in if(NAME, a, b). Sensitivity tests it off→on, sliders show a toggle, and overrides/scenarios accept on/off.
   link A -> B +|-                                                A declared signed influence: + (B moves with A) or − (against). The causal-loop sketch you draw before any equation exists — a model of links alone draws and has R/B loops but does not simulate; links also mark dependencies the equations don't carry yet.
   scenario NAME key=value key=value …                            A named set of overrides kept in the text: params, switches (on/off), stock initial values, or dt/to/start/seed/method. Run it with --scenario NAME / the scenario picker; `compare` tabulates base vs every scenario.
-  expect [SCENARIO] <op>:<series> <|<=|>|>=|== VALUE [± TOL[%]]  A claim the model must keep satisfying — its own regression test, kept in the text. Metrics: final/max/min/mean/at:<t>/time-to-peak/settle-time of a series, or loops:active|total|reinforcing|balancing. Run them with `test`; == is exact unless given ± tol (absolute or %).
+  expect [SCENARIO] <op>:<series> <|<=|>|>=|== VALUE [± TOL[%]]  A claim the model must keep satisfying — its own regression test, kept in the text. Metrics: final/max/min/mean/at:<t>/time-to-peak/settle-time of a series, or loops:active|total|reinforcing|balancing|rank. Run them with `test`; == is exact unless given ± tol (absolute or %).
   table NAME = (x,y) (x,y) …                                     A graphical lookup function; call it as NAME(x). Piecewise-linear, clamped past the ends.
   dim NAME = A, B, C                                             A subscript dimension (array index) with named elements. Declare arrays as stock X[NAME], use X[NAME] elementwise, and collapse with sum(X).
   sim dt=.1 to=50 start=0 method=rk4 timeunit=month seed=0       Simulation settings. method: rk4 (default) | euler | map. For a discrete-period model (monthly, yearly) use method=map — stock(t+dt) = stock(t) + change(t), change() a per-step increment in the stock's own units, no × dt. timeunit names the time unit for units checking; seed fixes random*(). The toolbar edits this line — the text stays canonical.
@@ -162,7 +162,13 @@ change() rate; everything else is recomputed every step.
   run and is listed as inactive with that link named (flip a switch / pick a
   scenario to bring it alive). `loops --metric SPEC` ranks the active loops by
   knockout — cut one link, re-run, measure — so "which loop runs this system"
-  has a number.
+  has a number. Loop *counts* mean little (a 9-stock budget has 270, most of
+  them one mechanism through different if() branches): the report's `rank` is
+  the cycle rank — how many loops are independent — and the loops flagged
+  `independent` are a shortest independent loop set (Oliva 2004), live loops
+  preferred, that every other loop is a combination of. `loops --basis` /
+  flow_loops basis:true list just those; the basis is complete even when
+  enumeration was capped, so on a big model read the basis, not the list.
 - Every referenced name must be defined, and a model needs at least one stock —
   unless it is a causal-loop sketch made of `link` lines, which parses, draws
   and has loops (polarity from the declared signs) but returns a note instead
@@ -200,7 +206,7 @@ plot Population
   flowloom solve model.flow --param P --metric SPEC --target N   find the knob value that hits a target
   flowloom explain model.flow                      plain-language summary
   flowloom describe model.flow --json              structure (stocks/rates/vars/loops) as JSON
-  flowloom loops model.flow [--metric SPEC] [--all] [--json]   feedback loops, polarity read along the run; --metric ranks by knockout
+  flowloom loops model.flow [--metric SPEC] [--all] [--basis] [--json]   feedback loops, polarity read along the run; --metric ranks by knockout; --basis only the independent set
   flowloom check model.flow                        parse + lint; non-zero exit on parse error
   flowloom lint model.flow [--json]                non-fatal warnings (unused params, dead vars, units, bad τ)
   flowloom montecarlo model.flow --runs N          percentile bands across N seeded runs

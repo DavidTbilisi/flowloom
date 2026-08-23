@@ -133,7 +133,7 @@ export interface LinkDecl {
  *  satisfying: its own regression test, kept in the text like a scenario so a
  *  number cited elsewhere (a page, a report) has a guard in the model it came
  *  from. METRIC is a metric spec (final:Cash, min:Cash, at:12:Cash, …) or a
- *  loop census (loops:active, loops:total, loops:reinforcing, loops:balancing). */
+ *  loop census (loops:active, loops:total, loops:reinforcing, loops:balancing, loops:rank). */
 export interface ExpectDecl {
   /** Scenario to apply first; undefined = the base model. */
   scenario?: string;

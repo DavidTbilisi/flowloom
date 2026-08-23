@@ -190,7 +190,8 @@ edit happened, not where the number was quoted.
 - **METRIC** is a [metric spec](#simulation-settings) — `final:`/`max:`/`min:`/
   `mean:`/`time-to-peak:`/`settle-time:` of a series, `at:<t>:<series>` — or a
   loop census: `loops:active`, `loops:total`, `loops:reinforcing`,
-  `loops:balancing`, `loops:inactive`.
+  `loops:balancing`, `loops:inactive`, `loops:rank` (the number of independent
+  loops).
 - **OP** is `<`, `<=`, `>`, `>=` or `==`. `==` is **exact** unless given a
   tolerance — `± 0.01` (absolute) or `± 1%` (of the value). An exact `==` that
   fails says how far off it was, which is the tolerance to write if that is
@@ -462,6 +463,19 @@ active loops) is frozen at its start value, the model re-runs, and loops are
 ranked by how far the metric moves — the answer to "which loop is running this
 system". A cut that sends the metric off the scale is reported as *runaway*
 (the loop was holding the system together). MCP: `flow_loops` with `metric`.
+
+**The basis.** Enumerating every simple loop is exponential and the count says
+little — a 9-stock budget has 270 loops, most of them the same few mechanisms
+threaded through different `if()` branches. The graph's **cycle rank** (links −
+nodes + 1 per strongly connected component) is how many loops are independent;
+every other loop is a combination of those. flowloom computes a **shortest
+independent loop set** (Oliva 2004; Horton's candidate set, Gaussian elimination
+over GF(2) on link-incidence vectors) — rank-many loops, shortest first, live
+loops preferred — and marks them `*` (CLI) / *basis* (studio). `loops --basis`
+lists just those; the studio's *basis only* toggle does the same; MCP
+`flow_loops` takes `basis: true`. It is built by polynomial work straight from
+the graph, so it is complete even when enumeration had to stop at its cap —
+on a large model the basis is the read that is guaranteed whole.
 
 
 flowloom builds a **signed influence graph**: an edge `u → v` carries the sign of

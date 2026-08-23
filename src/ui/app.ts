@@ -799,12 +799,15 @@ export function mountApp(root: HTMLElement): Store {
       loopsWrap.innerHTML = `<p class="hint">No feedback loops — this is an open-loop model (nothing feeds back on itself).</p>`;
       return;
     }
-    const { inactive, flipping, sampleTimes } = run.loops;
+    const { inactive, flipping, sampleTimes, rank: cycleRank } = run.loops;
+    const basisOnly = loopBasisOnly && cycleRank > 0 && loops.length > cycleRank;
     let html = `<p class="loopcount"><span class="badge R">${counts.R} R</span><span class="badge B">${counts.B} B</span>` +
       (inactive ? `<span class="badge Q" title="never engage in this run">${inactive} inactive</span>` : "") +
-      ` &nbsp;${loops.length} loop${loops.length > 1 ? "s" : ""}` + (capped ? ` (capped)` : "") +
+      ` &nbsp;${loops.length} loop${loops.length > 1 ? "s" : ""}` + (capped ? ` (enumeration capped)` : "") +
+      (loops.length > cycleRank && cycleRank > 0 ? ` <label class="basistoggle" data-help="ui:basis"><input type="checkbox" id="loopBasis"${basisOnly ? " checked" : ""}/> basis only — ${cycleRank} independent</label>` : "") +
       `<span class="loopnote"> · ${run.model?.stocks.length === 0 ? "signs as declared" : `signs read at ${sampleTimes.length} point${sampleTimes.length === 1 ? "" : "s"} of the run`}${flipping ? ` · ${flipping} flip polarity` : ""}</span></p>`;
-    const sorted = [...loops].sort((a, b) => Number(b.active) - Number(a.active) || rank(a.polarity) - rank(b.polarity) || a.edges.length - b.edges.length);
+    const shown = basisOnly ? loops.filter((l) => l.independent) : loops;
+    const sorted = [...shown].sort((a, b) => Number(b.active) - Number(a.active) || rank(a.polarity) - rank(b.polarity) || a.edges.length - b.edges.length);
     const row = (lp: typeof loops[number]) => {
       let path = `<span class="node">${escapeHtml(lp.nodes[0]!)}</span>`;
       for (const e of lp.edges) {
@@ -818,8 +821,8 @@ export function mountApp(root: HTMLElement): Store {
         : lp.flips ? `${seq.join(" → ")} along the run`
         : (lp.polarity === "R" ? "reinforcing" : "balancing") + (lp.resolvedAt !== undefined ? ` from t=${fmt(lp.resolvedAt)}` : "");
       const bk = lp.polarity === "?" ? "Q" : lp.polarity;
-      return `<div class="loop${lp.active ? "" : " inactive"}" data-help="ui:loop"><span class="badge ${bk}" data-help="ui:badge-${bk}">${lp.active ? (lp.flips ? seq.join("~") : lp.polarity) : "–"}</span>` +
-        `<span class="looplabel">${label}</span><div class="path">${path}</div></div>`;
+      return `<div class="loop${lp.active ? "" : " inactive"}${lp.independent ? " basis" : ""}" data-help="ui:loop"><span class="badge ${bk}" data-help="ui:badge-${bk}">${lp.active ? (lp.flips ? seq.join("~") : lp.polarity) : "–"}</span>` +
+        `<span class="looplabel">${label}</span><div class="path">${path}</div>${lp.independent && !basisOnly ? `<span class="basismark" data-help="ui:basis" title="one of the independent loops every other loop is a combination of">basis</span>` : ""}</div>`;
     };
     for (const lp of sorted) if (lp.active) html += row(lp);
     const dead = sorted.filter((lp) => !lp.active);
@@ -827,7 +830,10 @@ export function mountApp(root: HTMLElement): Store {
       html += `<details class="deadloops"><summary>${dead.length} loop${dead.length > 1 ? "s" : ""} never engage${dead.length > 1 ? "" : "s"} in this run — a link (marked <sup>0</sup>) is flat at every sample: an untaken if() branch or a gate that never opens. Flip a switch or pick a scenario to bring them alive.</summary>${dead.map(row).join("")}</details>`;
     }
     loopsWrap.innerHTML = html;
+    const toggle = loopsWrap.querySelector<HTMLInputElement>("#loopBasis");
+    if (toggle) toggle.onchange = () => { loopBasisOnly = toggle.checked; renderLoops(); };
   }
+  let loopBasisOnly = false;
 
   // Sample ~`target` table rows at round time values (e.g. 0, 2, 4 …) instead of
   // raw index steps, which produced awkward times like 1.2, 2.4 … and a ragged

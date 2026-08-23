@@ -81,6 +81,7 @@ interface Args {
   goal?: "max" | "min"; // --goal for policies
   cost: string[]; // --cost a=2,b=1 for policies
   all: boolean; // --all: loops — list the inactive ones too
+  basis: boolean; // --basis: loops — only the shortest independent loop set
   rows: number; // sampled rows for the table view
   chart: boolean; // render sparklines after the table
   params: string[]; // --param: a knob (sweep/solve) or a list (sensitivity)
@@ -99,7 +100,7 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", noLoops: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", noLoops: false, basis: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -110,6 +111,7 @@ function parseArgs(argv: string[]): Args {
       case "--chart": a.chart = true; break;
       case "--all": a.all = true; break;
       case "--no-loops": a.noLoops = true; break;
+      case "--basis": case "--sils": case "--independent": a.basis = true; break;
       case "--plot": a.plot.push(...splitList(need(argv, ++i, arg))); break;
       case "-s":
       case "--set": a.sets.push(need(argv, ++i, arg)); break;
@@ -334,15 +336,17 @@ function loopTag(l: Loop): string {
   return `[${tag}${l.resolvedAt !== undefined ? ` from t=${fmt(l.resolvedAt)}` : ""}]`;
 }
 
-function loopJson(rep: LoopReport, all: boolean) {
+function loopJson(rep: LoopReport, all: boolean, basis = false) {
   return {
     counts: rep.counts, flipping: rep.flipping, inactive: rep.inactive, capped: rep.capped, sampleTimes: rep.sampleTimes,
+    rank: rep.rank, independent: rep.independent,
     loops: rep.loops
       .map((l, i) => ({ index: i + 1, polarity: l.polarity, active: l.active, flips: l.flips, nodes: l.nodes,
+        ...(l.independent ? { independent: true } : {}),
         ...(l.resolvedAt !== undefined ? { resolvedAt: l.resolvedAt } : {}),
         ...(l.deadLinks ? { deadLinks: l.deadLinks } : {}),
         ...(all || l.flips ? { trace: l.trace.join("") } : {}) }))
-      .filter((l) => all || l.active),
+      .filter((l) => (basis ? l.independent : true) && (all || l.active)),
   };
 }
 
@@ -355,21 +359,26 @@ async function cmdLoops(args: Args): Promise<void> {
   }
   if (args.format === "json") {
     const dominance = dom ? { metric: dom.metric, base: dom.base, rows: dom.rows, skipped: dom.skipped } : undefined;
-    out(JSON.stringify({ ...loopJson(rep, args.all), ...(dominance ? { dominance } : {}) }, null, 2));
+    out(JSON.stringify({ ...loopJson(rep, args.all, args.basis), ...(dominance ? { dominance } : {}) }, null, 2));
     return;
   }
   const { R, B } = rep.counts;
   const n = rep.loops.length;
   out(`${n} feedback loop${n === 1 ? "" : "s"}  (${R} reinforcing, ${B} balancing` +
-    `${rep.inactive ? `; ${rep.inactive} never engage in this run` : ""}${rep.flipping ? `; ${rep.flipping} flip polarity along the run` : ""})` +
-    `${rep.capped ? "  [capped]" : ""}  — ${model.stocks.length === 0 ? "signs as declared" : `signs read at ${rep.sampleTimes.length} point${rep.sampleTimes.length === 1 ? "" : "s"} of the trajectory`}`);
+    `${rep.inactive ? `; ${rep.inactive} never engage in this run` : ""}${rep.flipping ? `; ${rep.flipping} flip polarity along the run` : ""}` +
+    `; ${rep.rank} independent${rep.independent < rep.rank ? ` — ${rep.independent} found` : ""})` +
+    `${rep.capped ? "  [enumeration capped — the independent set is still complete]" : ""}  — ${model.stocks.length === 0 ? "signs as declared" : `signs read at ${rep.sampleTimes.length} point${rep.sampleTimes.length === 1 ? "" : "s"} of the trajectory`}`);
+  let hiddenInactive = 0, hiddenDependent = 0;
   rep.loops.forEach((l, i) => {
-    if (!l.active && !args.all) return;
-    out(`  ${String(i + 1).padStart(2)}. ${loopTag(l)} ${l.nodes.join(" → ")}`);
+    if (args.basis && !l.independent) { hiddenDependent++; return; }
+    if (!l.active && !args.all) { hiddenInactive++; return; }
+    out(`  ${String(i + 1).padStart(2)}. ${loopTag(l)}${l.independent ? "*" : " "} ${l.nodes.join(" → ")}`);
     if (!l.active && l.deadLinks?.length) out(`      never engages: ${l.deadLinks.map((d) => `${d.from} → ${d.to}`).join(", ")} stay${l.deadLinks.length === 1 ? "s" : ""} flat`);
   });
   if (!n) out("  (no closed loops — this model is purely feed-forward)");
-  if (rep.inactive && !args.all) out(`  … ${rep.inactive} inactive loop${rep.inactive === 1 ? "" : "s"} hidden (a link in each is flat at every sample — an untaken if() branch or a gate that never opens); --all lists them`);
+  if (hiddenInactive) out(`  … ${hiddenInactive} inactive loop${hiddenInactive === 1 ? "" : "s"} hidden (a link in each is flat at every sample — an untaken if() branch or a gate that never opens); --all lists them`);
+  if (args.basis) out(`  (* the shortest independent loop set: ${rep.rank} basis loops — every other loop is a combination of these; ${hiddenDependent} dependent hidden)`);
+  else if (n > rep.rank && rep.rank) out(`  (* = one of the ${rep.rank} independent loops — the basis every other loop is a combination of; --basis lists just those)`);
   if (dom) {
     out("");
     out(`loop dominance on ${dom.metric} (base ${fmt(dom.base)}): cut one link of each active loop, re-run, rank by |Δ|`);
@@ -857,9 +866,11 @@ const HELP = `flowloom ${VERSION} — run text-first systems models from the she
 
 usage:
   flowloom run      <model.flow> [options]   simulate and print results
-  flowloom loops    <model.flow> [--metric SPEC] [--all] [--json]
+  flowloom loops    <model.flow> [--metric SPEC] [--all] [--basis] [--json]
                                              feedback loops, polarity read along the run; --metric ranks
-                                             them by knockout (cut a link, re-run); --all lists inactive ones
+                                             them by knockout (cut a link, re-run); --all lists inactive ones;
+                                             --basis only the shortest independent loop set (the cycle-rank
+                                             many loops every other loop is a combination of)
   flowloom check    <model.flow>             parse + lint; non-zero exit on parse error
   flowloom lint     <model.flow> [--json]    non-fatal warnings (unused params, dead vars, bad τ)
   flowloom describe <model.flow> [--json]    dump model structure (stocks/rates/vars/loops)

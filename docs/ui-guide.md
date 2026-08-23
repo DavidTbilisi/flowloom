@@ -92,4 +92,7 @@ with a note. Add a stock and its `change()` when the numbers arrive.
   `# @rung N` are grouped under their Meadows rung.
 - **Loops** reads polarity along the run: "from t=…" is when a gated loop first
   engages, `R~B` marks a loop that flips, and loops that never engage in this
-  run are folded under a summary with the flat link marked <sup>0</sup>.
+  run are folded under a summary with the flat link marked <sup>0</sup>. Loops
+  in the **basis** — the shortest independent loop set, as many as the graph's
+  cycle rank — carry a *basis* tag; *basis only* hides the rest, which are all
+  combinations of these.

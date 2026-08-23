@@ -1,4 +1,5 @@
 import type { Expr, Model } from "../lang/types.js";
+import { independentLoops, loopKey } from "./sils.js";
 import { freeVars } from "../lang/expr.js";
 import { evalExpr, type EvalCtx } from "./eval.js";
 import { compile, type Compiled } from "./compile.js";
@@ -58,6 +59,8 @@ export interface Loop {
   /** False when the loop never engages in this run: `deadLinks` are zero at every sample. */
   active: boolean;
   deadLinks?: Array<{ from: string; to: string }>;
+  /** One of the shortest independent loop set — a basis loop (see sils.ts). */
+  independent?: true;
 }
 
 export interface LoopReport {
@@ -72,6 +75,11 @@ export interface LoopReport {
   inactive: number;
   /** Times at which link signs were read (the first is t=start). */
   sampleTimes: number[];
+  /** Cycle rank of the influence graph: how many loops are independent. */
+  rank: number;
+  /** Loops flagged `independent` — the shortest independent loop set, always
+   *  present in `loops` even when enumeration was capped. */
+  independent: number;
 }
 
 export interface LoopOptions {
@@ -106,7 +114,19 @@ export function analyzeLoops(model: Model, opts: LoopOptions = {}): LoopReport {
     edges: links.edges.map((e, k) => ({ from: e.from, to: e.to, sign: signsAt[0]![k]!, ...(e.declared ? { declared: true as const } : {}) })),
   };
 
-  const { loops: found, capped } = findLoops(graph);
+  const { loops: enumerated, capped } = findLoops(graph);
+  const edgeIndexOf = new Map(links.edges.map((e, k) => [`${e.from}|${e.to}`, k] as const));
+  // The basis: mark the enumerated loops that belong to it, and add any it has
+  // that enumeration missed (only possible when capped).
+  const flatAt = links.edges.map((_, k) => signsAt.every((signs) => signs[k] === 0));
+  const sils = independentLoops(graph, { dead: (e) => flatAt[edgeIndexOf.get(`${e.from}|${e.to}`)!] === true });
+  const byKey = new Map(enumerated.map((l) => [loopKey(l.nodes), l] as const));
+  for (const b of sils.loops) {
+    const have = byKey.get(loopKey(b.nodes));
+    if (have) have.independent = true;
+    else { enumerated.push(b); byKey.set(loopKey(b.nodes), b); }
+  }
+  const found = enumerated;
   const edgeIndex = new Map(links.edges.map((e, k) => [`${e.from}|${e.to}`, k] as const));
   const loops: Loop[] = found.map((l) => {
     const ks = l.edges.map((e) => edgeIndex.get(`${e.from}|${e.to}`)!);
@@ -133,6 +153,7 @@ export function analyzeLoops(model: Model, opts: LoopOptions = {}): LoopReport {
       nodes: l.nodes, edges: l.edges, polarity, trace, flips, active,
       ...(resolvedAt !== undefined ? { resolvedAt } : {}),
       ...(deadLinks.length ? { deadLinks } : {}),
+      ...(l.independent ? { independent: true as const } : {}),
     };
   });
 
@@ -140,7 +161,7 @@ export function analyzeLoops(model: Model, opts: LoopOptions = {}): LoopReport {
   for (const l of loops) counts[l.polarity]++;
   const flipping = loops.filter((l) => l.flips).length;
   const inactive = loops.filter((l) => !l.active).length;
-  return { graph, loops, capped, counts, flipping, inactive, sampleTimes: points.map((p) => p.t) };
+  return { graph, loops, capped, counts, flipping, inactive, sampleTimes: points.map((p) => p.t), rank: sils.rank, independent: loops.filter((l) => l.independent).length };
 }
 
 /** The signed influence graph at t=start (what the diagram draws). */

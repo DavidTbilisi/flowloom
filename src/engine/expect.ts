@@ -43,9 +43,10 @@ export function loopMetric(report: LoopReport, what: string): number {
     case "active": return report.loops.filter((l) => l.active).length;
     case "inactive": return report.inactive;
     case "total": return report.loops.length;
+    case "rank": return report.rank;
     case "reinforcing": return report.loops.filter((l) => l.active && l.polarity === "R").length;
     case "balancing": return report.loops.filter((l) => l.active && l.polarity === "B").length;
-    default: throw new Error(`loops:${what} — unknown loop metric (active|inactive|total|reinforcing|balancing)`);
+    default: throw new Error(`loops:${what} — unknown loop metric (active|inactive|total|reinforcing|balancing|rank)`);
   }
 }
 

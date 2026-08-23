@@ -12,6 +12,7 @@ import type { Model } from "../lang/types.js";
 import { simulateAsync, type SimResult } from "./simulator.js";
 import { applyScenario, BASE_SCENARIO } from "./overrides.js";
 import { analyzeLoops, operatingPoint } from "./loops.js";
+import { loopKey } from "./sils.js";
 
 export interface SeriesDiff {
   name: string;
@@ -142,13 +143,6 @@ function compareRuns(name: string, ra: SimResult, rb: SimResult, tol: number): S
   if (ra.note || rb.note) d.notes = { ...(ra.note ? { a: ra.note } : {}), ...(rb.note ? { b: rb.note } : {}) };
   return d;
 }
-
-const loopKey = (nodes: string[]): string => {
-  // Rotate to the lexicographically smallest start so the same cycle reads the same whichever node the search entered at.
-  let best = nodes.join(">");
-  for (let i = 1; i < nodes.length; i++) { const r = [...nodes.slice(i), ...nodes.slice(0, i)].join(">"); if (r < best) best = r; }
-  return best;
-};
 
 function loopDiff(a: Model, b: Model): ScenarioDiff["loops"] {
   const la = analyzeLoops(a), lb = analyzeLoops(b);

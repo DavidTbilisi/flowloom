@@ -480,7 +480,7 @@ const BUILTIN_CONSTS = new Set(["PI", "E"]);
  *  in the editor, not a surprise when the scenario is finally selected. */
 /** Metric ops resolveMetric() understands, plus the loop-census pseudo-metrics. */
 export const METRIC_OPS = ["final", "max", "min", "mean", "at", "time-to-peak", "settle-time"] as const;
-export const LOOP_METRICS = ["active", "total", "reinforcing", "balancing", "inactive"] as const;
+export const LOOP_METRICS = ["active", "total", "reinforcing", "balancing", "inactive", "rank"] as const;
 const EXPECT_OPS = new Set(["<", "<=", ">", ">=", "=="]);
 
 /** `expect [SCENARIO] METRIC OP VALUE [± TOL[%]]`. The scenario is optional and

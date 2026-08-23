@@ -110,6 +110,25 @@ sim dt=0.5 to=2 method=rk4`);
   await expect(page.locator("#method")).toHaveValue("map");
 });
 
+test("the loops tab marks the basis and can show only the independent loops", async ({ page }) => {
+  // A, B, b fully coupled: 6 links, 3 nodes ⇒ rank 4, but 5 simple loops
+  await page.locator("#src").fill(`stock A = 1
+stock B = 1
+aux b = 0.1 * A + 0.1 * B
+change(A) = b + 0.1 * B
+change(B) = b + 0.1 * A
+sim dt=1 to=5 method=euler`);
+  await page.locator("#run").click();
+  await page.waitForFunction(() => (window as any).flowloom.run.ok === true && (window as any).flowloom.run.loops?.loops.length === 5);
+  await page.locator('.tabs [data-tab="loops"]').click();
+  await expect(page.locator("#loopsWrap .loop")).toHaveCount(5);
+  await expect(page.locator("#loopsWrap .loop.basis")).toHaveCount(4);
+  await expect(page.locator("#loopsWrap .basismark")).toHaveCount(4);
+  await page.locator("#loopBasis").check();
+  await expect(page.locator("#loopsWrap .loop")).toHaveCount(4);
+  await expect(page.locator("#loopsWrap .basismark")).toHaveCount(0);
+});
+
 test("a links-only sketch draws, has loops, and shows a note instead of a run", async ({ page }) => {
   await page.locator("#src").fill(`link population -> births +
 link births -> population +

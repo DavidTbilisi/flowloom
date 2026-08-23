@@ -128,7 +128,13 @@ ${group("stateful", "Stateful builtins — carry state across steps")}
   run and is listed as inactive with that link named (flip a switch / pick a
   scenario to bring it alive). \`loops --metric SPEC\` ranks the active loops by
   knockout — cut one link, re-run, measure — so "which loop runs this system"
-  has a number.
+  has a number. Loop *counts* mean little (a 9-stock budget has 270, most of
+  them one mechanism through different if() branches): the report's \`rank\` is
+  the cycle rank — how many loops are independent — and the loops flagged
+  \`independent\` are a shortest independent loop set (Oliva 2004), live loops
+  preferred, that every other loop is a combination of. \`loops --basis\` /
+  flow_loops basis:true list just those; the basis is complete even when
+  enumeration was capped, so on a big model read the basis, not the list.
 - Every referenced name must be defined, and a model needs at least one stock —
   unless it is a causal-loop sketch made of \`link\` lines, which parses, draws
   and has loops (polarity from the declared signs) but returns a note instead
@@ -153,7 +159,7 @@ ${example!.source.replace(/\s*$/, "")}
   flowloom solve model.flow --param P --metric SPEC --target N   find the knob value that hits a target
   flowloom explain model.flow                      plain-language summary
   flowloom describe model.flow --json              structure (stocks/rates/vars/loops) as JSON
-  flowloom loops model.flow [--metric SPEC] [--all] [--json]   feedback loops, polarity read along the run; --metric ranks by knockout
+  flowloom loops model.flow [--metric SPEC] [--all] [--basis] [--json]   feedback loops, polarity read along the run; --metric ranks by knockout; --basis only the independent set
   flowloom check model.flow                        parse + lint; non-zero exit on parse error
   flowloom lint model.flow [--json]                non-fatal warnings (unused params, dead vars, units, bad τ)
   flowloom montecarlo model.flow --runs N          percentile bands across N seeded runs
