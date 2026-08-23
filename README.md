@@ -45,6 +45,9 @@ dynamics, and check the numbers. Validate, don't vibe.
   (`expect recovery final:netWorth == 493370 ± 1%`, `expect loops:active == 9`)
   kept in the text and checked by **`test`**; **`diff`** compares two versions of
   a model series by series and loop by loop, so a refactor has a verdict.
+  **`data`** lines put measured history *in* the model — step-held time series
+  you can plot, feed into equations, calibrate against with no CSV at hand
+  (`calibrate --against N=obs`), and score with `rmse:N:obs`.
 - **A proper engine** — Euler and classical **RK4** integration, plus **`map`**
   for difference equations; `step`/`pulse`/
   `ramp` test inputs; graphical **lookup tables**; first- and third-order

@@ -197,7 +197,8 @@ function compileWith(e: Expr, slots: Map<string, number>, plan: SimPlan): Fn {
       if (table) {
         const x = compileWith(e.args[0]!, slots, plan);
         const pts = table.points;
-        return (m) => lookupTable(pts, x(m));
+        const hold = table.hold === true;
+        return (m) => lookupTable(pts, x(m), hold);
       }
       const name = e.name.toLowerCase();
       if (RANDOM_FNS.has(name)) return compileRandom(name, e, slots, plan);

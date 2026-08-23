@@ -73,7 +73,7 @@ export function evalExpr(e: Expr, ctx: EvalCtx): number {
       // table lookup: `tableName(x)`
       const table = ctx.tables.get(e.name);
       if (table) {
-        return lookupTable(table.points, evalExpr(e.args[0]!, ctx));
+        return lookupTable(table.points, evalExpr(e.args[0]!, ctx), table.hold === true);
       }
       // The tree-walker is used only for loop-polarity perturbation at the
       // operating point, where randomness should be deterministic — so each

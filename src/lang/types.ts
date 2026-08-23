@@ -90,6 +90,11 @@ export interface VarDecl {
    *  conversion), not a knob. Still `kind: "param"`, but sensitivity, sliders
    *  and calibration leave it alone unless it is named explicitly. */
   constant?: true;
+  /** Declared with `data` — a measured time series read off the clock (an
+   *  exogenous input). `kind: "aux"` whose expr is the lookup of an internal
+   *  table on `t`; the flag lets the diagram, introspection and calibration
+   *  treat it as data rather than as a computed quantity. */
+  data?: true;
   /** Meadows leverage-point rung (12 … 1) from a `@rung N` tag in the doc comment. */
   rung?: number;
   doc?: string;
@@ -150,6 +155,9 @@ export interface ExpectDecl {
 export interface TableDecl {
   name: string;
   points: Array<[number, number]>;
+  /** Step-hold instead of piecewise-linear: the value at x is the last point at
+   *  or before x (a sampled series holds between samples). */
+  hold?: true;
   loc: Loc;
 }
 

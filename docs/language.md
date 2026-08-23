@@ -33,6 +33,7 @@ stock Population [people] = 5      # the starting headcount
 | `scenario NAME key=value …` | A **named set of overrides** kept in the text. See [Scenarios](#scenarios). |
 | `link A -> B +` / `link A -> B -` | A **declared signed influence** — the causal-loop sketch you draw before equations. See [Sketching first](#sketching-first-link). |
 | `expect [SCENARIO] METRIC OP VALUE [± TOL]` | A **claim the model must keep satisfying** — its own test. See [Expectations](#expectations). |
+| `data NAME [unit] = (t, v) …` | A **measured time series** read off the clock — an exogenous input. See [Data series](#data-series). |
 | `sim dt=… to=… start=… method=…` | Simulation settings. The toolbar edits this line. |
 | `plot A B C` | Which series are visible by default. |
 
@@ -188,7 +189,8 @@ edit happened, not where the number was quoted.
   is unambiguous without lookahead: a metric always carries a colon, a scenario
   name never does.
 - **METRIC** is a [metric spec](#simulation-settings) — `final:`/`max:`/`min:`/
-  `mean:`/`time-to-peak:`/`settle-time:` of a series, `at:<t>:<series>` — or a
+  `mean:`/`time-to-peak:`/`settle-time:` of a series, `at:<t>:<series>`,
+  `rmse:<series>:<series>` (fit of a model series to a [data series](#data-series)) — or a
   loop census: `loops:active`, `loops:total`, `loops:reinforcing`,
   `loops:balancing`, `loops:inactive`, `loops:rank` (the number of independent
   loops).
@@ -202,6 +204,29 @@ edit happened, not where the number was quoted.
 Run them: `flowloom test model.flow` (one simulation per scenario, a line per
 claim, non-zero exit on any failure — so a model can sit in CI); `flow_test` over
 MCP; `describe`/`explain` list them.
+
+### Data series
+
+```flow
+data income [GEL] = (0, 4485) (3, 4700) (6, 5200)      # held between samples
+data temp = (0, 10) (2, 20) linear                      # interpolated
+```
+
+A `data` line is a **measured series read off the clock** — actual history as a
+model input, kept in the text like everything else. It behaves as a plain named
+series: use it in expressions (`change(Cash) = income - spend`), plot it, `diff`
+it, guard it with `expect`. Between samples the value **holds** by default
+(sampled data keeps its value until the next observation); write `linear` to
+interpolate. Before the first point and after the last, the nearest value.
+
+The file bridge runs both ways without the model ever referencing a file:
+
+- `flowloom data obs.csv [--column a,b] [--time COL] [--unit U] [--linear]`
+  prints CSV columns as `data` lines to paste in (`>> model.flow` works).
+- `flowloom calibrate model.flow --param r --against N=obs` (no `--data`) fits
+  params against the model's **own** data lines; same over MCP.
+- The metric `rmse:<series>:<data>` measures the fit over every step of the run,
+  so `expect rmse:N:obs < 5` keeps a calibration honest after later edits.
 
 ### Tables (graphical functions)
 

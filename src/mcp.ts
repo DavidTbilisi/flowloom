@@ -36,6 +36,7 @@ import {
   solveParam,
   monteCarlo,
   parseDataset,
+  datasetFromModel,
   calibrate,
   REFERENCE,
   type EnsembleResult,
@@ -173,10 +174,16 @@ export const handlers = {
 
   async flow_calibrate(
     { model, params, data, map, set, scenario }:
-      { model: string; params: string[]; data: string; map?: Record<string, string>; set?: string[]; scenario?: string },
+      { model: string; params: string[]; data?: string; map?: Record<string, string>; set?: string[]; scenario?: string },
   ): Promise<ToolResult> {
-    const dataset = parseDataset(data);
-    const r = await calibrate(loadModel(model, set, scenario), { params, dataset, ...(map ? { map } : {}) });
+    const m = loadModel(model, set, scenario);
+    let dataset;
+    if (data) dataset = parseDataset(data);
+    else {
+      if (!map || !Object.keys(map).length) throw new Error("without `data` text, calibrate fits against the model's own `data` lines — pass map: { modelSeries: dataName }");
+      dataset = datasetFromModel(m, Object.values(map));
+    }
+    const r = await calibrate(m, { params, dataset, ...(map ? { map } : {}) });
     return text(r);
   },
 
@@ -319,7 +326,7 @@ The authoring loop:
 2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
 3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops read along the run; with a metric, ranked by knockout; basis:true for the shortest independent loop set — the rank-many loops every other loop is built from) — to understand an existing model before changing it.
 
-Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
+Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to observed data — CSV text, or the model's own 'data' lines), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
 
 Discrete-period models (monthly, yearly): use 'sim method=map dt=1' (stock(t+dt) = stock(t) + change(t); change() is a per-step increment in the stock's own units, so no x dt bookkeeping), previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
@@ -331,7 +338,7 @@ const setArg = z.array(z.string()).optional().describe('Overrides as "key=value"
 const scenarioArg = z.string().optional().describe("Name of a `scenario` line in the model to apply before the run (\"base\" or omitted = the model as written).");
 const metricArg = z
   .string()
-  .describe('A scalar read from a run: "<op>:<series>" where op is final|max|min|mean|time-to-peak|settle-time, or "at:<t>:<series>". E.g. "final:Cash", "max:Infected", "at:50:Inventory".');
+  .describe('A scalar read from a run: "<op>:<series>" where op is final|max|min|mean|time-to-peak|settle-time, "at:<t>:<series>", or "rmse:<series>:<series>" (fit of a model series to a data series). E.g. "final:Cash", "max:Infected", "at:50:Inventory", "rmse:N:obs".');
 
 export function buildServer(): McpServer {
   const server = new McpServer({ name: "flowloom", version: VERSION }, { instructions: INSTRUCTIONS });
@@ -455,7 +462,7 @@ export function buildServer(): McpServer {
       inputSchema: {
         model: modelArg,
         params: z.array(z.string()).describe("Params (or stock inits) to fit."),
-        data: z.string().describe("Observed data as CSV/TSV text: a header row, one time column (t/time or the first), then named series columns."),
+        data: z.string().optional().describe("Observed data as CSV/TSV text: a header row, one time column (t/time or the first), then named series columns. Omit to fit against the model's own `data` lines (then `map` names which: { modelSeries: dataName })."),
         map: z.record(z.string(), z.string()).optional().describe('Model series → dataset column, e.g. {"Infected":"I"}. Defaults to columns whose name matches a series.'),
         set: setArg,
         scenario: scenarioArg,

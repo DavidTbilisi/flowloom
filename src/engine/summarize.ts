@@ -239,6 +239,16 @@ export function resolveMetric(res: SimResult, spec: string): number {
   const parts = spec.split(":");
   const op = parts[0]!.trim();
 
+  if (op === "rmse") {
+    // Root-mean-square gap between two series of the same run over every step —
+    // a model series against a `data` series is the intended pair.
+    if (parts.length !== 3) throw new Error(`metric "rmse" expects rmse:<series>:<series>, got "${spec}"`);
+    const a = getSeries(res, parts[1]!.trim()), b = getSeries(res, parts[2]!.trim());
+    let acc = 0;
+    for (let i = 0; i < a.length; i++) acc += (a[i]! - b[i]!) ** 2;
+    return Math.sqrt(acc / a.length);
+  }
+
   if (op === "at") {
     if (parts.length !== 3) throw new Error(`metric "at" expects at:<time>:<series>, got "${spec}"`);
     const time = Number(parts[1]);
@@ -272,7 +282,7 @@ export function resolveMetric(res: SimResult, spec: string): number {
     }
     default:
       throw new Error(
-        `unknown metric "${op}" — use final|max|min|mean|at:<t>|time-to-peak|settle-time`,
+        `unknown metric "${op}" — use final|max|min|mean|at:<t>|time-to-peak|settle-time|rmse:<a>:<b>`,
       );
   }
 }

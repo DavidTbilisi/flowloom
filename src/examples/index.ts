@@ -228,21 +228,26 @@ plot Population Total`,
   },
   {
     name: "Calibration demo",
-    blurb: "Fit a param to data: Load data (examples/calibration-demo.csv), then ◎ Calibrate to recover the growth rate.",
+    blurb: "Fit a param to data that lives in the text: a `data` line holds the observations, ◎ Calibrate recovers the growth rate, an rmse expect keeps score.",
     source: `# Calibration demo — the growth rate starts deliberately wrong.
-# Under the Plot tab: 📊 Load data → examples/calibration-demo.csv (a column
-# 'N' of observations), then ◎ Calibrate. flowloom fits 'r' (least normalised
-# RMSE) and writes the value back into this text — you'll see r jump to ~0.15.
+# The observations live in the text as a data line (made with: flowloom data obs.csv).
+# Fit r against them:   flowloom calibrate <file> --param r --against N=obs
+# (or in the studio: ◎ Calibrate). r jumps to ~0.15 and the rmse expect passes.
 stock N [units] = 10
 
-param r = 0.05             # start wrong; Calibrate recovers it from the data
+param r = 0.05             # start wrong; calibrate recovers ~0.15 from obs
 
 flow growth = r * N
 
 change(N) = growth
 
+data obs [units] = (0, 10) (2, 13.5) (4, 18.22) (6, 24.6) (8, 33.2) (10, 44.82) (12, 60.5) (14, 81.66) (16, 110.23) (18, 148.8) (20, 200.86)
+
+expect rmse:N:obs > 20     # wrong until calibrated: r=0.05 tracks nothing
+expect final:obs == 200.86
+
 sim dt=1 to=20
-plot N`,
+plot N obs`,
   },
   {
     name: "Family budget (Meadows ladder)",

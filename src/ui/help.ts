@@ -15,6 +15,7 @@ export function renderHelp(): string {
     <tr><td>table NAME = (x,y) (x,y) …</td><td>a graphical lookup function; call it as <code>NAME(x)</code> (piecewise-linear).</td></tr>
     <tr><td>link A -&gt; B +|-</td><td>a declared signed influence — the causal-loop sketch before equations. Links alone draw and have R/B loops but don't run.</td></tr>
     <tr><td>scenario NAME key=value …</td><td>a named set of overrides kept in the text (params, switches, stock inits, dt/to). Pick it in the plot controls; base stays dashed.</td></tr>
+    <tr><td>data income = (0, 4485) (3, 4700) …</td><td>a measured series read off the clock (held between samples; add <code>linear</code> to interpolate). An input you can plot, fit against (◎ Calibrate / <code>--against</code>), and guard with <code>expect rmse:Cash:income &lt; …</code>.</td></tr>
     <tr><td>expect [scenario] min:Cash &gt;= 0</td><td>a claim the model must keep satisfying (its own test): final/max/min/mean/at:t of a series or loops:active; <code>== v ± tol</code> for a number you cite elsewhere. <code>flowloom test</code> runs them.</td></tr>
     <tr><td>sim dt=.1 to=50 start=0 method=rk4</td><td>simulation settings (the toolbar edits this line; method rk4 | euler | map). Add <code>timeunit=month</code> for units checking.</td></tr>
     <tr><td>plot A B C</td><td>which series start visible.</td></tr>

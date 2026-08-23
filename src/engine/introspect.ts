@@ -14,12 +14,14 @@ import { analyzeLoops } from "./loops.js";
 export interface ModelDescription {
   stocks: Array<{ name: string; init: string; unit?: string; doc?: string }>;
   rates: Array<{ stock: string; expr: string }>;
-  vars: Array<{ name: string; kind: VarKind; expr: string; unit?: string; doc?: string; switch?: true; constant?: true; rung?: number; deps: string[] }>;
+  vars: Array<{ name: string; kind: VarKind; expr: string; unit?: string; doc?: string; switch?: true; constant?: true; data?: true; rung?: number; deps: string[] }>;
   tables: Array<{ name: string; points: Array<[number, number]> }>;
   /** Named override sets declared in the text (`scenario` lines). */
   scenarios: Array<{ name: string; sets: Array<{ key: string; value: string }>; doc?: string; rung?: number }>;
   /** Declared signed influences (`link` lines). */
   links: Array<{ from: string; to: string; sign: 1 | -1; doc?: string }>;
+  /** Measured inputs (`data` lines): points and the rule between them. */
+  data: Array<{ name: string; points: number; from: number; to: number; hold: boolean; unit?: string; doc?: string }>;
   /** The model's own claims (`expect` lines): scenario (base = the model), metric, comparison, value, tolerance. */
   expects: Array<{ scenario: string; metric: string; op: string; value: number; tol?: { value: number; pct: boolean }; doc?: string }>;
   /** True when the model is a causal-loop sketch: links, no stock to integrate. */
@@ -72,6 +74,7 @@ export function describeModel(model: Model): ModelDescription {
       ...(v.doc ? { doc: v.doc } : {}),
       ...(v.boolean ? { switch: true as const } : {}),
       ...(v.constant ? { constant: true as const } : {}),
+      ...(v.data ? { data: true as const } : {}),
       ...(v.rung !== undefined ? { rung: v.rung } : {}),
       deps: allDeps(v.expr, v.elemExprs),
     })),
@@ -83,6 +86,10 @@ export function describeModel(model: Model): ModelDescription {
       ...(s.rung !== undefined ? { rung: s.rung } : {}),
     })),
     links: model.links.map((l) => ({ from: l.from, to: l.to, sign: l.sign, ...(l.doc ? { doc: l.doc } : {}) })),
+    data: model.vars.filter((v) => v.data).map((v) => {
+      const tb = model.tables.get(`${v.name}#data`)!;
+      return { name: v.name, points: tb.points.length, from: tb.points[0]![0], to: tb.points[tb.points.length - 1]![0], hold: tb.hold === true, ...(v.unit ? { unit: v.unit } : {}), ...(v.doc ? { doc: v.doc } : {}) };
+    }),
     expects: model.expects.map((e) => ({ scenario: e.scenario ?? "base", metric: e.metric, op: e.op, value: e.value, ...(e.tol ? { tol: e.tol } : {}), ...(e.doc ? { doc: e.doc } : {}) })),
     qualitative: model.stocks.length === 0 && model.links.length > 0,
     settings: model.settings,
@@ -143,7 +150,7 @@ export function explainModel(model: Model): string {
     for (const s of switches) lines.push(`  • ${s.name} = ${s.expr === "1" ? "on" : "off"}${s.doc ? ` — ${s.doc}` : ""}`);
   }
 
-  const dynamic = d.vars.filter((v) => v.kind !== "param");
+  const dynamic = d.vars.filter((v) => v.kind !== "param" && !v.data);
   if (dynamic.length) {
     lines.push("", "Flows & auxiliaries:");
     for (const v of dynamic) lines.push(`  • ${v.kind} ${v.name} = ${v.expr}${v.doc ? ` — ${v.doc}` : ""}`);
@@ -152,6 +159,11 @@ export function explainModel(model: Model): string {
   if (d.links.length) {
     lines.push("", "Declared links (a causal-loop sketch; + same direction, − opposite):");
     for (const l of d.links) lines.push(`  • ${l.from} ${l.sign > 0 ? "—(+)→" : "—(−)→"} ${l.to}${l.doc ? ` — ${l.doc}` : ""}`);
+  }
+
+  if (d.data.length) {
+    lines.push("", "Data series (measured inputs, read off the clock):");
+    for (const x of d.data) lines.push(`  • ${x.name}${x.unit ? ` [${x.unit}]` : ""} — ${x.points} points, t=${x.from}…${x.to}, ${x.hold ? "held between samples" : "interpolated"}${x.doc ? ` — ${x.doc}` : ""}`);
   }
 
   if (d.expects.length) {

@@ -90,8 +90,10 @@ export const STATEFUL = new Set(["smooth", "smoothi", "smooth3", "delay1", "dela
 /** The fixed-delay subset of STATEFUL (see compile.ts / codegen.ts). */
 export const FIXED_DELAY = new Set(["previous", "delay_fixed"]);
 
-/** Piecewise-linear interpolation of a graphical/lookup table; clamps at the ends. */
-export function lookupTable(points: ReadonlyArray<readonly [number, number]>, x: number): number {
+/** Piecewise-linear interpolation of a graphical/lookup table; clamps at the
+ *  ends. With `hold`, step-hold instead: the last point at or before x (a
+ *  sampled series keeps its value between samples). */
+export function lookupTable(points: ReadonlyArray<readonly [number, number]>, x: number, hold = false): number {
   const n = points.length;
   if (x <= points[0]![0]) return points[0]![1];
   if (x >= points[n - 1]![0]) return points[n - 1]![1];
@@ -104,6 +106,7 @@ export function lookupTable(points: ReadonlyArray<readonly [number, number]>, x:
     else hi = mid;
   }
   const [x0, y0] = points[lo]!;
+  if (hold) return y0;
   const [x1, y1] = points[hi]!;
   const f = (x - x0) / (x1 - x0);
   return y0 + f * (y1 - y0);

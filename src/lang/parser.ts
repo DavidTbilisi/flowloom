@@ -75,6 +75,7 @@ const RE = {
   rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*(?:\[\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\])?\s*\)\s*=\s*(.+)$/,
   var: /^(flow|aux|param|const|switch)\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
   table: /^table\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
+  data: /^data\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
   scenario: /^scenario\s+([A-Za-z_]\w*)\s*:?\s*(.*)$/,
   link: /^link\s+([A-Za-z_]\w*)\s*(?:->|→)\s*([A-Za-z_]\w*)\s*([+-]|\+|−)?\s*$/,
   expect: /^expect\s+(.+)$/,
@@ -297,6 +298,24 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
       if (m.links.some((l) => l.from === from && l.to === to)) push(m, "error", loc, `link ${from} -> ${to} is declared twice`);
       if (RESERVED.has(from!) || RESERVED.has(to!)) push(m, "error", loc, `a link can't use the reserved name '${RESERVED.has(from!) ? from : to}'`);
       m.links.push({ from: from!, to: to!, sign, doc, loc });
+    } else if ((mt = line.match(RE.data))) {
+      // A measured series: desugars to an internal step-hold table on the clock
+      // plus an ordinary aux that reads it, so every consumer (plots, diff,
+      // expect, units, loops) sees a plain named series.
+      const [, name, unit, body] = mt;
+      claim(m, name!, loc);
+      let pts = body!;
+      let hold = true;
+      const mode = pts.match(/\b(linear|hold)\s*$/);
+      if (mode) { hold = mode[1] === "hold"; pts = pts.slice(0, mode.index); }
+      const tname = `${name}#data`;
+      const table = parseTable(name!, pts, loc);
+      table.name = tname;
+      if (hold) table.hold = true;
+      m.tables.set(tname, table);
+      const v: VarDecl = { name: name!, kind: "aux", expr: { kind: "call", name: tname, args: [{ kind: "ident", name: "t", loc }], loc }, unit: unit?.trim(), data: true, doc, loc };
+      m.vars.push(v);
+      m.varIndex.set(name!, v);
     } else if ((mt = line.match(RE.expect))) {
       parseExpect(m, mt[1]!, doc, loc);
     } else if ((mt = line.match(RE.table))) {
@@ -479,7 +498,7 @@ const BUILTIN_CONSTS = new Set(["PI", "E"]);
  *  right shape. Checked at parse time so a typo in a scenario is a located error
  *  in the editor, not a surprise when the scenario is finally selected. */
 /** Metric ops resolveMetric() understands, plus the loop-census pseudo-metrics. */
-export const METRIC_OPS = ["final", "max", "min", "mean", "at", "time-to-peak", "settle-time"] as const;
+export const METRIC_OPS = ["final", "max", "min", "mean", "at", "time-to-peak", "settle-time", "rmse"] as const;
 export const LOOP_METRICS = ["active", "total", "reinforcing", "balancing", "inactive", "rank"] as const;
 const EXPECT_OPS = new Set(["<", "<=", ">", ">=", "=="]);
 
@@ -530,12 +549,14 @@ function validateExpects(m: Raw): void {
       push(m, "error", e.loc, `expect: unknown metric '${op}:'${hint ? ` — did you mean '${hint}:'?` : ""} (${METRIC_OPS.join("|")}|loops)`);
       continue;
     }
-    if (op === "at" ? parts.length !== 3 || !Number.isFinite(Number(parts[1])) : parts.length !== 2) { push(m, "error", e.loc, `expect: metric '${e.metric}' is malformed — ${op === "at" ? "at:<time>:<series>" : `${op}:<series>`}`); continue; }
-    const series = parts[parts.length - 1]!;
-    const base = series.split(/[[.]/)[0]!;
-    if (!seriesNames.includes(base)) {
-      const hint = suggestName(base, seriesNames);
-      push(m, "error", e.loc, `expect: no stock, flow or aux named '${base}'${hint ? ` — did you mean '${hint}'?` : ""}${m.varIndex.get(base)?.kind === "param" ? " (a param is not a series — expect reads outputs)" : ""}`);
+    const shape = op === "at" ? (parts.length === 3 && Number.isFinite(Number(parts[1]))) : op === "rmse" ? parts.length === 3 : parts.length === 2;
+    if (!shape) { push(m, "error", e.loc, `expect: metric '${e.metric}' is malformed — ${op === "at" ? "at:<time>:<series>" : op === "rmse" ? "rmse:<series>:<series>" : `${op}:<series>`}`); continue; }
+    for (const series of op === "rmse" ? parts.slice(1) : [parts[parts.length - 1]!]) {
+      const base = series.split(/[[.]/)[0]!;
+      if (!seriesNames.includes(base)) {
+        const hint = suggestName(base, seriesNames);
+        push(m, "error", e.loc, `expect: no stock, flow or aux named '${base}'${hint ? ` — did you mean '${hint}'?` : ""}${m.varIndex.get(base)?.kind === "param" ? " (a param is not a series — expect reads outputs)" : ""}`);
+      }
     }
   }
 }

@@ -42,6 +42,8 @@ import {
   solveParam,
   monteCarlo,
   parseDataset,
+  dataLines,
+  datasetFromModel,
   calibrate,
   REFERENCE,
   type SimResult,
@@ -82,6 +84,10 @@ interface Args {
   cost: string[]; // --cost a=2,b=1 for policies
   all: boolean; // --all: loops — list the inactive ones too
   basis: boolean; // --basis: loops — only the shortest independent loop set
+  columns: string[]; // --column a,b for data
+  timeColumn?: string; // --time COL for data
+  unit?: string; // --unit U for data
+  linear: boolean; // --linear for data
   rows: number; // sampled rows for the table view
   chart: boolean; // render sparklines after the table
   params: string[]; // --param: a knob (sweep/solve) or a list (sensitivity)
@@ -100,7 +106,7 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", noLoops: false, basis: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", noLoops: false, basis: false, columns: [], linear: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -112,6 +118,10 @@ function parseArgs(argv: string[]): Args {
       case "--all": a.all = true; break;
       case "--no-loops": a.noLoops = true; break;
       case "--basis": case "--sils": case "--independent": a.basis = true; break;
+      case "--column": a.columns.push(...splitList(need(argv, ++i, arg))); break;
+      case "--time": a.timeColumn = need(argv, ++i, arg); break;
+      case "--unit": a.unit = need(argv, ++i, arg); break;
+      case "--linear": a.linear = true; break;
       case "--plot": a.plot.push(...splitList(need(argv, ++i, arg))); break;
       case "-s":
       case "--set": a.sets.push(need(argv, ++i, arg)); break;
@@ -736,13 +746,6 @@ function renderCalibrate(r: CalibrateResult): string {
 async function cmdCalibrate(args: Args): Promise<void> {
   const model = load(args);
   if (!args.params.length) die("calibrate needs --param NAME[,NAME] (the knobs to fit)");
-  if (!args.data) die("calibrate needs --data FILE.csv (observed series to fit against)");
-  let text: string;
-  try {
-    text = readFileSync(args.data, "utf8");
-  } catch (e) {
-    die(`cannot read ${args.data}: ${(e as Error).message}`);
-  }
   const map: Record<string, string> = {};
   for (const spec of args.against) {
     const [series, col] = spec.split("=");
@@ -751,12 +754,33 @@ async function cmdCalibrate(args: Args): Promise<void> {
   }
   let r: CalibrateResult;
   try {
-    const dataset = parseDataset(text!);
+    let dataset;
+    if (args.data) {
+      let text: string;
+      try { text = readFileSync(args.data, "utf8"); } catch (e) { die(`cannot read ${args.data}: ${(e as Error).message}`); }
+      dataset = parseDataset(text!);
+    } else {
+      // No file: fit against the model's own `data` lines — --against names which.
+      if (!model.vars.some((v) => v.data)) die("calibrate needs --data FILE.csv, or `data` lines in the model to fit against (with --against Series=dataName)");
+      if (!Object.keys(map).length) die("calibrating against the model's own data lines needs --against Series=dataName (e.g. --against N=obs)");
+      dataset = datasetFromModel(model, Object.values(map));
+    }
     r = await calibrate(model, { params: args.params, dataset, ...(Object.keys(map).length ? { map } : {}) });
   } catch (e) {
     die((e as Error).message);
   }
   out(args.format === "json" ? JSON.stringify(r, null, 2) : renderCalibrate(r));
+}
+
+function cmdData(args: Args): void {
+  if (!args.file) die("data needs a CSV/TSV file: flowloom data obs.csv [--column a,b] [--time t] [--unit U] [--linear]");
+  let text: string;
+  try { text = args.file === "-" ? readFileSync(0, "utf8") : readFileSync(args.file, "utf8"); } catch (e) { die(`cannot read ${args.file}: ${(e as Error).message}`); }
+  try {
+    const ds = parseDataset(text!, args.timeColumn ? { timeColumn: args.timeColumn } : {});
+    const lines = dataLines(ds, { columns: args.columns, ...(args.unit ? { unit: args.unit } : {}), linear: args.linear });
+    out(args.format === "json" ? JSON.stringify(lines, null, 2) : lines.join("\n"));
+  } catch (e) { die((e as Error).message); }
 }
 
 function cmdReference(args: Args): void {
@@ -881,6 +905,9 @@ usage:
   flowloom solve    <model.flow> --param P --metric SPEC --target N [--bracket A..B] [--json]
   flowloom montecarlo <model.flow> [--runs N] [--seed N] [--plot a,b] [--json]
   flowloom calibrate <model.flow> --param a,b --data obs.csv [--against S=col] [--json]
+                                             or, with no --data, against the model's own 'data' lines: --against S=dataName
+  flowloom data     <obs.csv> [--column a,b] [--time COL] [--unit U] [--linear]
+                                             print the CSV as 'data NAME = (t, v) …' lines to paste into a model
   flowloom scenarios <model.flow> [--json]   list the model's scenario lines
   flowloom compare  <model.flow> --metric SPEC[,SPEC] [--scenario a,b] [--json]
                                              base vs each scenario, one row per scenario
@@ -933,6 +960,7 @@ examples:
   flowloom policies budget.flow --metric min:Cash --target 0 --cost separate=2
   flowloom leverage budget.flow --metric min:Cash
   flowloom test budget.flow
+  flowloom data observed.csv --column income --unit GEL >> budget.flow
   flowloom diff budget-before.flow budget.flow
   cat model.flow | flowloom loops -`;
 
@@ -961,6 +989,7 @@ async function main(): Promise<void> {
     case "policies": await cmdPolicies(args); break;
     case "leverage": await cmdLeverage(args); break;
     case "test": await cmdTest(args); break;
+    case "data": cmdData(args); break;
     case "diff": await cmdDiff(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");

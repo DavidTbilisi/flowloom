@@ -35,6 +35,7 @@ animation are all derived from it. Read and edit a model entirely as text.
   scenario NAME key=value key=value …   a named override set kept in the text: params, switches (on/off), stock inits, dt/to/start/seed/method
   link A -> B +|-                       a declared signed influence (+ with, - against): a causal-loop sketch before equations; links alone draw and have R/B loops but do not run
   expect [SCENARIO] METRIC OP VALUE [± TOL[%]]   a claim the model must keep satisfying (its own test): expect final:Cash > 0 · expect recovery final:netWorth == 493370 ± 1% · expect loops:active == 9
+  data NAME [unit] = (t, v) (t, v) … [linear]    a measured time series read off the clock (an exogenous input); held between samples unless linear. Plot it, use it in equations, fit against it (calibrate --against Series=NAME), score it (rmse:Series:NAME)
   dim NAME = A, B, C                     a subscript dimension (array index) of named elements
   stock NAME[dim] = EXPR                 an array: one stock per element; refer to NAME[dim] / NAME[A]; sum(NAME) collapses it
   sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4 | map); add timeunit=month for units, seed=N for random*()
@@ -163,7 +164,8 @@ ${example!.source.replace(/\s*$/, "")}
   flowloom check model.flow                        parse + lint; non-zero exit on parse error
   flowloom lint model.flow [--json]                non-fatal warnings (unused params, dead vars, units, bad τ)
   flowloom montecarlo model.flow --runs N          percentile bands across N seeded runs
-  flowloom calibrate model.flow --param a,b --data obs.csv   fit params to observed data
+  flowloom calibrate model.flow --param a,b --data obs.csv   fit params to observed data (omit --data to fit the model's own data lines: --against S=dataName)
+  flowloom data obs.csv [--column a,b] [--unit U]  print a CSV as data lines to paste into a model
   flowloom scenarios model.flow                     list the model's scenario lines
   flowloom compare model.flow --metric a,b [--scenario x,y]   base vs each scenario: one row per scenario, with deltas
   flowloom policies model.flow --metric SPEC [--switch a,b] [--target N] [--cost a=2]   every combination of the switches still off: best, cheapest-to-target, Shapley share per switch
@@ -177,7 +179,8 @@ Prefer \`summary\` over \`run\` when you only need to know *what the model did*
 (did it grow, settle, oscillate, overshoot?) — it returns a few labelled numbers
 per series instead of the full time series. A metric SPEC reduces a run to one
 number — "<op>:<series>" with op = final|max|min|mean|time-to-peak|settle-time,
-or "at:<t>:<series>" (e.g. final:Cash, max:Infected, at:50:Inventory). \`sweep\`
+"at:<t>:<series>", or "rmse:<series>:<series>" (fit of a model series to a data
+series) (e.g. final:Cash, max:Infected, at:50:Inventory, rmse:N:obs). \`sweep\`
 turns one knob across a range; \`sensitivity\` bumps every param ±frac and ranks
 them (\`--method morris\` or \`sobol\` for global, variance-based ranking instead of
 the local one-factor tornado); \`solve\` inverts the model — it finds the knob value that drives the metric
