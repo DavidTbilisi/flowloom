@@ -72,6 +72,16 @@ describe("loop dominance by knockout", () => {
     expect(d.inactive).toBe(0);
   });
 
+  it("never cuts a transfer flow's link into a stock while another link is available", async () => {
+    // Cash → investing → Cash: investing leaves Cash and enters Assets. Cutting
+    // investing → Cash would create money; the honest cut is Cash → investing.
+    const src = `stock Cash = 100\nstock Assets = 0\nparam r = 0.1\nflow investing = r * Cash\nflow earn = 0.05 * Assets\nd(Cash) = earn - investing\nd(Assets) = investing\nsim dt=1 to=10 method=euler`;
+    const d = await loopDominance(parseModel(src), "final:Cash");
+    const self = d.rows.find((r) => r.nodes.join(">") === "Cash>investing>Cash")!;
+    expect(self.cut).toEqual({ from: "Cash", to: "investing" });
+    expect(self.note).toBeUndefined();
+  });
+
   it("skips inactive loops and counts them", async () => {
     const src = `stock S = 1\nswitch brake = off\nflow g = 0.1 * S\nflow b = if(brake, 0.2 * S, 0)\nd(S) = g - b\nsim dt=1 to=10 method=euler`;
     const d = await loopDominance(parseModel(src), "final:S");

@@ -7,9 +7,15 @@
 // `sensitivity` ranks knobs. The cut is an AST edit on a clone (text stays
 // canonical), and the cut link is chosen to disturb as few other loops as
 // possible (the link shared by the fewest loops); `shared` says how many still
-// go through it, so a big Δ on a heavily shared link is read with care.
+// go through it, so a big Δ on a heavily shared link is read with care. One
+// kind of link is never cut while another is available: a *transfer* flow's
+// link into a stock (a flow that leaves one stock and enters another). Freezing
+// one side of a transfer breaks conservation — the model creates or destroys
+// stock — and the Δ measures that, not the loop. The sensing side of the loop
+// (the stock's link into the flow's equation) is the honest cut.
 
 import type { Expr, Model } from "../lang/types.js";
+import { freeVars as freeVarsOf } from "../lang/expr.js";
 import { analyzeLoops, operatingPoint, type Loop, type LoopReport, type Polarity } from "./loops.js";
 import { simulateAsync } from "./simulator.js";
 import { resolveMetric } from "./summarize.js";
@@ -87,6 +93,11 @@ export async function loopDominance(model: Model, metric: string, report?: LoopR
   const op = operatingPoint(model);
   const base = resolveMetric(await simulateAsync(structuredClone(model)), metric);
 
+  // Transfer flows: a var that appears in the rate of more than one stock.
+  const rateUses = new Map<string, number>();
+  for (const r of model.rates.values()) for (const n of new Set(freeVarsOf(r.expr))) rateUses.set(n, (rateUses.get(n) ?? 0) + 1);
+  const isTransferLink = (from: string, to: string) => model.rates.has(to) && (rateUses.get(from) ?? 0) >= 2;
+
   // how many *active* loops each link belongs to
   const linkCount = new Map<string, number>();
   for (const l of rep.loops) if (l.active) for (const e of l.edges) { const k = `${e.from}|${e.to}`; linkCount.set(k, (linkCount.get(k) ?? 0) + 1); }
@@ -99,8 +110,8 @@ export async function loopDominance(model: Model, metric: string, report?: LoopR
     if (!l.active) { inactive++; continue; }
     const candidates = l.edges
       .filter((e) => !e.declared && cuttable(model, e.from, e.to))
-      .map((e) => ({ e, shared: linkCount.get(`${e.from}|${e.to}`)! }))
-      .sort((a, b) => a.shared - b.shared);
+      .map((e) => ({ e, shared: linkCount.get(`${e.from}|${e.to}`)!, transfer: isTransferLink(e.from, e.to) }))
+      .sort((a, b) => Number(a.transfer) - Number(b.transfer) || a.shared - b.shared);
     const pick = candidates[0];
     if (!pick) { skipped.push({ loop: i + 1, nodes: l.nodes, reason: l.edges.every((e) => e.declared) ? "declared links only — no equation to cut" : "every link touches an internal delay node or is declared" }); continue; }
     const value0 = op[pick.e.from];
@@ -108,10 +119,11 @@ export async function loopDominance(model: Model, metric: string, report?: LoopR
     const res = await simulateAsync(cutLink(model, pick.e.from, pick.e.to, value0));
     const value = resolveMetric(res, metric);
     const runaway = !Number.isFinite(value) || Math.abs(value) > 1e6 * Math.max(1, Math.abs(base));
+    const note = [res.note, pick.transfer ? `cuts one side of the transfer flow ${pick.e.from} — breaks conservation; read with care` : undefined].filter(Boolean).join("; ");
     rows.push({
       loop: i + 1, polarity: l.polarity, nodes: l.nodes,
       cut: { from: pick.e.from, to: pick.e.to }, shared: pick.shared,
-      value, delta: value - base, ...(runaway ? { runaway: true as const } : {}), ...(res.note ? { note: res.note } : {}),
+      value, delta: value - base, ...(runaway ? { runaway: true as const } : {}), ...(note ? { note } : {}),
     });
   }
   rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
