@@ -8,7 +8,7 @@ import {
   renameSymbol, deleteSymbol, uniqueName, referencesTo, readLayout, setLayoutPos,
 } from "./model-build.js";
 import { parseModel, printExpr, type Model, type Expr } from "../lang/index.js";
-import { simulate, parseDataset, calibrate, RANDOM_FNS } from "../engine/index.js";
+import { simulate, parseDataset, calibrate, RANDOM_FNS, MEADOWS_RUNGS } from "../engine/index.js";
 import { draftFlow, getStoredKey, setStoredKey } from "./ai-draft.js";
 import { initTheme, applyTheme, currentTheme } from "./theme.js";
 
@@ -553,14 +553,17 @@ export function mountApp(root: HTMLElement): Store {
   let tuneDragging = false; // don't rebuild slider DOM mid-drag (would drop the grab)
   let tuneStart: string | null = null; // text snapshot at drag start, for one undo step
 
-  function numParams(): Array<{ name: string; value: number; sw: boolean }> {
+  function numParams(): Array<{ name: string; value: number; sw: boolean; rung?: number }> {
     const vars = store.run.ok ? store.run.model?.vars ?? [] : [];
     return vars
       // Skip subscripted params: v.expr is only the first element, and the slider
       // writes back via setParamValue, which would flatten the per-element list.
       // A `const` is a structural constant, not a knob — no slider.
       .filter((v) => v.kind === "param" && !v.dims && !v.constant && v.expr.kind === "num")
-      .map((v) => ({ name: v.name, value: (v.expr as Extract<Expr, { kind: "num" }>).value, sw: !!v.boolean }));
+      .map((v) => ({ name: v.name, value: (v.expr as Extract<Expr, { kind: "num" }>).value, sw: !!v.boolean, ...(v.rung !== undefined ? { rung: v.rung } : {}) }))
+      // Tagged knobs group on Meadows' ladder, strongest rung first; untagged last.
+      .sort((a, b) => (a.rung ?? 0) - (b.rung ?? 0) || 0)
+      .sort((a, b) => (b.rung === undefined ? -1 : b.rung) - (a.rung === undefined ? -1 : a.rung));
   }
 
   /** Where a knob edit lands: the active scenario's binding when it has one for
@@ -576,7 +579,7 @@ export function mountApp(root: HTMLElement): Store {
 
   function renderTune() {
     const params = numParams();
-    const sig = params.map((p) => p.name).join(",");
+    const sig = params.map((p) => `${p.name}@${p.rung ?? ""}`).join(",");
     if (sig === tuneSig) {
       // same params — just echo new values into the existing sliders (but never
       // fight the slider the user is actively dragging).
@@ -597,9 +600,15 @@ export function mountApp(root: HTMLElement): Store {
     tuneWrap.innerHTML =
       `<div class="tune-head"><span class="tune-title">Tune</span>` +
       `<span class="tune-hint">${escapeHtml(tuneHint())}</span></div>` +
-      params.map((p) => {
+      params.map((p, i) => {
+        // a rung header wherever the rung changes (only when the model tags any)
+        const anyRung = params.some((q) => q.rung !== undefined);
+        const prev = i ? params[i - 1]!.rung : undefined;
+        const header = anyRung && (i === 0 || p.rung !== prev)
+          ? `<div class="tune-rung">${p.rung !== undefined ? `${p.rung} · ${escapeHtml(MEADOWS_RUNGS[p.rung] ?? "")}` : "untagged"}</div>`
+          : "";
         if (p.sw) {
-          return (
+          return header + (
             `<label class="tune-row tune-switch">` +
             `<span class="tune-name">${escapeHtml(p.name)}</span>` +
             `<span class="tune-toggle"><input type="checkbox" data-tune="${escapeHtml(p.name)}" data-sw="1"${p.value ? " checked" : ""} /></span>` +
@@ -611,7 +620,7 @@ export function mountApp(root: HTMLElement): Store {
         const lo = p.value >= 0 ? 0 : p.value - mag;
         const hi = p.value >= 0 ? p.value + mag : 0;
         const step = (hi - lo) / 200 || 0.01;
-        return (
+        return header + (
           `<label class="tune-row">` +
           `<span class="tune-name">${escapeHtml(p.name)}</span>` +
           `<input type="range" data-tune="${escapeHtml(p.name)}" min="${lo}" max="${hi}" step="${step}" value="${p.value}" />` +

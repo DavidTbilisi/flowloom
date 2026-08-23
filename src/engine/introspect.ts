@@ -14,10 +14,10 @@ import { analyzeLoops } from "./loops.js";
 export interface ModelDescription {
   stocks: Array<{ name: string; init: string; unit?: string; doc?: string }>;
   rates: Array<{ stock: string; expr: string }>;
-  vars: Array<{ name: string; kind: VarKind; expr: string; unit?: string; doc?: string; switch?: true; constant?: true; deps: string[] }>;
+  vars: Array<{ name: string; kind: VarKind; expr: string; unit?: string; doc?: string; switch?: true; constant?: true; rung?: number; deps: string[] }>;
   tables: Array<{ name: string; points: Array<[number, number]> }>;
   /** Named override sets declared in the text (`scenario` lines). */
-  scenarios: Array<{ name: string; sets: Array<{ key: string; value: string }>; doc?: string }>;
+  scenarios: Array<{ name: string; sets: Array<{ key: string; value: string }>; doc?: string; rung?: number }>;
   settings: Model["settings"];
   plot: string[];
   loops: {
@@ -66,6 +66,7 @@ export function describeModel(model: Model): ModelDescription {
       ...(v.doc ? { doc: v.doc } : {}),
       ...(v.boolean ? { switch: true as const } : {}),
       ...(v.constant ? { constant: true as const } : {}),
+      ...(v.rung !== undefined ? { rung: v.rung } : {}),
       deps: allDeps(v.expr, v.elemExprs),
     })),
     tables: [...model.tables.values()].map((t) => ({ name: t.name, points: t.points })),
@@ -73,6 +74,7 @@ export function describeModel(model: Model): ModelDescription {
       name: s.name,
       sets: s.sets.map(({ key, value }) => ({ key, value })),
       ...(s.doc ? { doc: s.doc } : {}),
+      ...(s.rung !== undefined ? { rung: s.rung } : {}),
     })),
     settings: model.settings,
     plot: model.plot,

@@ -23,6 +23,7 @@ import {
   compareScenarios,
   searchPolicies,
   loopDominance,
+  leverageLadder,
   describeModel,
   explainModel,
   summarizeRun,
@@ -221,6 +222,12 @@ export const handlers = {
     return text(combos.length <= 64 ? r : { ...rest, top: combos.slice(0, 10), combosOmitted: combos.length - 10 });
   },
 
+  async flow_leverage({ model, metric, frac, set, scenario }: { model: string; metric: string; frac?: number; set?: string[]; scenario?: string }): Promise<ToolResult> {
+    const r = await leverageLadder(loadModel(model, set, scenario), metric, frac ?? 0.1);
+    if (!r.rungs.some((g) => g.levers.length)) throw new Error("nothing is tagged — add `# @rung N` (12 = constants … 1 = transcending paradigms) to a param, switch, or scenario's doc comment");
+    return text({ ...r, rungs: r.rungs.filter((g) => g.levers.length) });
+  },
+
   flow_examples({ name }: { name?: string }): ToolResult {
     if (!name) return text(EXAMPLES.map((e) => ({ name: e.name, blurb: e.blurb })));
     const ex = EXAMPLES.find((e) => e.name.toLowerCase() === name.toLowerCase());
@@ -290,7 +297,7 @@ The authoring loop:
 2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
 3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops read along the run; with a metric, ranked by knockout) — to understand an existing model before changing it.
 
-Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
+Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
 
 Discrete-period models (monthly, yearly): use 'sim method=euler dt=1', previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
@@ -507,6 +514,22 @@ export function buildServer(): McpServer {
       },
     },
     guard(handlers.flow_policies),
+  );
+
+  server.registerTool(
+    "flow_leverage",
+    {
+      title: "Leverage ladder",
+      description: "Lay the model's levers out on Donella Meadows' twelve leverage points (12 = constants … 1 = transcending paradigms) using the `# @rung N` tags on params, switches and scenarios, and measure each on a metric (params ±frac with grain awareness, switches off→on, scenarios vs base). Returns the occupied rungs, each rung's best lever, the model's own rung ranking, and the untagged levers.",
+      inputSchema: {
+        model: modelArg,
+        metric: metricArg,
+        frac: z.number().optional().describe("± fraction for param bumps (default 0.1)."),
+        set: setArg,
+        scenario: scenarioArg,
+      },
+    },
+    guard(handlers.flow_leverage),
   );
 
   server.registerTool(

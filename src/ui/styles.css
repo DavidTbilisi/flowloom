@@ -224,6 +224,7 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .tune-row input[type=range] { width: 100%; accent-color: var(--accent); cursor: grab; }
 .tune-row input[type=range]:active { cursor: grabbing; }
 .tune-row .tune-val { font: 12px var(--mono); color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+.tune-rung { margin: 8px 0 2px; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--dim); }
 .tune-row.tune-switch { cursor: pointer; }
 .tune-row .tune-toggle { display: flex; align-items: center; }
 .tune-row .tune-toggle input[type=checkbox] { width: 34px; height: 18px; accent-color: var(--accent); cursor: pointer; margin: 0; }

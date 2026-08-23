@@ -90,6 +90,8 @@ export interface VarDecl {
    *  conversion), not a knob. Still `kind: "param"`, but sensitivity, sliders
    *  and calibration leave it alone unless it is named explicitly. */
   constant?: true;
+  /** Meadows leverage-point rung (12 … 1) from a `@rung N` tag in the doc comment. */
+  rung?: number;
   doc?: string;
   loc: Loc;
 }
@@ -109,6 +111,8 @@ export interface ScenarioSet {
 export interface ScenarioDecl {
   name: string;
   sets: ScenarioSet[];
+  /** Meadows leverage-point rung (12 … 1) from a `@rung N` tag in the doc comment. */
+  rung?: number;
   doc?: string;
   loc: Loc;
 }

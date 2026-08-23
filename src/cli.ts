@@ -28,6 +28,7 @@ import {
   compareScenarios,
   searchPolicies,
   loopDominance,
+  leverageLadder,
   describeModel,
   explainModel,
   summarizeRun,
@@ -55,6 +56,7 @@ import {
   type PolicyResult,
   type Loop,
   type DominanceResult,
+  type LeverageResult,
 } from "./engine/index.js";
 
 const VERSION = "0.1.0";
@@ -531,6 +533,32 @@ function renderCompare(r: CompareResult): string {
   return [head, ...lines].join("\n");
 }
 
+function renderLeverage(r: LeverageResult): string {
+  const lines = [`leverage ladder on ${r.metric} (base ${fmt(r.base)}) — Meadows' twelve, with this model's levers where it tags them (# @rung N)`];
+  const maxAbs = Math.max(...r.rungs.filter((g) => g.best).map((g) => Math.abs(g.best!.delta))) || 1;
+  for (const g of r.rungs) {
+    const head = `  ${String(g.rung).padStart(2)}  ${g.title.padEnd(30)}`;
+    if (!g.best) { lines.push(`${head}  —`); continue; }
+    g.levers.forEach((l, i) => {
+      const bar = "█".repeat(Math.round((Math.abs(l.delta) / maxAbs) * 16)) || "·";
+      const tag = l.kind === "param" ? "" : ` (${l.kind})`;
+      lines.push(`${i === 0 ? head : " ".repeat(head.length)}  ${(l.delta >= 0 ? "+" : "") + fmt(l.delta)}`.padEnd(head.length + 16) + `  ${bar.padEnd(16)}  ${l.name}${tag}  ${l.detail}`);
+    });
+  }
+  if (r.ranking.length) lines.push("", `  by this model: rung ${r.ranking.join(" > ")}   (Meadows: 1 > 2 > … > 12)`);
+  if (r.untagged.length) lines.push(`  untagged: ${r.untagged.map((u) => `${u.name}${u.kind === "param" ? "" : ` (${u.kind})`}`).join(", ")} — add \`# @rung N\` to place them`);
+  return lines.join("\n");
+}
+
+async function cmdLeverage(args: Args): Promise<void> {
+  const model = load(args);
+  if (!args.metric) die("leverage needs --metric SPEC (e.g. min:Cash)");
+  let r: LeverageResult;
+  try { r = await leverageLadder(model, args.metric, args.frac); } catch (e) { die((e as Error).message); }
+  if (!r.rungs.some((g) => g.levers.length)) die("nothing is tagged — add `# @rung N` (12 = constants … 1 = transcending paradigms) to a param, switch, or scenario's doc comment");
+  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderLeverage(r));
+}
+
 async function cmdCompare(args: Args): Promise<void> {
   const model = load(args);
   if (!args.metric) die("compare needs --metric SPEC[,SPEC…] (e.g. final:Cash,min:Cash)");
@@ -754,6 +782,9 @@ usage:
   flowloom scenarios <model.flow> [--json]   list the model's scenario lines
   flowloom compare  <model.flow> --metric SPEC[,SPEC] [--scenario a,b] [--json]
                                              base vs each scenario, one row per scenario
+  flowloom leverage <model.flow> --metric SPEC [--json]
+                                             the model's levers on Meadows' ladder (params, switches,
+                                             scenarios tagged '# @rung N'), each measured on the metric
   flowloom policies <model.flow> --metric SPEC [--switch a,b] [--goal max|min] [--target N] [--cost a=2,b=1] [--json]
                                              every combination of the switches still off (the available moves):
                                              best, cheapest-to-target, Shapley share per switch
@@ -793,6 +824,7 @@ examples:
   flowloom run budget.flow --scenario recovery --plot Cash
   flowloom compare budget.flow --metric final:Cash,min:Cash
   flowloom policies budget.flow --metric min:Cash --target 0 --cost separate=2
+  flowloom leverage budget.flow --metric min:Cash
   cat model.flow | flowloom loops -`;
 
 async function main(): Promise<void> {
@@ -816,6 +848,7 @@ async function main(): Promise<void> {
     case "scenarios": cmdScenarios(args); break;
     case "compare": await cmdCompare(args); break;
     case "policies": await cmdPolicies(args); break;
+    case "leverage": await cmdLeverage(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");
     default: die(`unknown command "${args.cmd}" — try `+"`flowloom --help`");

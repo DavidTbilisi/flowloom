@@ -22,39 +22,39 @@ param growth                  = 0.02     # annual raise, compounded monthly
 param needsItems  [GEL/month] = 3492     # the line items that always bite
 param needsCap    [GEL/month] = 4000     # the Needs ceiling; headroom = cap - items
 param capFill                 = 0.5      # how much of the headroom gets spent anyway
-param wants       [GEL/month] = 1805     # the Wants level at t=0, and what the review pulls toward
-param savingsLine [GEL/month] = 1600     # the Safe transfer when separate is on
-param delay       [month]     = 2        # statement lag: the review reads Cash this many months old (0 = live balance)
-param creepRate               = 0.03     # Wants drift toward creepCap×income at this fraction of the gap per month …
+param wants       [GEL/month] = 1805     # @rung 12 the Wants level at t=0, and what the review pulls toward
+param savingsLine [GEL/month] = 1600     # @rung 10 the Safe transfer when separate is on
+param delay       [month]     = 2        # @rung 9 statement lag: the review reads Cash this many months old (0 = live balance)
+param creepRate               = 0.03     # @rung 6 Wants drift toward creepCap×income at this fraction of the gap per month …
 param creepCap                = 0.45     # … but only while the felt balance is above the cushion
-param cushion     [GEL]       = 2500
-param impulseScale            = 1        # scales the impulse buys (450 / 300 / 180)
-param k                       = 0.1      # review-loop gain
-param target      [GEL]       = 8000     # the reserve the review loop wants to see
-param debtRate                = 0.025    # monthly card interest below zero
-param depRate                 = 0.005    # monthly deposit interest above zero
+param cushion     [GEL]       = 2500    # @rung 6
+param impulseScale            = 1        # @rung 6 scales the impulse buys (450 / 300 / 180)
+param k                       = 0.1      # @rung 8 review-loop gain
+param target      [GEL]       = 8000     # @rung 3 the reserve the review loop wants to see
+param debtRate                = 0.025    # @rung 7 monthly card interest below zero
+param depRate                 = 0.005    # @rung 7 monthly deposit interest above zero
 param cash0       [GEL]       = 1500     # Cash at t=0
-param bufferMonths            = 3        # bufferFirst: no vacation until Cash ≥ bufferMonths × needsCap
-param plateFloor              = 0.85     # separate: Wants can't be squeezed below this share of (wants + impulse)
-param sideAmount  [GEL/month] = 600      # sideIncome: the second Door, ramping up from sideStart …
-param sideRamp    [GEL/month] = 50       # … by this much per month
-param sideStart   [month]     = 10
+param bufferMonths            = 3        # @rung 11 bufferFirst: no vacation until Cash ≥ bufferMonths × needsCap
+param plateFloor              = 0.85     # @rung 10 separate: Wants can't be squeezed below this share of (wants + impulse)
+param sideAmount  [GEL/month] = 600      # @rung 4 sideIncome: the second Door, ramping up from sideStart …
+param sideRamp    [GEL/month] = 50       # @rung 4 … by this much per month
+param sideStart   [month]     = 10    # @rung 4
 const yearLen     [month]     = 12       # the calendar, not a knob
 param vacationCost [GEL]      = 4500     # once a year, month 11 of each year
 param shockScale              = 1        # scales the spend shocks (car 1400 · fridge 900 · dentist 600)
-param enough      [GEL/month] = 1500     # enoughOn: Wants pinned here, creep and review switched off
+param enough      [GEL/month] = 1500     # @rung 2 enoughOn: Wants pinned here, creep and review switched off
 
 # ── policy switches (one per rung that is a yes/no move) ───────────────────────
-switch separate     = off      # rung 10 — pay the Safe first at another bank; spend from what's left
-switch rule48       = off      # rung 5  — 48-hour rule: an impulse over 200 shrinks to 30 %
-switch ruleCarry    = off      # rung 5  — last month's overrun comes off this month's Wants
-switch sideIncome   = off      # rung 4  — a second Door / the career ladder
-switch bufferFirst  = off      # rung 11 — keep the headroom; vacation waits for the buffer
+switch separate     = off      # @rung 10 rung 10 — pay the Safe first at another bank; spend from what's left
+switch rule48       = off      # @rung 5 rung 5  — 48-hour rule: an impulse over 200 shrinks to 30 %
+switch ruleCarry    = off      # @rung 5 rung 5  — last month's overrun comes off this month's Wants
+switch sideIncome   = off      # @rung 4 rung 4  — a second Door / the career ladder
+switch bufferFirst  = off      # @rung 11 rung 11 — keep the headroom; vacation waits for the buffer
 switch vacation     = on       # the annual 4,500 trip happens at all
-switch vacationWaits = off     # rung 3  — vacation waits until Cash ≥ target
+switch vacationWaits = off     # @rung 3 rung 3  — vacation waits until Cash ≥ target
 switch gapOn        = on       # the two-month income gap (months 16–17) happens
 switch recovery     = off      # income follows the recovery plan instead of income×growth
-switch enoughOn     = off      # rung 2  — "enough": Wants pinned at enough
+switch enoughOn     = off      # @rung 2 rung 2  — "enough": Wants pinned at enough
 
 # ── stocks ─────────────────────────────────────────────────────────────────────
 stock Cash         [GEL]       = cash0
@@ -128,17 +128,17 @@ change(Earned)       = max(0, interest)
 change(Vacations)    = if(tripNow, 1, 0)
 
 # ── the twelve, one move each (rung 1, hold it loosely, changes nothing) ───────
-scenario rung12_trim      wants=1705                         # a number: the cafe line
-scenario rung11_buffer    bufferFirst=on                     # keep the 508 headroom
-scenario rung10_separate  separate=on                        # pay the Safe first (Profit First)
-scenario rung9_live       delay=0                            # read the live balance, not the statement
-scenario rung8_review     k=0.5                              # a stronger review loop
-scenario rung7_rates      debtRate=0.008 depRate=0.009       # cheaper card, better deposit
-scenario rung6_fridge     creepRate=0.004 impulseScale=0.5   # category totals on the fridge
-scenario rung5_rules      rule48=on ruleCarry=on             # two house rules
-scenario rung4_door       sideIncome=on                      # a second Door
-scenario rung3_goal       target=48000 vacationWaits=on      # the runway goal; vacations wait
-scenario rung2_enough     enoughOn=on impulseScale=0.5       # "enough"
+scenario rung12_trim      wants=1705                         # @rung 12 a number: the cafe line
+scenario rung11_buffer    bufferFirst=on                     # @rung 11 keep the 508 headroom
+scenario rung10_separate  separate=on                        # @rung 10 pay the Safe first (Profit First)
+scenario rung9_live       delay=0                            # @rung 9 read the live balance, not the statement
+scenario rung8_review     k=0.5                              # @rung 8 a stronger review loop
+scenario rung7_rates      debtRate=0.008 depRate=0.009       # @rung 7 cheaper card, better deposit
+scenario rung6_fridge     creepRate=0.004 impulseScale=0.5   # @rung 6 category totals on the fridge
+scenario rung5_rules      rule48=on ruleCarry=on             # @rung 5 two house rules
+scenario rung4_door       sideIncome=on                      # @rung 4 a second Door
+scenario rung3_goal       target=48000 vacationWaits=on      # @rung 3 the runway goal; vacations wait
+scenario rung2_enough     enoughOn=on impulseScale=0.5       # @rung 2 "enough"
 
 # ── the households from the page ───────────────────────────────────────────────
 scenario measured  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 creepCap=0.40 bufferFirst=on bufferMonths=4 target=16000

@@ -130,6 +130,10 @@ change() rate; everything else is recomputed every step.
   row says "(±1)". A knob whose bump changes nothing is marked flat — often a
   threshold not crossed; sweep it over a wider range. Declare calendar lengths
   and conversions with `const` so they are not ranked as knobs at all.
+- Tag a param/switch/scenario with its Meadows leverage-point rung in the doc
+  comment — `param wants = 1805  # @rung 12 the cafe line` (12 = constants …
+  1 = transcending paradigms) — and `leverage` lays the levers out on the
+  ladder, each measured on a metric; untagged levers are listed, never guessed.
 - A scenario is a named set of overrides *in the text*: `scenario recovery
   raise=on income=9000 Cash=5000`. Run it with --scenario NAME (CLI/MCP) or the
   studio's Scenario picker; `compare` runs base + every scenario and tabulates
@@ -183,6 +187,7 @@ plot Population
   flowloom scenarios model.flow                     list the model's scenario lines
   flowloom compare model.flow --metric a,b [--scenario x,y]   base vs each scenario: one row per scenario, with deltas
   flowloom policies model.flow --metric SPEC [--switch a,b] [--target N] [--cost a=2]   every combination of the switches still off: best, cheapest-to-target, Shapley share per switch
+  flowloom leverage model.flow --metric SPEC       the model's levers on Meadows' twelve leverage points (tag with "# @rung N" in a doc comment), each measured
   flowloom reference --json                         this catalog as JSON
   (any command takes --scenario NAME to run a scenario line, and --set k=v on top)
 
@@ -212,6 +217,6 @@ rate, and non-positive smooth/delay time constants — none of which stop a run.
 
 MCP: the `flowloom-mcp` server exposes the same engine as tools — flow_run,
 flow_summary, flow_sweep, flow_sensitivity, flow_solve, flow_montecarlo,
-flow_calibrate, flow_compare, flow_policies, flow_check, flow_lint, flow_loops, flow_describe,
+flow_calibrate, flow_compare, flow_policies, flow_leverage, flow_check, flow_lint, flow_loops, flow_describe,
 flow_explain, flow_examples — plus a flow://reference resource carrying this
 guide. Each tool takes the model as text, plus optional set/scenario what-ifs.

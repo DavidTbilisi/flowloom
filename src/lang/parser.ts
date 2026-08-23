@@ -188,6 +188,22 @@ function extractDoc(raw: string): string | undefined {
   return m ? m[1] : undefined;
 }
 
+/** Pull a `@rung N` tag (Meadows' twelve leverage points, 12 = constants … 1 =
+ *  transcending paradigms) out of a doc string. Returns the rung and the doc
+ *  with the tag removed. */
+function extractRung(doc: string | undefined, m: Raw, loc: Loc): { doc: string | undefined; rung?: number } {
+  if (!doc) return { doc };
+  const mt = doc.match(/(?:^|\s)@rung\s+(\d+)\b/);
+  if (!mt) return { doc };
+  const rung = Number(mt[1]);
+  const rest = doc.replace(mt[0], " ").replace(/\s+/g, " ").trim();
+  if (rung < 1 || rung > 12) {
+    push(m, "warning", loc, `@rung ${rung} — Meadows' ladder runs 12 (constants) down to 1 (transcending paradigms); the tag is ignored`);
+    return { doc: rest || undefined };
+  }
+  return { doc: rest || undefined, rung };
+}
+
 function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number): void {
   if (!line) return;
   const loc: Loc = { line: lineNo, col: 0 };
@@ -226,15 +242,19 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
           push(m, "error", loc, `switch ${name} must be on or off (1 or 0), got '${raw}'`);
         }
         if (unit && unit.trim()) push(m, "error", loc, `switch ${name} can't carry a unit or subscript — it is a bare on/off toggle`);
-        const v: VarDecl = { name: name!, kind: "param", expr: ex, boolean: true, doc, loc };
+        const tag = extractRung(doc, m, loc);
+        const v: VarDecl = { name: name!, kind: "param", expr: ex, boolean: true, doc: tag.doc, loc };
+        if (tag.rung !== undefined) v.rung = tag.rung;
         m.vars.push(v);
         m.varIndex.set(name!, v);
         return;
       }
       const kind: VarKind = kw === "const" ? "param" : (kw as VarKind);
       const exprs = splitTopLevel(expr!).map((p) => parseExpr(p, lineNo));
-      const v: VarDecl = { name: name!, kind, expr: exprs[0]!, unit: unit?.trim(), doc, loc };
+      const tag = extractRung(doc, m, loc);
+      const v: VarDecl = { name: name!, kind, expr: exprs[0]!, unit: unit?.trim(), doc: tag.doc, loc };
       if (kw === "const") v.constant = true;
+      if (tag.rung !== undefined) v.rung = tag.rung;
       if (exprs.length > 1) v.elemExprs = exprs;
       m.vars.push(v);
       m.varIndex.set(name!, v);
@@ -252,7 +272,10 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
         sets.push({ key: tok.slice(0, eq), value: tok.slice(eq + 1) });
       }
       if (!sets.length) push(m, "error", loc, `scenario ${name} needs at least one key=value (a param, switch, stock init, or ${SETTING_KEYS.join("/")})`);
-      m.scenarios.set(name!, { name: name!, sets, doc, loc });
+      const tag = extractRung(doc, m, loc);
+      const sc: ScenarioDecl = { name: name!, sets, doc: tag.doc, loc };
+      if (tag.rung !== undefined) sc.rung = tag.rung;
+      m.scenarios.set(name!, sc);
     } else if ((mt = line.match(RE.table))) {
       const [, name, body] = mt;
       claim(m, name!, loc);

@@ -38,6 +38,12 @@ export function renderHelp(): string {
     These expand into internal stocks, so they integrate correctly under RK4 and participate in feedback loops.
   </div></details>
 
+  <details><summary>The leverage ladder (<code># @rung N</code>)</summary><div class="body">
+    Tag a <code>param</code>, <code>switch</code> or <code>scenario</code> with its Meadows leverage-point rung in the doc comment —
+    <code>param wants = 1805  # @rung 12 the cafe line</code> (12 = constants … 1 = transcending paradigms).
+    Tune groups tagged knobs under their rung; <code>flowloom leverage --metric …</code> measures every lever on the ladder.
+  </div></details>
+
   <details><summary>Discrete periods (months, years)</summary><div class="body">
     A budget or a census is a map on a grid, not an ODE: write <code>sim method=euler dt=1</code> so
     <code>stock(t+1) = stock(t) + change(t)</code> exactly, and test the clock with <code>t % 12 == 0</code>.<br/>

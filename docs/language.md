@@ -110,6 +110,27 @@ two-state knob needs different treatment everywhere a number gets bumped:
   are shared out fairly — beside its effect *alone* and its effect *last* (given
   every other move). Up to 12 switches (4,096 runs); MCP: `flow_policies`.
 
+#### The leverage ladder (`# @rung N`)
+
+Donella Meadows ranked twelve places to intervene in a system, from the weakest
+(12: the numbers) to the strongest (1: transcending paradigms). Tag a `param`,
+`switch` or `scenario` with the rung it sits on in its doc comment —
+
+```flow
+param wants = 1805          # @rung 12 the cafe line
+switch separate = off       # @rung 10 pay the Safe first
+scenario rung3_goal target=48000 vacationWaits=on   # @rung 3 the runway goal
+```
+
+— and `flowloom leverage model.flow --metric min:Cash` (MCP `flow_leverage`) lays
+the model's levers out on that ladder, measuring each on the metric: params by a
+grain-aware ±10 % bump, switches off→on, scenarios against base. It reports every
+rung's best lever, the model's own rung ranking next to Meadows', and the
+untagged levers (nothing is placed by guesswork). Read the ranking with the
+caveat it prints: a ±10 % bump on a big number is a large *move*, not a large
+*effort* — the comparison is of metric swings. The studio's Tune panel groups
+tagged knobs under their rung.
+
 #### Knobs on the time grid
 
 A knob whose value is read on the time grid — the length of a `delay_fixed`,
