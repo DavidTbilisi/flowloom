@@ -53,6 +53,16 @@ describe("polarity along the trajectory", () => {
     // a real self-dependence is kept
     const real = analyzeLoops(parseModel(`stock X = 1\nchange(X) = (X * 1.1 - X) / dt\nsim dt=1 to=5 method=euler`));
     expect(real.loops.map((l) => l.nodes.join(">"))).toEqual(["X>X"]);
+    // the idiom with a transfer term on the side — (next − X) / dt − out — is still the idiom
+    const out = analyzeLoops(parseModel(`stock X = 1\nstock Y = 0\naux next = 2 * X\nflow out = 0.1 * next\nchange(X) = (next - X) / dt - out\nchange(Y) = out\nsim dt=1 to=5 method=euler`));
+    expect(out.loops.map((l) => l.nodes.join(">")).sort()).toEqual(["X>next>X", "X>next>out>X"]); // no X>X
+  });
+
+  it("under method=map the bare A − X (− out) is the idiom; under euler it is goal-seeking", () => {
+    const map = `stock X = 1\nstock Y = 0\naux next = 2 * X\nflow out = 0.1 * next\nchange(X) = next - X - out\nchange(Y) = out\nsim dt=1 to=5 method=map`;
+    expect(analyzeLoops(parseModel(map)).loops.map((l) => l.nodes.join(">")).sort()).toEqual(["X>next>X", "X>next>out>X"]); // no X>X
+    const euler = `stock X = 1\nparam goal = 10\nchange(X) = goal - X\nsim dt=0.1 to=5 method=euler`;
+    expect(analyzeLoops(parseModel(euler)).loops.map((l) => `${l.polarity}:${l.nodes.join(">")}`)).toEqual(["B:X>X"]);
   });
 });
 

@@ -99,7 +99,7 @@ export function analyzeLoops(model: Model, opts: LoopOptions = {}): LoopReport {
 
   // Structure is the same at every point (it comes from the free variables);
   // only the signs move. Read them once per sample.
-  const links = structure(c);
+  const links = structure(c, model.settings.method === "map");
   const signsAt = points.map((pt) => readSigns(c, links, pt.scope));
   const graph: InfluenceGraph = {
     nodes: links.nodes,
@@ -146,7 +146,7 @@ export function analyzeLoops(model: Model, opts: LoopOptions = {}): LoopReport {
 /** The signed influence graph at t=start (what the diagram draws). */
 export function influenceGraph(model: Model): InfluenceGraph {
   const c = compile(model);
-  const links = structure(c);
+  const links = structure(c, model.settings.method === "map");
   const signs = readSigns(c, links, operatingPoint(model));
   return { nodes: links.nodes, edges: links.edges.map((e, k) => ({ from: e.from, to: e.to, sign: signs[k]!, ...(e.declared ? { declared: true as const } : {}) })) };
 }
@@ -159,7 +159,7 @@ interface Structure {
 }
 
 /** Nodes and links — who reads whom — independent of any operating point. */
-function structure(c: Compiled): Structure {
+function structure(c: Compiled, isMap = false): Structure {
   // Fixed-delay outputs are nodes (like delay stocks); their samplers are not —
   // the input expression links straight to the output node instead.
   const nodes = new Set<string>([
@@ -180,7 +180,7 @@ function structure(c: Compiled): Structure {
   // to cancel it; that is assignment, not feedback. Its self-link would be a
   // phantom balancing loop that shadows the real ones, so it is dropped. A
   // genuine self-dependence (X inside `next`'s own expression) is kept.
-  for (const s of c.state) if (s.rateExpr) linkFrom(s.name, s.rateExpr, isMapAssignment(s.rateExpr, s.name));
+  for (const s of c.state) if (s.rateExpr) linkFrom(s.name, s.rateExpr, isMapAssignment(s.rateExpr, s.name, isMap));
   for (const f of c.fixed) linkFrom(f.name, f.inputExpr);
   // Declared links: a causal-loop sketch, or a dependency the equations don't
   // carry yet.
@@ -188,13 +188,28 @@ function structure(c: Compiled): Structure {
   return { nodes: [...nodes], edges };
 }
 
-/** `(A − X) / dt`, `(A − X)`, or `A − X` where A does not itself read X: the
- *  discrete-map idiom for "X becomes A next step". */
-function isMapAssignment(rate: Expr, stock: string): boolean {
-  let e = rate;
-  if (e.kind === "binary" && e.op === "/" && e.right.kind === "ident" && e.right.name === "dt") e = e.left;
-  if (!(e.kind === "binary" && e.op === "-" && e.right.kind === "ident" && e.right.name === stock)) return false;
-  return !freeVars(e.left).has(stock);
+/** The discrete-map idiom for "X becomes A next step": among the rate's additive
+ *  terms exactly one is `− X` and no other term reads X. `(A − X) / dt` and
+ *  `(A − X) / dt − out` qualify under any method; the bare `A − X` / `A − X − out`
+ *  only under method=map, where a rate is an increment — under euler/rk4 that
+ *  same text is goal-seeking (dX/dt = A − X), a genuine balancing self-loop. */
+function isMapAssignment(rate: Expr, stock: string, isMap: boolean): boolean {
+  const terms: { e: Expr; neg: boolean; overDt: boolean }[] = [];
+  const walk = (e: Expr, neg: boolean, overDt: boolean): void => {
+    if (e.kind === "binary" && (e.op === "+" || e.op === "-")) {
+      walk(e.left, neg, overDt);
+      walk(e.right, e.op === "-" ? !neg : neg, overDt);
+    } else if (e.kind === "binary" && e.op === "/" && e.right.kind === "ident" && e.right.name === "dt") {
+      walk(e.left, neg, true);
+    } else if (e.kind === "unary" && e.op === "-") {
+      walk(e.arg, !neg, overDt);
+    } else terms.push({ e, neg, overDt });
+  };
+  walk(rate, false, false);
+  const self = terms.filter((t) => t.e.kind === "ident" && t.e.name === stock);
+  const only = self[0];
+  if (self.length !== 1 || !only || !only.neg || !(only.overDt || isMap)) return false;
+  return terms.every((t) => t === only || !freeVars(t.e).has(stock));
 }
 
 /** Sign of every link at one operating point, by central-difference perturbation. */
