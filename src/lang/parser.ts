@@ -69,16 +69,20 @@ export const SWITCH_WORDS: Record<string, number> = { on: 1, off: 0, true: 1, fa
 /** Sim-setting keys a scenario (or `--set`) may bind. One list, shared with overrides.ts. */
 export const SETTING_KEYS = ["dt", "to", "start", "seed", "method"] as const;
 
+// A NAME may be dotted — `eng.Cash` — the namespace form `include … as eng`
+// produces (see include.ts; scalarize's `base.elem` lives in the same flat space).
+const NAME = String.raw`[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*`;
 const RE = {
-  dim: /^dim\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
-  stock: /^stock\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
-  rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*(?:\[\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\])?\s*\)\s*=\s*(.+)$/,
-  var: /^(flow|aux|param|const|switch)\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
-  table: /^table\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
-  data: /^data\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
+  dim: new RegExp(String.raw`^dim\s+(${NAME})\s*=\s*(.+)$`),
+  stock: new RegExp(String.raw`^stock\s+(${NAME})\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$`),
+  rate: new RegExp(String.raw`^(?:change|d)\(\s*(${NAME})\s*(?:\[\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\])?\s*\)\s*=\s*(.+)$`),
+  var: new RegExp(String.raw`^(flow|aux|param|const|switch)\s+(${NAME})\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$`),
+  table: new RegExp(String.raw`^table\s+(${NAME})\s*=\s*(.+)$`),
+  data: new RegExp(String.raw`^data\s+(${NAME})\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$`),
   scenario: /^scenario\s+([A-Za-z_]\w*)\s*:?\s*(.*)$/,
-  link: /^link\s+([A-Za-z_]\w*)\s*(?:->|→)\s*([A-Za-z_]\w*)\s*([+-]|\+|−)?\s*$/,
+  link: new RegExp(String.raw`^link\s+(${NAME})\s*(?:->|→)\s*(${NAME})\s*([+-]|\+|−)?\s*$`),
   expect: /^expect\s+(.+)$/,
+  include: /^include\s+/,
   sim: /^sim\s+(.+)$/,
   plot: /^plot\s+(.+)$/,
 };
@@ -326,6 +330,8 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
       parseSim(m, mt[1]!, loc);
     } else if ((mt = line.match(RE.plot))) {
       m.plot = mt[1]!.split(/[\s,]+/).filter(Boolean);
+    } else if (RE.include.test(line)) {
+      push(m, "error", loc, `include is resolved before parsing — run this model through the CLI (which resolves includes from disk) or \`flowloom bundle main.flow\` to produce the single text the studio and MCP take`);
     } else {
       push(m, "error", loc, `don't understand this line:\n  ${line}`);
     }

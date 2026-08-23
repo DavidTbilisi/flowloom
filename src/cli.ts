@@ -18,8 +18,9 @@
 // the model on stdin.
 
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import process from "node:process";
-import { parseModel, scalarize, ModelError, type Model } from "./lang/index.js";
+import { parseModel, scalarize, ModelError, resolveIncludes, hasIncludes, type Model } from "./lang/index.js";
 import {
   simulateAsync,
   analyzeLoops,
@@ -189,6 +190,16 @@ function need(argv: string[], i: number, flag: string): string {
 }
 
 // ── input ─────────────────────────────────────────────────────────────────────
+/** Resolve `include` lines against the filesystem (relative to the model's dir). */
+function resolveText(text: string, file: string): string {
+  if (!hasIncludes(text)) return text;
+  try {
+    return resolveIncludes(text, { read: (p) => readFileSync(p, "utf8"), dir: file === "-" ? "" : dirname(file) });
+  } catch (e) {
+    die((e as Error).message);
+  }
+}
+
 function load(args: Args): Model {
   if (!args.file) die(`${args.cmd} needs a model file (or - for stdin)`);
   let text: string;
@@ -197,6 +208,7 @@ function load(args: Args): Model {
   } catch (e) {
     die(`cannot read ${args.file}: ${(e as Error).message}`);
   }
+  text = resolveText(text!, args.file!);
   let model: Model;
   try {
     model = parseModel(text!);
@@ -772,6 +784,24 @@ async function cmdCalibrate(args: Args): Promise<void> {
   out(args.format === "json" ? JSON.stringify(r, null, 2) : renderCalibrate(r));
 }
 
+function cmdBundle(args: Args): void {
+  if (!args.file) die("bundle needs a model file: flowloom bundle main.flow > bundled.flow");
+  let text: string;
+  try { text = readFileSync(args.file, "utf8"); } catch (e) { die(`cannot read ${args.file}: ${(e as Error).message}`); }
+  if (!hasIncludes(text!)) { out(text!.trimEnd()); return; }
+  const resolved = resolveText(text!, args.file);
+  try {
+    parseModel(resolved); // surface errors with the bundled line numbers before shipping it
+  } catch (e) {
+    if (e instanceof ModelError) {
+      for (const d of e.diagnostics) process.stderr.write(`error: bundled line ${d.loc.line}: ${d.message}\n`);
+      process.exit(1);
+    }
+    throw e;
+  }
+  out(`# bundled from ${args.file} — a derived text; edit the parts and re-bundle\n${resolved.trimEnd()}`);
+}
+
 function cmdData(args: Args): void {
   if (!args.file) die("data needs a CSV/TSV file: flowloom data obs.csv [--column a,b] [--time t] [--unit U] [--linear]");
   let text: string;
@@ -839,6 +869,7 @@ async function cmdTest(args: Args): Promise<void> {
 function loadFile(path: string): Model {
   let text: string;
   try { text = readFileSync(path, "utf8"); } catch (e) { die(`cannot read ${path}: ${(e as Error).message}`); }
+  text = resolveText(text!, path);
   try { return parseModel(text!); } catch (e) {
     if (e instanceof ModelError) { for (const d of e.diagnostics) process.stderr.write(`error: ${path}: line ${d.loc.line}: ${d.message}\n`); process.exit(1); }
     throw e;
@@ -908,6 +939,8 @@ usage:
                                              or, with no --data, against the model's own 'data' lines: --against S=dataName
   flowloom data     <obs.csv> [--column a,b] [--time COL] [--unit U] [--linear]
                                              print the CSV as 'data NAME = (t, v) …' lines to paste into a model
+  flowloom bundle   <main.flow>              resolve 'include "part.flow" as ns' lines into the one flat text
+                                             the studio / MCP / share links take (the CLI resolves them itself)
   flowloom scenarios <model.flow> [--json]   list the model's scenario lines
   flowloom compare  <model.flow> --metric SPEC[,SPEC] [--scenario a,b] [--json]
                                              base vs each scenario, one row per scenario
@@ -990,6 +1023,7 @@ async function main(): Promise<void> {
     case "leverage": await cmdLeverage(args); break;
     case "test": await cmdTest(args); break;
     case "data": cmdData(args); break;
+    case "bundle": cmdBundle(args); break;
     case "diff": await cmdDiff(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");

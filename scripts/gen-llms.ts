@@ -36,6 +36,7 @@ animation are all derived from it. Read and edit a model entirely as text.
   link A -> B +|-                       a declared signed influence (+ with, - against): a causal-loop sketch before equations; links alone draw and have R/B loops but do not run
   expect [SCENARIO] METRIC OP VALUE [± TOL[%]]   a claim the model must keep satisfying (its own test): expect final:Cash > 0 · expect recovery final:netWorth == 493370 ± 1% · expect loops:active == 9
   data NAME [unit] = (t, v) (t, v) … [linear]    a measured time series read off the clock (an exogenous input); held between samples unless linear. Plot it, use it in equations, fit against it (calibrate --against Series=NAME), score it (rmse:Series:NAME)
+  include "part.flow" as ns [k=v ...]   compose from parts: inline part.flow with every name prefixed ns. — bindings rebind child params (k=0.5) or wire a parent signal into a child input (cashIn=excess turns the child param into an aux). CLI resolves from disk; 'flowloom bundle main.flow' prints the one flat text the studio/MCP take; the child's sim/plot/scenario/expect lines are dropped as comments (the parent owns time and claims)
   dim NAME = A, B, C                     a subscript dimension (array index) of named elements
   stock NAME[dim] = EXPR                 an array: one stock per element; refer to NAME[dim] / NAME[A]; sum(NAME) collapses it
   sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4 | map); add timeunit=month for units, seed=N for random*()

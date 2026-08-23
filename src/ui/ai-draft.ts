@@ -34,6 +34,7 @@ Grammar (one statement per line; # starts a comment):
   link A -> B +|-                 a declared signed influence; a sketch of links alone is valid (draws, has loops, doesn't run)
   expect [SCENARIO] min:Cash >= 0 a claim the model must keep satisfying (its own test); == v ± tol for a cited number
   data NAME [unit] = (t,v) (t,v)  a measured series read off the clock, held between samples (add linear to interpolate)
+  (multi-file models use include "part.flow" as ns — but emit ONE self-contained text here)
   sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4 | map)
   plot A B C                      which series are visible by default
 

@@ -47,7 +47,10 @@ dynamics, and check the numbers. Validate, don't vibe.
   a model series by series and loop by loop, so a refactor has a verdict.
   **`data`** lines put measured history *in* the model — step-held time series
   you can plot, feed into equations, calibrate against with no CSV at hand
-  (`calibrate --against N=obs`), and score with `rmse:N:obs`.
+  (`calibrate --against N=obs`), and score with `rmse:N:obs`. **`include
+  "part.flow" as ns`** composes models from parts (names prefixed `ns.`,
+  bindings wire parent signals into child params) — resolved to a single text
+  the rest of the toolchain never knows was assembled (`flowloom bundle`).
 - **A proper engine** — Euler and classical **RK4** integration, plus **`map`**
   for difference equations; `step`/`pulse`/
   `ramp` test inputs; graphical **lookup tables**; first- and third-order

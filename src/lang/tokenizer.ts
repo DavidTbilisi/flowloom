@@ -65,11 +65,16 @@ export function tokenize(src: string, line: number): Token[] {
       continue;
     }
 
-    // identifier: letters, digits, underscore (not leading digit)
+    // identifier: letters, digits, underscore (not leading digit). A dot joins
+    // segments — `eng.Cash` — the namespace form `include … as eng` produces.
     if (isIdentStart(c)) {
       const start = i;
       i++;
       while (i < src.length && isIdentPart(src[i]!)) i++;
+      while (src[i] === "." && isIdentStart(src[i + 1] ?? "")) {
+        i += 2;
+        while (i < src.length && isIdentPart(src[i]!)) i++;
+      }
       const word = src.slice(start, i);
       const wordOp = WORD_OPS[word];
       if (wordOp) toks.push({ type: "op", value: wordOp, col: start });

@@ -34,6 +34,7 @@ stock Population [people] = 5      # the starting headcount
 | `link A -> B +` / `link A -> B -` | A **declared signed influence** — the causal-loop sketch you draw before equations. See [Sketching first](#sketching-first-link). |
 | `expect [SCENARIO] METRIC OP VALUE [± TOL]` | A **claim the model must keep satisfying** — its own test. See [Expectations](#expectations). |
 | `data NAME [unit] = (t, v) …` | A **measured time series** read off the clock — an exogenous input. See [Data series](#data-series). |
+| `include "part.flow" as NS [k=v …]` | **Compose from parts**: inline another model with every name prefixed `NS.`. See [Composing models](#composing-models-include). |
 | `sim dt=… to=… start=… method=…` | Simulation settings. The toolbar edits this line. |
 | `plot A B C` | Which series are visible by default. |
 
@@ -402,6 +403,37 @@ be supplied by the surrounding declaration's subscripts (`sum(Trade, to)` leaves
 Covered today: multi-dimensional subscripts, elementwise equations, single-element
 indexing, per-element values, full and partial/axis `sum`. Other reducers
 (`mean`/`min`/`max`) are planned.
+
+## Composing models (`include`)
+
+```flow
+include "engine.flow" as eng cashIn=excess invest=0.5
+
+stock Cash [GEL] = 1000
+aux excess [GEL] = max(0, Cash - 2000)
+change(Cash) = income + eng.payout - eng.investing
+```
+
+`include` composes a model out of parts while keeping the thing every tool
+operates on **a single text**: resolution is a source-to-source pass that
+inlines the child file with every declared name prefixed `NS.` — the parser,
+engine, studio and MCP never learn includes exist. The CLI resolves includes
+from disk automatically (relative to the including file); `flowloom bundle
+main.flow` prints the resolved text for the places that only take one text
+(the studio, MCP tools, share links). Nested includes namespace twice
+(`eng.inner.x`); cycles are an error naming the chain.
+
+An include takes the child's **structure** — stocks, rates, flows, auxes,
+params/consts/switches, tables, `data` lines, dims, `link`s — and drops, as
+inert comments, its `sim`, `plot`, `scenario` and `expect` lines: the parent
+owns time, presentation and claims.
+
+**Bindings** rewire the child at include time. `key=value` with a number /
+`on` / `off` rebinds the child declaration's default in place. Any other value
+is an expression in the **parent's** scope: the child's `param cashIn = 0`
+becomes `aux eng.cashIn = excess` — the composition point where a parent signal
+drives a child input. (After inclusion you can still override `eng.invest`
+with `--set`, a scenario line, or a slider — a namespaced param is a param.)
 
 ## Simulation settings
 

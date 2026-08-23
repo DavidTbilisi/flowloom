@@ -330,6 +330,8 @@ Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs;
 
 Discrete-period models (monthly, yearly): use 'sim method=map dt=1' (stock(t+dt) = stock(t) + change(t); change() is a per-step increment in the stock's own units, so no x dt bookkeeping), previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
+Multi-file models: 'include "part.flow" as ns' composes models from parts, but MCP tools take ONE text — resolve first with the CLI ('flowloom bundle main.flow') and pass the bundled text; the parser's error says the same if an include line slips through.
+
 Gotchas: every referenced name must be defined and a model needs ≥1 stock; a stock changes ONLY through its change()/d() rate; if(cond,a,b) evaluates BOTH branches (guard the operand, e.g. x/max(y,1e-9), not the branch). Start from flow_examples if you want a known-good template.`;
 
 // ── server wiring ────────────────────────────────────────────────────────────
