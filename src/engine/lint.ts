@@ -9,6 +9,7 @@
 import type { Model, Diagnostic, Expr, Loc } from "../lang/index.js";
 import { freeVars, declExprs } from "../lang/index.js";
 import { operatingPoint } from "./loops.js";
+import { compile } from "./compile.js";
 import { checkUnits } from "./units.js";
 import { validateModel } from "./validate.js";
 
@@ -48,8 +49,114 @@ export function lintModel(model: Model): Diagnostic[] {
   }
 
   checkTimeConstants(model, out);
+  checkDiscreteTime(model, out);
+  checkCircularInit(model, out);
   checkUnits(model, out);
   return out;
+}
+
+/**
+ * A previous()/delay_fixed() with no init value starts at its input's initial
+ * value. If that input (instantaneously) depends on the delay's own output —
+ * `a = previous(b) + 1`, `b = a * 2` — the initial state is circular and the
+ * run's first value is garbage. The engine notes it at run time; this says it
+ * at check time, with the line.
+ */
+function checkCircularInit(model: Model, out: Diagnostic[]): void {
+  let c: ReturnType<typeof compile>;
+  try { c = compile(model); } catch { return; }
+  if (!c.fixed.length) return;
+  // Instantaneous dependency graph over compiled vars + fixed outputs, where a
+  // fixed output with a *default* init depends on its input (through the init).
+  const deps = new Map<string, Set<string>>();
+  for (const v of c.order) deps.set(v.name, freeVars(v.expr));
+  for (const f of c.fixed) deps.set(f.name, f.initExpr.kind === "ident" && f.initExpr.name === f.inputVar ? freeVars(f.inputExpr) : new Set());
+  const reaches = (from: string, target: string): boolean => {
+    const seen = new Set<string>();
+    const stack = [from];
+    while (stack.length) {
+      const n = stack.pop()!;
+      if (n === target) return true;
+      if (seen.has(n)) continue;
+      seen.add(n);
+      for (const d of deps.get(n) ?? []) stack.push(d);
+    }
+    return false;
+  };
+  // Report at the line that holds the call: the var/rate/stock whose *source*
+  // expression mentions previous/delay_fixed and whose compiled form references
+  // this fixed output.
+  const locOf = (fixedName: string): Loc | undefined => {
+    const uses = (e: Expr): boolean => freeVars(e).has(fixedName);
+    const src = (name: string) => model.varIndex.get(name)?.loc ?? model.stocks.find((s) => s.name === name)?.loc;
+    for (const v of c.order) if (!v.isInternal && uses(v.expr)) return src(v.name);
+    for (const s of c.state) if (!s.isInternal && ((s.rateExpr && uses(s.rateExpr)) || uses(s.initExpr))) return model.rates.get(s.name)?.loc ?? src(s.name);
+    return undefined;
+  };
+  for (const f of c.fixed) {
+    if (!(f.initExpr.kind === "ident" && f.initExpr.name === f.inputVar)) continue; // explicit init — fine
+    for (const d of deps.get(f.name)!) {
+      if (reaches(d, f.name)) {
+        const fn = f.name.startsWith("prev") ? "previous" : "delay_fixed";
+        out.push(warn(locOf(f.name) ?? { line: 1, col: 0 }, `${fn}(…) has no init value and its input depends on its own output — the initial state is circular; give it an explicit init, e.g. ${fn}(X, …, 0)`));
+        break;
+      }
+    }
+  }
+}
+
+/**
+ * Discrete-period models — a monthly budget, a yearly census — are written as
+ * maps on the time grid: `t % 12 == 0`, `previous(X)`, `delay_fixed(X, 2)`. Two
+ * things silently go wrong with them under the defaults, so say so:
+ *   • RK4 evaluates the derivative between grid points (t + dt/2), where a
+ *     `t % n == k` test is false and a `t == k` test never fires — the model
+ *     runs, with the wrong dynamics. Euler with dt=1 is the honest integrator
+ *     for a map: state(t+1) = state(t) + change(t).
+ *   • a fixed delay shorter than one step rounds up to one step.
+ */
+function checkDiscreteTime(model: Model, out: Diagnostic[]): void {
+  const { method, dt } = model.settings;
+  const gridTests: Loc[] = [];
+  let scope: Record<string, number> | undefined;
+  const resolve = () => (scope ??= (() => { try { return operatingPoint(model); } catch { return {}; } })());
+  const constValue = (e: Expr): number | undefined =>
+    e.kind === "num" ? e.value : e.kind === "ident" ? resolve()[e.name] : undefined;
+  const isClock = (e: Expr) => e.kind === "ident" && (e.name === "t" || e.name === "time");
+
+  const visit = (e: Expr, loc: Loc): void => {
+    switch (e.kind) {
+      case "binary":
+        // `t % n`, `t == k`, `t != k`: only meaningful on the grid
+        if ((e.op === "%" || e.op === "==" || e.op === "!=") && (isClock(e.left) || isClock(e.right))) gridTests.push(loc);
+        visit(e.left, loc);
+        visit(e.right, loc);
+        break;
+      case "unary":
+        visit(e.arg, loc);
+        break;
+      case "call": {
+        if (e.name.toLowerCase() === "delay_fixed" && e.args[1]) {
+          const len = constValue(e.args[1]);
+          if (len !== undefined && Number.isFinite(len)) {
+            if (len <= 0) out.push(warn(loc, `delay_fixed(…) length is ${len} — a fixed delay must be at least one step (dt=${dt}); it will be rounded up to one`));
+            else if (len < dt) out.push(warn(loc, `delay_fixed(…) length ${len} is shorter than one step (dt=${dt}) — it will be rounded up to one step`));
+            else if (Math.abs(len / dt - Math.round(len / dt)) > 1e-9) out.push(warn(loc, `delay_fixed(…) length ${len} is not a whole number of steps (dt=${dt}) — it will be rounded to ${Math.max(1, Math.round(len / dt))} step(s)`));
+          }
+        }
+        for (const a of e.args) visit(a, loc);
+        break;
+      }
+    }
+  };
+  for (const v of model.vars) for (const e of declExprs(v.expr, v.elemExprs)) visit(e, v.loc);
+  for (const r of model.rates.values()) visit(r.expr, r.loc);
+  for (const s of model.stocks) for (const e of declExprs(s.initExpr, s.elemExprs)) visit(e, s.loc);
+
+  if (method === "rk4" && gridTests.length) {
+    const first = gridTests[0]!;
+    out.push(warn(first, `this model tests the clock on the time grid (t % n, t == k) but runs under rk4, which also samples between steps (t + dt/2) where those tests are false — for a discrete-period model use \`sim method=euler dt=1\`${gridTests.length > 1 ? ` (${gridTests.length} places)` : ""}`));
+  }
 }
 
 /** Flag smooth/delay calls whose time constant resolves to a non-positive value. */

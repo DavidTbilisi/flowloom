@@ -5,13 +5,15 @@ import {
   type VarDecl,
   type TableDecl,
   type DimDecl,
+  type ScenarioDecl,
+  type ScenarioSet,
   type VarKind,
   type SimSettings,
   type Diagnostic,
   type Loc,
   DEFAULT_SETTINGS,
 } from "./types.js";
-import { parseExpr, freeVars, declExprs } from "./expr.js";
+import { parseExpr, freeVars, instantVars, declExprs } from "./expr.js";
 import { ExprSyntaxError } from "./tokenizer.js";
 import { suggestName, suggestSuffix } from "./suggest.js";
 
@@ -24,7 +26,9 @@ import { suggestName, suggestSuffix } from "./suggest.js";
 //   flow  NAME [unit] = EXPR        # a named rate (drawn as a flow)
 //   aux   NAME [unit] = EXPR        # an instantaneous computed value
 //   param NAME [unit] = EXPR        # a constant knob
+//   switch NAME = on|off            # a 0/1 policy toggle (a boolean param)
 //   table NAME = (x,y) (x,y) ...    # a piecewise-linear graphical function
+//   scenario NAME key=value …       # a named set of overrides, applied on request
 //   sim dt=0.1 to=50 start=0 method=rk4
 //   plot A B C
 //
@@ -46,18 +50,26 @@ interface Raw {
   varIndex: Map<string, VarDecl>;
   tables: Map<string, TableDecl>;
   dims: Map<string, DimDecl>;
+  scenarios: Map<string, ScenarioDecl>;
   settings: SimSettings;
   plot: string[];
   names: Set<string>;
   diagnostics: Diagnostic[];
 }
 
+/** Words accepted as switch / scenario-switch values, and the 0/1 they mean. */
+export const SWITCH_WORDS: Record<string, number> = { on: 1, off: 0, true: 1, false: 0, yes: 1, no: 0 };
+
+/** Sim-setting keys a scenario (or `--set`) may bind. One list, shared with overrides.ts. */
+export const SETTING_KEYS = ["dt", "to", "start", "seed", "method"] as const;
+
 const RE = {
   dim: /^dim\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   stock: /^stock\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
   rate: /^(?:change|d)\(\s*([A-Za-z_]\w*)\s*(?:\[\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\])?\s*\)\s*=\s*(.+)$/,
-  var: /^(flow|aux|param|const)\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
+  var: /^(flow|aux|param|const|switch)\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
   table: /^table\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
+  scenario: /^scenario\s+([A-Za-z_]\w*)\s*:?\s*(.*)$/,
   sim: /^sim\s+(.+)$/,
   plot: /^plot\s+(.+)$/,
 };
@@ -71,6 +83,7 @@ export function parseModel(text: string): Model {
     varIndex: new Map(),
     tables: new Map(),
     dims: new Map(),
+    scenarios: new Map(),
     settings: { ...DEFAULT_SETTINGS },
     plot: [],
     names: new Set(),
@@ -123,6 +136,7 @@ export function parseModel(text: string): Model {
 
   validateReferences(m);
   validateSubscripts(m);
+  validateScenarios(m);
 
   const model: Model = {
     stocks: m.stocks,
@@ -131,6 +145,7 @@ export function parseModel(text: string): Model {
     varIndex: m.varIndex,
     tables: m.tables,
     dims: m.dims,
+    scenarios: m.scenarios,
     settings: m.settings,
     plot: m.plot,
     order,
@@ -198,12 +213,44 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
     } else if ((mt = line.match(RE.var))) {
       const [, kw, name, unit, expr] = mt;
       claim(m, name!, loc);
+      if (kw === "switch") {
+        // A switch is a param that may only be 0 or 1. `on`/`off` (and friends)
+        // are sugar for the literal; anything else is rejected so a switch can't
+        // silently hold 0.5 — the whole point is that sensitivity, sliders, and
+        // overrides can treat it as a two-state toggle.
+        const raw = expr!.trim();
+        const word = SWITCH_WORDS[raw.toLowerCase()];
+        const ex = word !== undefined ? parseExpr(String(word), lineNo) : parseExpr(raw, lineNo);
+        if (!(ex.kind === "num" && (ex.value === 0 || ex.value === 1))) {
+          push(m, "error", loc, `switch ${name} must be on or off (1 or 0), got '${raw}'`);
+        }
+        if (unit && unit.trim()) push(m, "error", loc, `switch ${name} can't carry a unit or subscript — it is a bare on/off toggle`);
+        const v: VarDecl = { name: name!, kind: "param", expr: ex, boolean: true, doc, loc };
+        m.vars.push(v);
+        m.varIndex.set(name!, v);
+        return;
+      }
       const kind: VarKind = kw === "const" ? "param" : (kw as VarKind);
       const exprs = splitTopLevel(expr!).map((p) => parseExpr(p, lineNo));
       const v: VarDecl = { name: name!, kind, expr: exprs[0]!, unit: unit?.trim(), doc, loc };
       if (exprs.length > 1) v.elemExprs = exprs;
       m.vars.push(v);
       m.varIndex.set(name!, v);
+    } else if ((mt = line.match(RE.scenario))) {
+      const [, name, body] = mt;
+      if (name === "base") push(m, "error", loc, "'base' is the model itself — pick another scenario name");
+      if (m.scenarios.has(name!)) push(m, "error", loc, `scenario ${name} is defined twice`);
+      const sets: ScenarioSet[] = [];
+      for (const tok of body!.split(/\s+/).filter(Boolean)) {
+        const eq = tok.indexOf("=");
+        if (eq <= 0 || eq === tok.length - 1) {
+          push(m, "error", loc, `scenario ${name}: expected key=value, got '${tok}'`);
+          continue;
+        }
+        sets.push({ key: tok.slice(0, eq), value: tok.slice(eq + 1) });
+      }
+      if (!sets.length) push(m, "error", loc, `scenario ${name} needs at least one key=value (a param, switch, stock init, or ${SETTING_KEYS.join("/")})`);
+      m.scenarios.set(name!, { name: name!, sets, doc, loc });
     } else if ((mt = line.match(RE.table))) {
       const [, name, body] = mt;
       claim(m, name!, loc);
@@ -299,7 +346,9 @@ function topoSort(m: Raw): VarDecl[] {
   for (const v of m.vars) {
     const d = new Set<string>();
     for (const ex of varExprs(v)) {
-      for (const id of freeVars(ex)) {
+      // Instantaneous deps only: the input of a delay/smooth/previous() is read
+      // from earlier steps, so it doesn't make a cycle algebraic.
+      for (const id of instantVars(ex)) {
         if (varNames.has(id) && id !== v.name) d.add(id);
       }
     }
@@ -370,6 +419,45 @@ function validateReferences(m: Raw): void {
 }
 
 const BUILTIN_CONSTS = new Set(["PI", "E"]);
+
+/** Every scenario binding must target something an override can rebind — a
+ *  param/switch, a stock's initial value, or a sim setting — with a value of the
+ *  right shape. Checked at parse time so a typo in a scenario is a located error
+ *  in the editor, not a surprise when the scenario is finally selected. */
+function validateScenarios(m: Raw): void {
+  const settingKeys = new Set<string>(SETTING_KEYS);
+  for (const sc of m.scenarios.values()) {
+    const seen = new Set<string>();
+    for (const { key, value } of sc.sets) {
+      if (seen.has(key)) push(m, "warning", sc.loc, `scenario ${sc.name} sets '${key}' more than once — the last one wins`);
+      seen.add(key);
+      if (key === "method") {
+        if (value !== "euler" && value !== "rk4") push(m, "error", sc.loc, `scenario ${sc.name}: method must be euler or rk4, got '${value}'`);
+        continue;
+      }
+      if (settingKeys.has(key)) {
+        if (!Number.isFinite(Number(value))) push(m, "error", sc.loc, `scenario ${sc.name}: ${key} must be a number, got '${value}'`);
+        continue;
+      }
+      const decl = m.varIndex.get(key);
+      const stock = decl ? undefined : m.stocks.find((s) => s.name === key);
+      if (!decl && !stock) {
+        const candidates = [...m.stocks.map((s) => s.name), ...m.vars.map((v) => v.name), ...SETTING_KEYS];
+        const hint = suggestName(key, candidates);
+        push(m, "error", sc.loc, `scenario ${sc.name}: no param, switch, stock, or sim setting named '${key}'${hint ? ` — did you mean '${hint}'?` : ""}`);
+        continue;
+      }
+      if (decl?.boolean) {
+        const w = SWITCH_WORDS[value.toLowerCase()];
+        const n = w !== undefined ? w : Number(value);
+        if (!(n === 0 || n === 1)) push(m, "error", sc.loc, `scenario ${sc.name}: switch '${key}' must be on or off, got '${value}'`);
+        continue;
+      }
+      if (!Number.isFinite(Number(value))) push(m, "error", sc.loc, `scenario ${sc.name}: '${key}' must be a number, got '${value}'`);
+      if (decl && decl.kind !== "param") push(m, "warning", sc.loc, `scenario ${sc.name} overrides ${decl.kind} '${key}' with a constant`);
+    }
+  }
+}
 
 /** Check subscript usage: valid index refs, sum of a subscripted symbol, and no
  *  bare reference to a vector outside sum(). Mirrors what scalarize.ts enforces,

@@ -81,8 +81,14 @@ export const ARITY: Record<string, [number, number]> = {
   random_normal: [2, 2],
 };
 
-/** Names of the stateful delay/smooth builtins handled by the compiler. */
-export const STATEFUL = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3"]);
+/** Names of the stateful builtins handled by the compiler: the delay/smooth
+ *  family (rewritten into internal stocks) and the fixed-delay pair
+ *  (`previous`, `delay_fixed` — sample-and-hold ring buffers owned by the
+ *  integrator). Must agree with TIME_CROSSING in src/lang/expr.ts. */
+export const STATEFUL = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3", "previous", "delay_fixed"]);
+
+/** The fixed-delay subset of STATEFUL (see compile.ts / codegen.ts). */
+export const FIXED_DELAY = new Set(["previous", "delay_fixed"]);
 
 /** Piecewise-linear interpolation of a graphical/lookup table; clamps at the ends. */
 export function lookupTable(points: ReadonlyArray<readonly [number, number]>, x: number): number {

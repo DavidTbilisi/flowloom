@@ -217,6 +217,17 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .tune-row input[type=range] { width: 100%; accent-color: var(--accent); cursor: grab; }
 .tune-row input[type=range]:active { cursor: grabbing; }
 .tune-row .tune-val { font: 12px var(--mono); color: var(--ink); text-align: right; font-variant-numeric: tabular-nums; }
+.tune-row.tune-switch { cursor: pointer; }
+.tune-row .tune-toggle { display: flex; align-items: center; }
+.tune-row .tune-toggle input[type=checkbox] { width: 34px; height: 18px; accent-color: var(--accent); cursor: pointer; margin: 0; }
+
+/* ── scenario picker (plot controls) ───────────────────────────────────── */
+.scenario-pick { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); }
+.scenario-pick[hidden] { display: none; }
+.scenario-pick select {
+  font: 12px var(--mono); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; cursor: pointer;
+}
 
 /* ── transport / playback bar ─────────────────────────────────────────── */
 .transport {

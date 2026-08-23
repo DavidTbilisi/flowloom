@@ -19,7 +19,12 @@ export type Dim = Map<string, number>;
 
 /** Inference result: a concrete dimension, or UNKNOWN (un-annotated / opaque). */
 export const UNKNOWN = Symbol("unknown-unit");
-export type DimResult = Dim | typeof UNKNOWN;
+/** A bare numeric literal: unit-polymorphic. `Cash < 0`, `max(0, x)`, `t % 12`
+ *  read the literal in the other operand's units (the way a modeller does), so
+ *  it never raises a mismatch on its own; under `*` and `/` it is a pure scalar;
+ *  an expression that is *only* literals stays polymorphic, matching anything. */
+export const LITERAL = Symbol("literal-unit");
+export type DimResult = Dim | typeof UNKNOWN | typeof LITERAL;
 
 export class UnitParseError extends Error {}
 
@@ -161,10 +166,27 @@ function constInt(e: Expr): number | undefined {
  * mismatch. UNKNOWN is contagious and silent: it only warns when both operands
  * carry a known, conflicting dimension.
  */
+/** Do two inferred dimensions conflict? Only when both are concrete and differ —
+ *  UNKNOWN and LITERAL unify with anything. */
+function conflict(l: DimResult, r: DimResult): l is Dim {
+  return l !== UNKNOWN && l !== LITERAL && r !== UNKNOWN && r !== LITERAL && !eqDim(l, r as Dim);
+}
+
+/** The dimension two unified operands share: a concrete one wins over LITERAL,
+ *  and LITERAL wins over UNKNOWN only when nothing concrete is present. */
+function unify(l: DimResult, r: DimResult): DimResult {
+  if (l !== UNKNOWN && l !== LITERAL) return l;
+  if (r !== UNKNOWN && r !== LITERAL) return r;
+  return l === UNKNOWN || r === UNKNOWN ? UNKNOWN : LITERAL;
+}
+
+/** A literal is a pure scalar where it multiplies or divides. */
+const scalar = (d: DimResult): DimResult => (d === LITERAL ? new Map() : d);
+
 export function inferDim(e: Expr, env: UnitEnv, out: Diagnostic[]): DimResult {
   switch (e.kind) {
     case "num":
-      return new Map(); // a bare number is a pure scalar
+      return LITERAL; // a bare number takes the units of whatever it meets
     case "ident": {
       if (e.name === "t" || e.name === "time" || e.name === "dt") return env.time;
       if (e.name === "PI" || e.name === "E") return new Map();
@@ -188,29 +210,36 @@ export function inferDim(e: Expr, env: UnitEnv, out: Diagnostic[]): DimResult {
         case "==":
         case "!=":
           // comparing unlike units is a mistake; the result is a dimensionless 0/1
-          if (l !== UNKNOWN && r !== UNKNOWN && !eqDim(l, r)) {
-            out.push(warn(e.loc, `unit mismatch: ${fmtDim(l)} ${e.op} ${fmtDim(r)} — both sides must share units`));
+          if (conflict(l, r)) {
+            out.push(warn(e.loc, `unit mismatch: ${fmtDim(l)} ${e.op} ${fmtDim(r as Dim)} — both sides must share units`));
           }
           return new Map();
         case "&&":
         case "||":
           // logical connectives operate on booleans and yield a dimensionless 0/1
           return new Map();
-        case "*":
-          return l === UNKNOWN || r === UNKNOWN ? UNKNOWN : mulDim(l, r);
-        case "/":
-          return l === UNKNOWN || r === UNKNOWN ? UNKNOWN : divDim(l, r);
+        case "*": {
+          if (l === LITERAL && r === LITERAL) return LITERAL;
+          const a = scalar(l), b = scalar(r);
+          return a === UNKNOWN || b === UNKNOWN ? UNKNOWN : mulDim(a as Dim, b as Dim);
+        }
+        case "/": {
+          if (l === LITERAL && r === LITERAL) return LITERAL;
+          const a = scalar(l), b = scalar(r);
+          return a === UNKNOWN || b === UNKNOWN ? UNKNOWN : divDim(a as Dim, b as Dim);
+        }
         case "+":
         case "-":
         case "%": {
-          if (l !== UNKNOWN && r !== UNKNOWN && !eqDim(l, r)) {
-            out.push(warn(e.loc, `unit mismatch: ${fmtDim(l)} ${e.op} ${fmtDim(r)} — both sides must share units`));
+          if (conflict(l, r)) {
+            out.push(warn(e.loc, `unit mismatch: ${fmtDim(l)} ${e.op} ${fmtDim(r as Dim)} — both sides must share units`));
           }
-          return l === UNKNOWN ? r : l;
+          return unify(l, r);
         }
         case "^": {
           const n = constInt(e.right);
           if (l === UNKNOWN) return UNKNOWN;
+          if (l === LITERAL) return LITERAL;
           if (isDimensionless(l)) return new Map();
           if (n === undefined) {
             out.push(warn(e.loc, `cannot raise a dimensioned quantity (${fmtDim(l)}) to a non-constant-integer power`));
@@ -228,7 +257,8 @@ export function inferDim(e: Expr, env: UnitEnv, out: Diagnostic[]): DimResult {
 
 function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]): DimResult {
   const name = e.name.toLowerCase();
-  const argDim = (i: number): DimResult => (e.args[i] ? inferDim(e.args[i]!, env, out) : new Map());
+  // A missing optional argument constrains nothing.
+  const argDim = (i: number): DimResult => (e.args[i] ? inferDim(e.args[i]!, env, out) : LITERAL);
 
   // Lookup tables carry no declared output unit — treat the result as opaque,
   // but still type-check the input expression for its own internal mismatches.
@@ -239,7 +269,7 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
 
   if (DIMENSIONLESS_FN.has(name)) {
     const a = argDim(0);
-    if (a !== UNKNOWN && !isDimensionless(a)) {
+    if (a !== UNKNOWN && a !== LITERAL && !isDimensionless(a)) {
       out.push(warn(e.loc, `${e.name}() expects a dimensionless argument, got ${fmtDim(a)}`));
     }
     return new Map();
@@ -248,12 +278,12 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
   switch (name) {
     case "sqrt": {
       const a = argDim(0);
-      return a === UNKNOWN ? UNKNOWN : powDim(a, 0.5);
+      return a === UNKNOWN || a === LITERAL ? a : powDim(a, 0.5);
     }
     case "pow": {
       const base = argDim(0);
       const n = e.args[1] ? constInt(e.args[1]) : undefined;
-      if (base === UNKNOWN) return UNKNOWN;
+      if (base === UNKNOWN || base === LITERAL) return base;
       if (isDimensionless(base)) return new Map();
       if (n === undefined) {
         out.push(warn(e.loc, `pow() of a dimensioned base (${fmtDim(base)}) needs a constant-integer exponent`));
@@ -276,10 +306,10 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
       argDim(0); // condition: type-check but don't constrain
       const a = argDim(1);
       const b = argDim(2);
-      if (a !== UNKNOWN && b !== UNKNOWN && !eqDim(a, b)) {
-        out.push(warn(e.loc, `if() branches disagree on units: ${fmtDim(a)} vs ${fmtDim(b)}`));
+      if (conflict(a, b)) {
+        out.push(warn(e.loc, `if() branches disagree on units: ${fmtDim(a)} vs ${fmtDim(b as Dim)}`));
       }
-      return a === UNKNOWN ? b : a;
+      return unify(a, b);
     }
     case "step":
       // step(height, t0): result has the height's units.
@@ -289,7 +319,7 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
     case "ramp": {
       // ramp(slope, t0, t1): slope·time.
       const slope = argDim(0);
-      return slope === UNKNOWN ? UNKNOWN : mulDim(slope, env.time);
+      return slope === UNKNOWN ? UNKNOWN : mulDim(scalar(slope) as Dim, env.time);
     }
     case "smooth":
     case "smooth3":
@@ -297,15 +327,29 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
     case "delay3":
       requireTime(e, 1, env, out);
       return argDim(0);
+    case "delay_fixed": {
+      // delay_fixed(input, length, init?): length is a time; init matches input.
+      requireTime(e, 1, env, out);
+      const input = argDim(0);
+      const init = argDim(2);
+      if (conflict(input, init)) out.push(warn(e.loc, `delay_fixed() init units (${fmtDim(init as Dim)}) differ from input (${fmtDim(input)})`));
+      return unify(input, init);
+    }
+    case "previous": {
+      const input = argDim(0);
+      const init = argDim(1);
+      if (conflict(input, init)) out.push(warn(e.loc, `previous() init units (${fmtDim(init as Dim)}) differ from input (${fmtDim(input)})`));
+      return unify(input, init);
+    }
     case "smoothi": {
       // smoothi(input, τ, init): input and init must agree; τ is a time.
       requireTime(e, 1, env, out);
       const input = argDim(0);
       const init = argDim(2);
-      if (input !== UNKNOWN && init !== UNKNOWN && !eqDim(input, init)) {
-        out.push(warn(e.loc, `smoothi() init units (${fmtDim(init)}) differ from input (${fmtDim(input)})`));
+      if (conflict(input, init)) {
+        out.push(warn(e.loc, `smoothi() init units (${fmtDim(init as Dim)}) differ from input (${fmtDim(input)})`));
       }
-      return input;
+      return unify(input, init);
     }
     default:
       // Unknown function: type-check arguments, but the result is opaque.
@@ -317,15 +361,17 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
 /** min/max/clamp: every operand must share a dimension; that dimension is the result. */
 function sameDims(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]): DimResult {
   let known: Dim | undefined;
+  let sawUnknown = false;
   for (const arg of e.args) {
     const d = inferDim(arg, env, out);
-    if (d === UNKNOWN) continue;
+    if (d === LITERAL) continue; // a bare number agrees with whatever the others are
+    if (d === UNKNOWN) { sawUnknown = true; continue; }
     if (known === undefined) known = d;
     else if (!eqDim(known, d)) {
       out.push(warn(e.loc, `${e.name}() arguments disagree on units: ${fmtDim(known)} vs ${fmtDim(d)}`));
     }
   }
-  return known ?? UNKNOWN;
+  return known ?? (sawUnknown ? UNKNOWN : LITERAL);
 }
 
 /** Warn if the i-th argument resolves to a known dimension that isn't time. */
@@ -333,7 +379,7 @@ function requireTime(e: Expr & { kind: "call" }, i: number, env: UnitEnv, out: D
   const arg = e.args[i];
   if (!arg) return;
   const d = inferDim(arg, env, out);
-  if (d !== UNKNOWN && !eqDim(d, env.time)) {
+  if (d !== UNKNOWN && d !== LITERAL && !eqDim(d, env.time)) {
     out.push(warn(e.loc, `${e.name}() time constant should be in ${fmtDim(env.time)}, got ${fmtDim(d)}`));
   }
 }
@@ -382,7 +428,7 @@ export function checkUnits(model: Model, out: Diagnostic[]): void {
     const init = inferDim(s.initExpr, env, out);
     // A bare numeric initial value is read as "in the stock's units" (idiomatic),
     // so only a concretely dimensioned, conflicting initial value is a mismatch.
-    if (declared && declared !== UNKNOWN && init !== UNKNOWN && !isDimensionless(init) && !eqDim(declared, init)) {
+    if (declared && declared !== UNKNOWN && declared !== LITERAL && init !== UNKNOWN && init !== LITERAL && !isDimensionless(init) && !eqDim(declared, init)) {
       out.push(warn(s.loc, `stock '${s.name}' is ${fmtDim(declared)} but its initial value is ${fmtDim(init)}`));
     }
   }
@@ -390,9 +436,9 @@ export function checkUnits(model: Model, out: Diagnostic[]): void {
   // d(stock) must be stock-units per unit of time.
   for (const [name, r] of model.rates) {
     const stockDim = env.names.get(name);
-    if (!stockDim || stockDim === UNKNOWN) continue;
+    if (!stockDim || stockDim === UNKNOWN || stockDim === LITERAL) continue;
     const rateDim = inferDim(r.expr, env, out);
-    if (rateDim === UNKNOWN) continue;
+    if (rateDim === UNKNOWN || rateDim === LITERAL) continue;
     const expected = divDim(stockDim, env.time);
     if (!eqDim(rateDim, expected)) {
       out.push(warn(r.loc, `change(${name}) should be ${fmtDim(expected)} (${fmtDim(stockDim)} per ${fmtDim(env.time)}), got ${fmtDim(rateDim)}`));

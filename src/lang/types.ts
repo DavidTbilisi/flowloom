@@ -81,6 +81,30 @@ export interface VarDecl {
   unit?: string;
   /** Subscript dimensions this var is declared over, if any. */
   dims?: string[];
+  /** Declared with `switch` — a 0/1 policy toggle. Still `kind: "param"` so every
+   *  consumer that treats params as knobs keeps working; the flag lets sensitivity
+   *  test off→on instead of ±frac, sliders render a toggle, and overrides accept
+   *  on/off. */
+  boolean?: true;
+  doc?: string;
+  loc: Loc;
+}
+
+/** One `key=value` binding inside a `scenario` line. The value is kept as the
+ *  literal text it was written as (a number, `on`/`off`, `euler`/`rk4`) and is
+ *  applied through the same override path as the CLI's `--set`. */
+export interface ScenarioSet {
+  key: string;
+  value: string;
+}
+
+/** A named set of overrides declared in the model text:
+ *  `scenario NAME key=value key=value …`. Scenarios are part of the canonical
+ *  text (a policy experiment is a first-class artefact, not shell history) and
+ *  are applied on top of the base model when chosen. */
+export interface ScenarioDecl {
+  name: string;
+  sets: ScenarioSet[];
   doc?: string;
   loc: Loc;
 }
@@ -112,6 +136,8 @@ export interface Model {
   tables: Map<string, TableDecl>;
   /** Declared subscript dimensions, by name. Consumed (emptied) by scalarization. */
   dims: Map<string, DimDecl>;
+  /** Named override sets (`scenario` lines), by name. The base model is the text itself. */
+  scenarios: Map<string, ScenarioDecl>;
   settings: SimSettings;
   /** Series chosen to be visible by default (the `plot` line). */
   plot: string[];

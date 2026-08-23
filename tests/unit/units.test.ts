@@ -134,3 +134,29 @@ param a [kg/] = 3`;
     expect(lintModel(parseModel(src)).some((d) => /unit/.test(d.message))).toBe(true);
   });
 });
+
+describe("bare literals are unit-polymorphic", () => {
+  const warnings = (src: string) => lintModel(parseModel(src)).map((d) => d.message).filter((m) => /unit|units|time constant/.test(m));
+
+  it("never warns against a literal on its own", () => {
+    const src = `stock Cash [gel] = 0
+param pay [gel/month] = 6400
+aux low = Cash < 0
+aux floor0 [gel] = max(0, Cash)
+aux tick = t % 12 == 0
+flow net [gel/month] = pay - if(low, 0, 100)
+change(Cash) = net
+sim dt=1 to=3 method=euler timeunit=month`;
+    expect(warnings(src)).toEqual([]);
+  });
+
+  it("still flags two concrete, conflicting units", () => {
+    const src = `stock S = 0\nparam a [people] = 3\nparam b [widgets] = 4\naux c = max(a, b)\nchange(S) = 0`;
+    expect(warnings(src).some((m) => /disagree on units/.test(m))).toBe(true);
+  });
+
+  it("checks a delay_fixed length against the time unit", () => {
+    const src = `stock S [gel] = 0\nparam n [gel] = 2\naux d = delay_fixed(S, n)\nchange(S) = 0\nsim timeunit=month`;
+    expect(warnings(src).some((m) => /delay_fixed\(\) time constant should be in month/.test(m))).toBe(true);
+  });
+});

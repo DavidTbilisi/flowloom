@@ -23,6 +23,8 @@ const EXTRA_ARITY: Record<string, [number, number]> = {
   smooth3: [2, 2],
   delay1: [2, 2],
   delay3: [2, 2],
+  previous: [1, 2], // previous(X, init?)
+  delay_fixed: [2, 3], // delay_fixed(X, length, init?)
   sum: [1, Infinity], // sum(X) collapses all dims; sum(X, axis, …) collapses named axes
 };
 

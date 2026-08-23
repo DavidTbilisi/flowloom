@@ -191,6 +191,7 @@ export function scalarize(model: Model): Model {
     stocks, rates, vars, varIndex,
     tables: model.tables,
     dims: new Map(), // consumed
+    scenarios: model.scenarios,
     settings: model.settings,
     plot,
     order,

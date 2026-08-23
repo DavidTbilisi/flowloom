@@ -8,9 +8,9 @@
 // across postMessage, so no manual serialization is needed.
 
 import { parseModel } from "../lang/index.js";
-import { simulateAsync, analyzeLoops, monteCarlo } from "../engine/index.js";
+import { simulateAsync, analyzeLoops, monteCarlo, applyScenario } from "../engine/index.js";
 
-interface RunReq { gen: number; source: string }
+interface RunReq { gen: number; source: string; scenario?: string }
 interface EnsembleReq { kind: "ensemble"; reqId: number; source: string; runs: number; seed?: number; series?: string[] }
 
 self.onmessage = async (e: MessageEvent<RunReq | EnsembleReq>) => {
@@ -31,9 +31,10 @@ self.onmessage = async (e: MessageEvent<RunReq | EnsembleReq>) => {
     return;
   }
 
-  const { gen, source } = e.data as RunReq;
+  const { gen, source, scenario } = e.data as RunReq;
   try {
     const model = parseModel(source);
+    applyScenario(model, scenario);
     // Both the simulation and the loop analysis are heavy on large models, so
     // run both here, off the main thread. LoopReport is plain data (structured-
     // cloneable), so it crosses postMessage without serialization.

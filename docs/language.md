@@ -27,7 +27,9 @@ stock Population [people] = 5      # the starting headcount
 | `flow NAME [unit] = EXPR` | A named rate. Identical to `aux` but drawn as a flow on the diagram. |
 | `aux NAME [unit] = EXPR` | An instantaneous computed value (a "converter"/variable). |
 | `param NAME [unit] = EXPR` | A constant. `const` is an accepted alias. |
+| `switch NAME = on\|off` | A **two-state policy toggle** — a param that is only ever 0 or 1. See [Switches](#switches). |
 | `table NAME = (x,y) (x,y) …` | A piecewise-linear **graphical/lookup function**. Call it as `NAME(x)`. |
+| `scenario NAME key=value …` | A **named set of overrides** kept in the text. See [Scenarios](#scenarios). |
 | `sim dt=… to=… start=… method=…` | Simulation settings. The toolbar edits this line. |
 | `plot A B C` | Which series are visible by default. |
 
@@ -37,7 +39,10 @@ unlike units, passing a dimensioned value to `exp`/`ln`/`sin`/…, and a
 `change(stock)` that isn't the stock's units per unit of time. Un-annotated names
 are treated as *unknown* (not dimensionless), so checking is opt-in and only fires
 where you've annotated enough to make the claim. Set the time unit with
-`sim timeunit=month` (defaults to `time`).
+`sim timeunit=month` (defaults to `time`). Bare numbers are **unit-polymorphic**:
+`Cash < 0`, `max(0, x)`, `t % 12` read the literal in the other operand's units and
+never warn on their own (the way a modeller reads them); under `*` and `/` a
+literal is a pure scalar.
 
 ### Stocks and rates — the engine
 
@@ -69,8 +74,51 @@ role and diagram appearance:
 
 Variables may reference stocks, params, and each other — but **not in an
 algebraic loop** (a flow cannot instantaneously depend on itself). Route genuine
-feedback through a stock, or through a delay. flowloom topologically orders
-variables automatically and reports algebraic loops as errors.
+feedback through a stock, or through a delay — the input of `smooth`/`delay1`/
+`delay3`/`previous`/`delay_fixed` is read from earlier steps, so it does not count
+as an instantaneous dependency. flowloom topologically orders variables
+automatically and reports algebraic loops as errors.
+
+### Switches
+
+```flow
+switch separate = off        # pay savings first (Profit First)
+switch rule48   = on         # 48-hour rule on impulse buys
+aux wants = if(separate, fromLeftover, fromBalance) * if(rule48, 0.3, 1)
+```
+
+A `switch` is a `param` that may only be `on`/`off` (`1`/`0`; `true`/`false` and
+`yes`/`no` are accepted too). It exists because a policy is two-state, and a
+two-state knob needs different treatment everywhere a number gets bumped:
+
+- `sensitivity` tests a switch **off → on** instead of ±10 % (a ±0.1 bump of `0`
+  lands on two truthy values and reads as Δ = 0 — exactly wrong for the knob you
+  most want ranked). Morris/Sobol sample it as {0, 1}.
+- The studio's Tune panel renders it as a toggle, and writes `on`/`off` back.
+- `--set separate=on`, MCP `set`, and scenario bindings accept `on`/`off`; any
+  other value is an error, so a switch can never silently hold `0.5`.
+
+### Scenarios
+
+```flow
+scenario safe     separate=on rule48=on
+scenario recovery separate=on pay=9000 Cash=5000    # the plan after the raise
+```
+
+A `scenario` is a named set of overrides that lives **in the model text** — a
+policy experiment is a first-class artefact, not shell history. Each binding may
+target a `param`, a `switch` (`on`/`off`), a stock's initial value, or a sim
+setting (`dt`/`to`/`start`/`seed`/`method`); the parser checks every key and value
+so a typo is a located error in the editor. `base` is reserved for the model as
+written. Scenarios are applied on top of the base text when chosen:
+
+- CLI: `flowloom run model.flow --scenario recovery` (then any `--set` on top);
+  `flowloom scenarios model.flow` lists them; `flowloom compare model.flow
+  --metric final:Cash,min:Cash` runs base + every scenario and prints one row per
+  scenario with deltas.
+- MCP: every analysis tool takes `scenario`; `flow_compare` tabulates.
+- Studio: the **▣ Scenario** picker under the plot runs one, overlaying the base
+  run as dashed lines; a Tune knob the scenario binds edits the scenario line.
 
 ### Tables (graphical functions)
 
@@ -141,6 +189,33 @@ feedback-loop detection.
 
 ```flow
 flow receiving = delay3(orders, leadTime)   # orders arrive after a delay
+```
+
+### Discrete periods: `previous`, `delay_fixed`
+
+A monthly budget or a yearly census is a **map on the time grid**, not an ODE:
+`stock(t+1) = stock(t) + change(t)`. Write it with `sim method=euler dt=1` (and
+`timeunit=month`) — under `rk4` the derivative is also sampled at `t + dt/2`, where
+a clock test like `t % 12 == 0` is false and `t == 7` never fires; `lint` warns when
+it sees clock tests under rk4.
+
+| Call | Behaviour |
+|---|---|
+| `previous(X, init?)` | `X` exactly one step ago. |
+| `delay_fixed(X, length, init?)` | `X` exactly `length` time units ago — a **pipeline** delay (`delay1`/`delay3` are exponential lags). |
+
+Both sample on the grid and hold their value across RK4 sub-steps (Vensim's
+`DELAY FIXED` has the same semantics). `length` is read once at `start` and
+rounded to whole steps, minimum one. Before enough history exists they return
+`init`, or `X`'s initial value when omitted. Because their input is read from
+earlier steps, they break instantaneous dependencies — `a = previous(b) + 1`,
+`b = a * 2` is legal. If `X` depends on the delay's own output *and* no `init` is
+given, the initial state is circular: `lint` says so and the run carries a note;
+give an explicit `init`.
+
+```flow
+aux statement [GEL] = delay_fixed(Cash, 2)     # the review reads a 2-month-old statement
+aux lastMonth [GEL] = previous(Cash)
 ```
 
 ## Subscripts (arrays)
@@ -223,7 +298,10 @@ sim dt=0.1 to=50 start=0 method=rk4
 - `dt` — integration step. Smaller is more accurate and slower.
 - `to` — end time. `start` — start time (default `0`).
 - `method` — `rk4` (classical Runge–Kutta, default, accurate) or `euler`
-  (simple, fast, useful when a model is defined on discrete periods).
+  (simple, fast, and the *right* choice when a model is defined on discrete
+  periods — see [Discrete periods](#discrete-periods-previous-delay_fixed)).
+- `timeunit` — the name of the time unit for units checking (e.g. `month`).
+- `seed` — the RNG seed for `random*()` (default `0`, so runs are reproducible).
 
 The toolbar's dt / to / method controls rewrite this exact line, so the text
 always reflects what ran.

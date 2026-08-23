@@ -223,7 +223,7 @@ export class Diagram {
         const stroke = internal ? cAxis : cPillStroke;
         const bw = 78, bh = 30, bx = p.x - bw / 2, by = p.y - bh / 2;
         g += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="15" fill="${cPillFill}" stroke="${stroke}" stroke-width="1.3" opacity="${dim}"/>`;
-        g += `<text x="${p.x}" y="${p.y - 1}" text-anchor="middle" font-size="10.5" fill="${cPillText}" opacity="${dim}" font-family="monospace">${esc(short(internal ? "delay" : n))}</text>`;
+        g += `<text x="${p.x}" y="${p.y - 1}" text-anchor="middle" font-size="10.5" fill="${cPillText}" opacity="${dim}" font-family="monospace">${esc(short(internal ? (n.startsWith("prev") ? "previous" : n.startsWith("fixed") ? "fixed delay" : "delay") : n))}</text>`;
         if (value != null && Number.isFinite(value))
           g += `<text x="${p.x}" y="${p.y + 11}" text-anchor="middle" font-size="10" fill="${cMuted}" opacity="${dim}" font-family="monospace">${fmtShort(value)}</text>`;
       }

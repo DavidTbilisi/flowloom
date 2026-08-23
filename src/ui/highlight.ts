@@ -40,7 +40,9 @@ export const KEYWORDS = new Set([
   "aux",
   "param",
   "const",
+  "switch",
   "table",
+  "scenario",
   "sim",
   "plot",
 ]);

@@ -37,11 +37,13 @@ export interface SweepResult {
 export interface SensitivityRow {
   param: string;
   base: number;
-  /** Metric at base − |base|·frac and base + |base|·frac. */
+  /** Metric at base − |base|·frac and base + |base|·frac — or, for a switch, at off (0) and on (1). */
   low: number;
   high: number;
-  /** high − low: signed swing in the metric across the ±frac bump. */
+  /** high − low: signed swing in the metric across the ±frac bump (off → on for a switch). */
   delta: number;
+  /** Set for a `switch`: the row compares off vs on rather than a ±frac bump. */
+  switch?: true;
 }
 
 export interface SensitivityResult {
@@ -86,6 +88,11 @@ export async function sweepParam(
  * One-factor-at-a-time sensitivity: bump each param by ±frac of its base value,
  * measure the metric at each end, and rank by the size of the swing. With no
  * `params`, every param in the model is tested. Non-numeric params are skipped.
+ *
+ * A `switch` is two-state, so a ±frac bump is meaningless for it (and actively
+ * misleading: bumping 0 by ±0.1 lands on two truthy values, so the swing reads
+ * as zero while flipping the switch could move the metric a lot). Switches are
+ * measured at off (0) and on (1) instead.
  */
 export async function sensitivity(
   model: Model,
@@ -99,6 +106,12 @@ export async function sensitivity(
   for (const name of names) {
     const base = op[name];
     if (base === undefined || !Number.isFinite(base)) continue;
+    if (model.varIndex.get(name)?.boolean) {
+      const low = (await metricWith(model, `${name}=0`, metric)).metric;
+      const high = (await metricWith(model, `${name}=1`, metric)).metric;
+      rows.push({ param: name, base, low, high, delta: high - low, switch: true });
+      continue;
+    }
     const d = base !== 0 ? Math.abs(base) * frac : frac;
     const low = (await metricWith(model, `${name}=${base - d}`, metric)).metric;
     const high = (await metricWith(model, `${name}=${base + d}`, metric)).metric;

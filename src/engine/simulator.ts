@@ -80,8 +80,11 @@ export function runPlan(
   // Seed is constant for the whole run; write it once into its reserved slot
   // (shared with the WASM backend's linear memory). Default 0 ⇒ reproducible.
   backend.mem[plan.seedSlot] = model.settings.seed ?? 0;
-  initStateInto(plan, backend.mem, model.settings.start);
+  const settled = initStateInto(plan, backend.mem, model.settings.start);
   const out = runIntegration(plan, backend, model.settings);
+  const note = settled
+    ? out.note
+    : `initial state did not settle — a previous()/delay_fixed() without an init value sits in a loop with its own input; give it an explicit init (e.g. previous(X, 0))${out.note ? `; ${out.note}` : ""}`;
   return {
     t: out.t,
     series: out.series,
@@ -90,7 +93,7 @@ export function runPlan(
     varNames: plan.varNames,
     dt,
     method,
-    note: out.note,
+    ...(note ? { note } : {}),
   };
 }
 

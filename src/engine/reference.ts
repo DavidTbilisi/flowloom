@@ -36,9 +36,11 @@ const KEYWORDS: RefEntry[] = [
   { name: "aux", kind: "keyword", signature: "aux NAME [unit] = EXPR", doc: "vars", summary: "An instantaneous computed value (a converter/variable) recomputed every step." },
   { name: "param", kind: "keyword", signature: "param NAME [unit] = EXPR", doc: "vars", summary: "A constant knob — evaluated once. `const` is an alias." },
   { name: "const", kind: "keyword", signature: "const NAME [unit] = EXPR", doc: "vars", summary: "A constant knob (alias of param)." },
+  { name: "switch", kind: "keyword", signature: "switch NAME = on|off", doc: "switches", summary: "A two-state policy toggle (a param that is only ever 0 or 1). Use it in if(NAME, a, b). Sensitivity tests it off→on, sliders show a toggle, and overrides/scenarios accept on/off." },
+  { name: "scenario", kind: "keyword", signature: "scenario NAME key=value key=value …", doc: "scenarios", summary: "A named set of overrides kept in the text: params, switches (on/off), stock initial values, or dt/to/start/seed/method. Run it with --scenario NAME / the scenario picker; `compare` tabulates base vs every scenario." },
   { name: "table", kind: "keyword", signature: "table NAME = (x,y) (x,y) …", doc: "tables", summary: "A graphical lookup function; call it as NAME(x). Piecewise-linear, clamped past the ends." },
   { name: "dim", kind: "keyword", signature: "dim NAME = A, B, C", doc: "subscripts", summary: "A subscript dimension (array index) with named elements. Declare arrays as stock X[NAME], use X[NAME] elementwise, and collapse with sum(X)." },
-  { name: "sim", kind: "keyword", signature: "sim dt=.1 to=50 start=0 method=rk4", doc: "sim", summary: "Simulation settings. The toolbar edits this line — the text stays canonical." },
+  { name: "sim", kind: "keyword", signature: "sim dt=.1 to=50 start=0 method=rk4 timeunit=month seed=0", doc: "sim", summary: "Simulation settings. For a discrete-period model (monthly, yearly) use method=euler dt=1 — a map, not an ODE. timeunit names the time unit for units checking; seed fixes random*(). The toolbar edits this line — the text stays canonical." },
   { name: "plot", kind: "keyword", signature: "plot A B C", doc: "sim", summary: "Which series start visible on the plot and legend." },
 ];
 
@@ -88,6 +90,8 @@ const STATEFUL_ENTRIES: RefEntry[] = [
   { name: "smooth3", kind: "stateful", signature: "smooth3(input, τ)", arity: [2, 2], doc: "delays", summary: "Third-order (smoother) exponential smoothing." },
   { name: "delay1", kind: "stateful", signature: "delay1(input, τ)", arity: [2, 2], doc: "delays", summary: "First-order material delay — output lags input by ~τ." },
   { name: "delay3", kind: "stateful", signature: "delay3(input, τ)", arity: [2, 2], doc: "delays", summary: "Third-order material delay (a more realistic pipeline lag)." },
+  { name: "previous", kind: "stateful", signature: "previous(X, init?)", arity: [1, 2], doc: "discrete", summary: "X exactly one step ago (sample-and-hold on the time grid). Before the first step it is init, or X's initial value. Breaks an instantaneous dependency: a = previous(b), b = a + 1 is legal." },
+  { name: "delay_fixed", kind: "stateful", signature: "delay_fixed(X, length, init?)", arity: [2, 3], doc: "discrete", summary: "X exactly `length` time units ago — a pipeline delay, not an exponential lag (compare delay1/delay3). length is read once at t=start and rounded to whole steps (min 1). Before enough history exists it is init, or X's initial value." },
 ];
 
 /** The full catalog, in a stable, readable order. */

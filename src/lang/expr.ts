@@ -180,6 +180,50 @@ export function freeVars(e: Expr, out: Set<string> = new Set()): Set<string> {
   return out;
 }
 
+/**
+ * Builtins whose first argument is read *across a time boundary*: the value they
+ * return at step i depends on the argument at earlier steps only, never on its
+ * value at step i. They are therefore legitimate ways to break an algebraic loop
+ * (`a = smooth(b, τ)`, `b = a + 1` is fine — that's what a delay is for), so the
+ * parser's instantaneous-dependency sort must not see through them. Mirrors the
+ * engine's STATEFUL set (compile.ts rewrites these); kept here so src/lang stays
+ * engine-free.
+ */
+export const TIME_CROSSING = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3", "previous", "delay_fixed"]);
+
+/** Names an expression depends on *instantaneously* (this step). Like freeVars,
+ *  but the first argument of a time-crossing builtin is skipped — its other
+ *  arguments (a time constant, an initial value) are still instantaneous. */
+export function instantVars(e: Expr, out: Set<string> = new Set()): Set<string> {
+  switch (e.kind) {
+    case "num":
+      break;
+    case "ident":
+    case "index":
+      out.add(e.name);
+      break;
+    case "unary":
+      instantVars(e.arg, out);
+      break;
+    case "binary":
+      instantVars(e.left, out);
+      instantVars(e.right, out);
+      break;
+    case "call": {
+      const name = e.name.toLowerCase();
+      if (name === "sum") {
+        if (e.args[0]) instantVars(e.args[0], out);
+      } else if (TIME_CROSSING.has(name)) {
+        for (const a of e.args.slice(1)) instantVars(a, out);
+      } else {
+        for (const a of e.args) instantVars(a, out);
+      }
+      break;
+    }
+  }
+  return out;
+}
+
 /** Pretty-print an AST back to canonical text (used for AI round-tripping / tests). */
 export function printExpr(e: Expr): string {
   switch (e.kind) {
