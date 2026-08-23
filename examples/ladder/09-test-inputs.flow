@@ -1,0 +1,14 @@
+# 09 — Test inputs: step, pulse, ramp.
+# Built-in functions that drive a model over time. All three feed one reservoir
+# so you can see each shape and how the stock integrates them. Use these to
+# stress-test any model: hit it with a shock and watch the loops absorb it.
+stock Level = 0
+
+aux stepIn  = step(8, 10)         # jumps to 8 at t=10        (permanent change)
+aux pulseIn = 6 * pulse(25, 4)    # height 6 for 4 units      (transient shock)
+aux rampIn  = ramp(0.4, 35, 55)   # slope 0.4 over t=35..55   (a trend)
+
+change(Level) = stepIn + pulseIn + rampIn - 0.2 * Level
+
+sim dt=0.1 to=60 method=rk4
+plot stepIn, pulseIn, rampIn, Level

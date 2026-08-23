@@ -1,0 +1,16 @@
+# 06 — Two tanks: coupling stocks into a chain.
+# The outflow of one stock is the inflow of the next. Chaining stocks like this
+# is how you build cascades, pipelines, and supply lines. Watch one drain as
+# the other fills, conserving the total.
+stock Upper [liters] = 100
+stock Lower [liters] = 0
+
+param k = 0.3       # transfer fraction per minute
+
+flow transfer = k * Upper        # drains Upper, fills Lower
+
+change(Upper) = -transfer
+change(Lower) =  transfer
+
+sim dt=0.1 to=25 method=rk4
+plot Upper, Lower

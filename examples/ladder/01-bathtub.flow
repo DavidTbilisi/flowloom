@@ -1,0 +1,13 @@
+# 01 — Bathtub: pure accumulation.
+# The simplest possible model. A stock is just an integral: with a constant
+# inflow minus a constant outflow, the level changes at a constant rate — a
+# straight line. No feedback yet.
+stock Water [liters] = 20
+
+param tapIn    = 8     # litres in per minute
+param drainOut = 3     # litres out per minute
+
+change(Water) = tapIn - drainOut
+
+sim dt=0.25 to=20 method=rk4
+plot Water

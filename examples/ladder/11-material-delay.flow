@@ -1,0 +1,16 @@
+# 11 — Material delay: a pipeline that lags.
+# Things in transit don't arrive instantly. delay3 models a realistic lead
+# time: a change in orders shows up at receiving spread gently over ~leadTime.
+# Delays are where overshoot and oscillation come from.
+stock Inventory [units] = 100
+
+param leadTime = 6
+param sales    = 22
+aux   orders   = 20 + step(15, 10)     # ordering jumps at t=10
+
+flow receiving = delay3(orders, leadTime)
+
+change(Inventory) = receiving - sales
+
+sim dt=0.1 to=60 method=rk4
+plot orders, receiving, Inventory

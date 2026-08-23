@@ -1,0 +1,20 @@
+# 12 — Bass diffusion: how a product spreads (two adoption loops).
+# Advertising reaches the untapped market (external), while word-of-mouth is a
+# reinforcing loop where adopters recruit the rest — until the market
+# saturates (balancing). The interplay gives the classic S-shaped take-up.
+stock Potential [people] = 1000
+stock Adopters  [people] = 0
+
+param p = 0.03      # advertising effectiveness
+param q = 0.40      # word-of-mouth strength
+param M = 1000      # market size
+
+flow fromAds  = p * Potential
+flow fromWom  = q * Adopters * Potential / M
+flow adoption = fromAds + fromWom
+
+change(Potential) = -adoption
+change(Adopters)  =  adoption
+
+sim dt=0.1 to=30 method=rk4
+plot Potential, Adopters, adoption

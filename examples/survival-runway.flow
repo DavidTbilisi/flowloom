@@ -1,0 +1,28 @@
+# How many months can we survive?
+#
+# Cash drains because monthly EXPENSES (in GEL) outrun monthly INCOME
+# (a USD salary, after giving away a 20% tithe). Everything is converted
+# to GEL with one exchange rate, so the stock is a single number.
+# Time axis is in MONTHS. "Survival" = the month Savings crosses zero.
+
+param fx     [GEL/USD] = 2.7      # GEL per USD — the big sensitivity, set to today's rate
+param tithe            = 0.20     # share of GROSS income given away
+
+# --- starting cash, both pots converted to GEL ---
+param usdSavings [USD]  = 4500
+param gelSavings [GEL]  = 1500
+stock Savings    [GEL]  = usdSavings * fx + gelSavings
+
+# --- monthly flows, in GEL/month ---
+param grossIncome [USD] = 1500    # salary per month, BEFORE tithe
+param expenses    [GEL] = 4000    # spending per month
+
+flow income [GEL] = grossIncome * (1 - tithe) * fx
+flow burn   [GEL] = expenses
+
+change(Savings) = income - burn   # net is NEGATIVE → savings bleed down
+
+aux deficit [GEL] = burn - income # what we lose each month (for reading)
+
+sim dt=0.1 to=36 method=rk4       # look 36 months ahead
+plot Savings deficit

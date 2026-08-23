@@ -1,0 +1,26 @@
+# 13 — SEIR epidemic: a longer flow-through chain (four stocks).
+# Adds an Exposed stage between Susceptible and Infected — a pre-infectious
+# incubation period. Each transition rate (sigma, gamma) is the reciprocal of
+# how long people linger in that stage. More stages ⇒ richer dynamics.
+# (Note: the stock is named "Exposed", not "E" — E is reserved for Euler's number.)
+stock S       [people] = 990
+stock Exposed [people] = 0
+stock I       [people] = 10
+stock R       [people] = 0
+
+param beta  = 0.5      # infectiousness
+param sigma = 0.2      # 1 / incubation period
+param gamma = 0.1      # 1 / infectious period
+param N     = 1000
+
+flow exposure = beta * S * I / N
+flow onset    = sigma * Exposed
+flow recovery = gamma * I
+
+change(S)       = -exposure
+change(Exposed) =  exposure - onset
+change(I)       =  onset - recovery
+change(R)       =  recovery
+
+sim dt=0.25 to=160 method=rk4
+plot S, Exposed, I, R

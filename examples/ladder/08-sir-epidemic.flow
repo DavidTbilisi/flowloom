@@ -1,0 +1,21 @@
+# 08 — SIR epidemic: three stocks in a flow-through chain.
+# People move S → I → R. The infection flow couples Susceptible and Infected:
+# reinforcing early (more infected ⇒ more infections), then balancing as the
+# susceptible pool runs dry. The classic epidemic curve.
+stock S [people] = 990
+stock I [people] = 10
+stock R [people] = 0
+
+param beta  = 0.4      # infectiousness
+param gamma = 0.1      # recovery rate
+param N     = 1000     # total population
+
+flow infection = beta * S * I / N
+flow recovery  = gamma * I
+
+change(S) = -infection
+change(I) =  infection - recovery
+change(R) =  recovery
+
+sim dt=0.25 to=120 method=rk4
+plot S, I, R

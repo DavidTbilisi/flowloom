@@ -1,0 +1,14 @@
+# 03 — Compound interest: exponential growth.
+# The mirror image of decay. When the INFLOW is proportional to the stock, the
+# stock compounds — the more you have, the faster it grows. This is a
+# reinforcing loop, and on its own it never stops.
+stock Balance [usd] = 1000
+
+param rate = 0.08     # growth fraction per year
+
+flow interest = rate * Balance
+
+change(Balance) = interest
+
+sim dt=0.1 to=40 method=rk4
+plot Balance

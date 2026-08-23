@@ -1,0 +1,22 @@
+# 07 — Predator–prey: coupled oscillation (Lotka–Volterra).
+# Two stocks locked in feedback produce endless cycles — neither ever settles.
+# Prey feed predator growth; predators suppress prey; the lag between them
+# drives the oscillation.
+stock Prey      [animals] = 40
+stock Predators [animals] = 9
+
+param birth = 0.6      # prey birth rate
+param death = 0.6      # predator death rate
+param hunt  = 0.02     # predation per encounter
+param gain  = 0.01     # predator gain per prey eaten
+
+flow preyBirths = birth * Prey
+flow predation  = hunt * Prey * Predators
+flow predBirths = gain * Prey * Predators
+flow predDeaths = death * Predators
+
+change(Prey)      = preyBirths - predation
+change(Predators) = predBirths - predDeaths
+
+sim dt=0.05 to=60 method=rk4
+plot Prey, Predators

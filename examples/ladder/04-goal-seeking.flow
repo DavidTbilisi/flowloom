@@ -1,0 +1,16 @@
+# 04 — Goal-seeking: closing a gap.
+# A balancing loop with a target. The rate depends on the GAP between where we
+# are and where we want to be — so it moves fast when far away and eases in as
+# the gap shrinks. The pattern behind thermostats, hiring-to-plan, restocking.
+stock Temp [degC] = 5
+
+param target = 21     # set-point
+param speed  = 0.4    # how fast we close the gap
+
+aux  gap     = target - Temp
+flow heating = speed * gap
+
+change(Temp) = heating
+
+sim dt=0.1 to=20 method=rk4
+plot Temp

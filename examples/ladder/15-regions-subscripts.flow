@@ -1,0 +1,20 @@
+# 15 — Subscripts: model many similar things as one array.
+# A dim declares named elements; a [dim] annotation makes one stock per element.
+# Equations are written once and run elementwise; a plain scalar broadcasts to
+# all elements, and sum() collapses the dimension back to a single number.
+dim region = North, South, East
+
+stock Population[region] = 100
+
+param birthRate = 0.05       # scalar — broadcasts to every region
+param crowding  = 0.0005     # density drag
+
+flow births[region] = birthRate * Population[region]
+flow deaths[region] = crowding * Population[region] * Population[region]
+
+change(Population[region]) = births[region] - deaths[region]
+
+aux Total = sum(Population)
+
+sim dt=0.1 to=40 method=rk4
+plot Total

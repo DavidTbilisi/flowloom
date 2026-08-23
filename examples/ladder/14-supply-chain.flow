@@ -1,0 +1,21 @@
+# 14 — Supply chain: stocks + a shipping delay + an ordering policy.
+# Inventory is steered toward a target by ordering the gap, but orders arrive
+# only after a lead time. The delay fighting the correction policy produces the
+# classic "bullwhip" overshoot and oscillation in response to a demand step.
+stock Inventory [units] = 100
+stock OnOrder   [units] = 0
+
+param target   = 100
+param adjust   = 0.3       # how hard we correct the inventory gap
+param leadTime = 4
+aux   demand   = 20 + step(10, 15)     # a step rise in demand at t=15
+
+aux  desired  = adjust * (target - Inventory) + demand
+flow ordering = max(desired, 0)
+flow arriving = delay3(ordering, leadTime)
+
+change(OnOrder)   = ordering - arriving
+change(Inventory) = arriving - demand
+
+sim dt=0.1 to=80 method=rk4
+plot Inventory, ordering, arriving, demand

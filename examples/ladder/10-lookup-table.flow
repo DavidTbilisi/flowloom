@@ -1,0 +1,15 @@
+# 10 — Lookup table: a nonlinear relationship you draw, not derive.
+# Some relationships aren't a tidy formula — they're a curve. A table maps an
+# input to an output through breakpoints, interpolating between them and
+# clamping at the ends. Here the drain rate rises nonlinearly with the level.
+stock Water [liters] = 80
+
+param inflow = 4
+table drainCurve = (0,0) (20,1) (40,4) (60,9) (80,16)
+
+flow draining = drainCurve(Water)
+
+change(Water) = inflow - draining
+
+sim dt=0.1 to=40 method=rk4
+plot Water, draining

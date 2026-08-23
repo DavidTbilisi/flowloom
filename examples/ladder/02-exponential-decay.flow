@@ -1,0 +1,14 @@
+# 02 — Draining: exponential decay (the first feedback loop).
+# When the OUTFLOW is proportional to the stock, the stock loses a fixed
+# FRACTION each step, not a fixed amount — so it decays toward zero, fast at
+# first then ever slower. This is a balancing loop.
+stock Water [liters] = 100
+
+param k = 0.2     # fraction drained per minute
+
+flow draining = k * Water
+
+change(Water) = -draining
+
+sim dt=0.1 to=30 method=rk4
+plot Water

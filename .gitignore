@@ -7,3 +7,8 @@ test-results/
 playwright-report/
 .playwright/
 coverage/
+
+# tutorial/ladder render artifacts (rebuilt by tutorials/build-tutorial.mjs; ~108M of mp4/mp3)
+tutorials/build/
+tutorials/out/
+examples/ladder/videos/

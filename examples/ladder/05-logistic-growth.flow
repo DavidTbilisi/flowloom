@@ -1,0 +1,15 @@
+# 05 — Logistic growth: two loops in one structure.
+# Reinforcing growth braked by a balancing loop as the stock nears its ceiling.
+# The SAME structural loop flips polarity over the run — reinforcing while
+# small, balancing near capacity — which is why flowloom may label it R then B.
+stock Population [animals] = 10
+
+param r = 0.8       # intrinsic growth rate
+param K = 1000      # carrying capacity (the ceiling)
+
+flow growth = r * Population * (1 - Population / K)
+
+change(Population) = growth
+
+sim dt=0.1 to=25 method=rk4
+plot Population

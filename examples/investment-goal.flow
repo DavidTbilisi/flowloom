@@ -1,0 +1,28 @@
+# Investing your BOOK income — and why a product beats a salary as the source.
+#
+# Money is fungible: once invested, a $ from salary and a $ from a book grow the
+# same. The real edge of the book is that its OUTPUT can grow — salary can't.
+# So there are TWO compounding engines stacked here:
+#   • Balance — the investment, +20%/yr on whatever is in it (reinforcing)
+#   • Sales   — copies/month, creeping up via reviews / word of mouth / more titles
+# Every dollar of book profit is swept straight into the investment.
+
+stock Balance [USD]      = 0       # investment, funded ONLY by book profit
+stock Sales   [books]    = 5       # copies sold per month right now (start modest)
+
+param price        [USD] = 10      # Gumroad price per copy
+param annualReturn       = 0.2     # investment return
+param salesGrowth        = 3       # extra copies/month gained per year (audience grows)
+
+aux  rate    = ln(1 + annualReturn)
+flow growth  [USD]   = rate * Balance          # the investment compounding
+flow deposit [USD]   = Sales * price * 12       # ALL book profit, in $/yr
+flow rising  [books] = salesGrowth              # the book audience slowly grows
+
+change(Balance) = growth + deposit
+change(Sales)   = rising
+
+aux  target [USD] = 50000                       # the sum you're aiming for
+
+sim dt=0.05 to=20 method=rk4                    # 20-year horizon; time axis in years
+plot Balance target deposit

@@ -1,0 +1,36 @@
+# 16 — Capstone: a startup, combining everything.
+# Three stocks and several interacting loops:
+#   • REINFORCING: more customers → revenue → cash → salespeople → more customers
+#   • BALANCING:   market saturation (a lookup) and customer churn
+#   • DELAY:       new hires take time to onboard (delay3)
+# Watch growth accelerate, then bend as the market fills and churn bites.
+stock Customers   [people] = 100
+stock Salespeople [people] = 5
+stock Cash        [usd]    = 50000
+
+param price      = 30        # revenue per customer per month
+param salaryCost = 6000      # cost per salesperson per month
+param hireFrac   = 0.5       # fraction of affordable headroom actually hired
+param hireDelay  = 2         # months to onboard a hire
+param churnRate  = 0.04      # monthly customer loss
+param market     = 5000      # total addressable market
+
+# each rep wins fewer new customers as the market fills (a drawn curve)
+table winRate = (0,12) (2500,7) (5000,0)
+
+aux  saturation = winRate(Customers)
+flow wins       = Salespeople * saturation * (1 - Customers / market)
+flow churn      = churnRate * Customers
+change(Customers) = wins - churn
+
+aux  revenue = price * Customers
+flow spend   = salaryCost * Salespeople
+change(Cash) = revenue - spend
+
+aux  affordable = max(Cash / salaryCost, 0)
+aux  wantHires  = hireFrac * (affordable - Salespeople)
+flow hiring     = delay3(max(wantHires, 0), hireDelay)
+change(Salespeople) = hiring
+
+sim dt=0.1 to=48 method=rk4
+plot Customers, Salespeople, Cash

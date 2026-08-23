@@ -1,0 +1,58 @@
+# Survival -> Book -> Investment: the full chain, with a prudent buffer.
+#
+# Three stocks, three phases:
+#   1. SURVIVE   — salary alone leaves a gap; the cash buffer drains.
+#   2. REFILL    — a growing book closes the gap, then rebuilds the buffer
+#                  back up to an emergency-fund target BEFORE investing.
+#   3. COMPOUND  — only once the buffer is safe does surplus feed an
+#                  investment that compounds (returns on returns).
+#
+# Two engines stacked: a book (linear growth) feeding a balance (exponential).
+# Time axis is in MONTHS. All money in GEL (USD converted via fx).
+
+param fx     [GEL/USD] = 2.646     # GEL per USD — set to today's rate
+param tithe            = 0.20      # share of ALL income given away
+param annualReturn     = 0.2       # investment return per year
+
+# --- liquid cash buffer (your starting savings) ---
+param usdSavings [USD] = 4500
+param gelSavings [GEL] = 1500
+stock Savings    [GEL] = usdSavings * fx + gelSavings
+
+# how big a cushion to rebuild before investing a cent (~2.7 months of expenses)
+param emergencyTarget [GEL] = 10000
+
+# --- salary (flat) ---
+param grossIncome [USD] = 1500
+param expenses    [GEL] = 3720
+flow income [GEL] = grossIncome * (1 - tithe) * fx
+flow burn   [GEL] = expenses
+
+# --- the book: a GROWING income engine ---
+stock Sales      [books] = 10      # copies sold per month right now
+param price      [USD]   = 10      # Gumroad price per copy
+param salesGrowth        = 6       # extra copies/month gained per YEAR
+flow  rising     [books] = salesGrowth / 12
+change(Sales) = rising
+flow  bookIncome [GEL]   = Sales * price * (1 - tithe) * fx
+
+# --- monthly net, split into shortfall vs surplus ---
+aux net       [GEL] = income + bookIncome - burn
+aux surplus   [GEL] = max(net, 0)   # left over after living costs
+aux shortfall [GEL] = max(-net, 0)  # the hole, when income < expenses
+
+# --- the refill-first routing rule ---
+# Surplus rebuilds the buffer up to emergencyTarget; only the OVERFLOW invests.
+aux toInvest  [GEL] = if(Savings >= emergencyTarget, surplus, 0)
+aux toSavings [GEL] = surplus - toInvest
+
+change(Savings) = toSavings - shortfall
+
+# --- the investment: a COMPOUNDING engine ---
+stock Balance [GEL] = 0
+aux   rate          = ln(1 + annualReturn) / 12   # monthly continuous rate
+flow  growth  [GEL] = rate * Balance              # returns on returns
+change(Balance) = growth + toInvest
+
+sim dt=0.1 to=60 method=rk4
+plot Savings Balance bookIncome
