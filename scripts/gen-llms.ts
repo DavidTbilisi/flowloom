@@ -102,8 +102,14 @@ ${group("stateful", "Stateful builtins — carry state across steps")}
   raise=on income=9000 Cash=5000\`. Run it with --scenario NAME (CLI/MCP) or the
   studio's Scenario picker; \`compare\` runs base + every scenario and tabulates
   chosen metrics with deltas. "base" is always the model as written.
-- Feedback-loop polarity — R (reinforcing) / B (balancing) — is read at t = start
-  by numerical perturbation. Nonlinear models can flip polarity as they evolve.
+- Feedback-loop polarity — R (reinforcing) / B (balancing) — is read by numerical
+  perturbation at every sampled step of the run. A loop gated by an if() gets
+  its polarity when the gate opens ("from t=…"); a loop that changes sign is
+  flagged (R~B); a loop whose link is flat at every sample never engages in this
+  run and is listed as inactive with that link named (flip a switch / pick a
+  scenario to bring it alive). \`loops --metric SPEC\` ranks the active loops by
+  knockout — cut one link, re-run, measure — so "which loop runs this system"
+  has a number.
 - Every referenced name must be defined, and a model needs at least one stock.
   Algebraic loops among aux/flow/param (a cycle with no stock to break it) are an
   error; put a stock or a delay in the loop.
@@ -124,7 +130,7 @@ ${example!.source.replace(/\s*$/, "")}
   flowloom solve model.flow --param P --metric SPEC --target N   find the knob value that hits a target
   flowloom explain model.flow                      plain-language summary
   flowloom describe model.flow --json              structure (stocks/rates/vars/loops) as JSON
-  flowloom loops model.flow --json                 feedback loops with R/B polarity
+  flowloom loops model.flow [--metric SPEC] [--all] [--json]   feedback loops, polarity read along the run; --metric ranks by knockout
   flowloom check model.flow                        parse + lint; non-zero exit on parse error
   flowloom lint model.flow [--json]                non-fatal warnings (unused params, dead vars, units, bad τ)
   flowloom montecarlo model.flow --runs N          percentile bands across N seeded runs

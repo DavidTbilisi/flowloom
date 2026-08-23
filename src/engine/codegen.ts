@@ -285,6 +285,10 @@ export function runIntegration(
   plan: SimPlan,
   backend: DerivBackend,
   settings: { dt: number; to: number; start: number; method: "euler" | "rk4" },
+  /** Called after each step's first derivative evaluation, with the full scope
+   *  vector (every state, var and internal slot at that instant). Used by the
+   *  loop analyzer to read link signs along the actual trajectory. */
+  onStep?: (i: number, time: number, mem: Float64Array) => void,
 ): RunResult {
   const { dt, to, start, method } = settings;
   const steps = Math.max(1, Math.round((to - start) / dt));
@@ -319,6 +323,7 @@ export function runIntegration(
     backend.deriv(time);
     for (const f of fixed) f.buf[i % f.m] = mem[f.in]!;
     for (let j = 0; j < ns; j++) k1[j] = rates[j]!;
+    if (onStep) onStep(i, time, mem);
 
     t.push(time);
     for (let o = 0; o < plan.outSlots.length; o++) cols[o]!.push(mem[plan.outSlots[o]!]!);

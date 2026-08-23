@@ -46,7 +46,11 @@ dynamics, and check the numbers. Validate, don't vibe.
   to slots in a reused typed array (no `eval`), and **very large models run in a
   Web Worker with a generated WebAssembly backend** so the UI never blocks.
 - **Automatic feedback-loop analysis** — a signed influence graph finds every
-  loop and labels it **R** (reinforcing) or **B** (balancing).
+  loop and labels it **R** (reinforcing) or **B** (balancing), with the signs
+  read **along the run**: a gated loop gets its polarity when the gate opens, a
+  loop that flips is marked `R~B`, and loops that never engage are listed as
+  inactive with the flat link named. `loops --metric` ranks the active loops by
+  **knockout** (cut a link, re-run, measure) — which loop is running the system.
 - **An animated diagram on an infinite canvas** — press play and watch stocks
   fill to their level while signed causal links march; hover a loop to trace it
   with its R/B badge. **Scroll to zoom, drag to pan, Fit to frame** — large

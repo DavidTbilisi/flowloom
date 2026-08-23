@@ -75,6 +75,7 @@ export function runPlan(
   model: Model,
   plan: SimPlan,
   backend: Parameters<typeof runIntegration>[1],
+  onStep?: Parameters<typeof runIntegration>[3],
 ): SimResult {
   const { dt, method } = model.settings;
   // Seed is constant for the whole run; write it once into its reserved slot
@@ -82,7 +83,7 @@ export function runPlan(
   backend.mem[plan.seedSlot] = model.settings.seed ?? 0;
   backend.mem[plan.dtSlot] = dt;
   const settled = initStateInto(plan, backend.mem, model.settings.start);
-  const out = runIntegration(plan, backend, model.settings);
+  const out = runIntegration(plan, backend, model.settings, onStep);
   const note = settled
     ? out.note
     : `initial state did not settle — a previous()/delay_fixed() without an init value sits in a loop with its own input; give it an explicit init (e.g. previous(X, 0))${out.note ? `; ${out.note}` : ""}`;

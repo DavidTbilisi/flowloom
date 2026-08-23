@@ -200,6 +200,13 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .ai-panel .ai-msg { color: var(--warn); font: 12px var(--mono); min-height: 16px; }
 .ai-panel .ai-foot { color: var(--dim); font-size: 11px; line-height: 1.45; }
 
+/* ── loops: inactive + flipping ───────────────────────────────────────── */
+.loopnote { color: var(--dim); font-size: 11px; }
+.loop.inactive { opacity: 0.6; }
+.lnk.dead { opacity: 0.55; }
+.deadloops { margin-top: 10px; }
+.deadloops > summary { cursor: pointer; color: var(--dim); font-size: 12px; line-height: 1.45; }
+
 /* ── live parameter sliders (Tune) ────────────────────────────────────── */
 .tune[hidden] { display: none; }
 .tune {

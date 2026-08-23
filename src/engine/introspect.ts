@@ -23,7 +23,10 @@ export interface ModelDescription {
   loops: {
     counts: { R: number; B: number; "?": number };
     capped: boolean;
-    items: Array<{ polarity: "R" | "B" | "?"; nodes: string[] }>;
+    /** Loops that never engage in this run (a link flat at every sample). */
+    inactive: number;
+    flipping: number;
+    items: Array<{ polarity: "R" | "B" | "?"; nodes: string[]; active: boolean; flips: boolean; resolvedAt?: number }>;
   };
 }
 
@@ -76,7 +79,9 @@ export function describeModel(model: Model): ModelDescription {
     loops: {
       counts: rep.counts,
       capped: rep.capped,
-      items: rep.loops.map((l) => ({ polarity: l.polarity, nodes: l.nodes })),
+      inactive: rep.inactive,
+      flipping: rep.flipping,
+      items: rep.loops.map((l) => ({ polarity: l.polarity, nodes: l.nodes, active: l.active, flips: l.flips, ...(l.resolvedAt !== undefined ? { resolvedAt: l.resolvedAt } : {}) })),
     },
   };
 }
@@ -95,7 +100,7 @@ export function explainModel(model: Model): string {
   lines.push(
     `${nStock} stock${plural(nStock)}, ${nVar} variable${plural(nVar)}, ` +
       `${nLoop} feedback loop${plural(nLoop)} (${R} reinforcing, ${B} balancing` +
-      `${amb ? `, ${amb} ambiguous` : ""}).`,
+      `${amb ? `, ${amb} never active in this run` : ""}${d.loops.flipping ? `, ${d.loops.flipping} flipping` : ""}).`,
   );
 
   if (d.stocks.length) {
@@ -142,10 +147,14 @@ export function explainModel(model: Model): string {
     for (const s of d.scenarios) lines.push(`  • ${s.name}: ${s.sets.map((x) => `${x.key}=${x.value}`).join(" ")}${s.doc ? ` — ${s.doc}` : ""}`);
   }
 
-  if (d.loops.items.length) {
-    lines.push("", "Feedback loops (polarity read at t = start; nonlinear models can flip later):");
-    for (const l of d.loops.items) lines.push(`  ${l.polarity}  ${l.nodes.join(" → ")}`);
+  const activeLoops = d.loops.items.filter((l) => l.active);
+  if (activeLoops.length) {
+    lines.push("", "Feedback loops (polarity read along the run):");
+    for (const l of activeLoops) lines.push(`  ${l.polarity}${l.flips ? "~" : " "} ${l.nodes.join(" → ")}${l.resolvedAt !== undefined ? `  (engages from t=${l.resolvedAt})` : ""}`);
+    if (d.loops.inactive) lines.push(`  … ${d.loops.inactive} more never engage in this run (an if() branch or gate stays flat).`);
     if (d.loops.capped) lines.push("  … loop search capped; more loops exist.");
+  } else if (d.loops.items.length) {
+    lines.push("", `Feedback loops: ${d.loops.items.length} structural, none engage in this run.`);
   }
 
   const { dt, to, start, method } = d.settings;

@@ -22,6 +22,7 @@ import {
   applyScenario,
   compareScenarios,
   searchPolicies,
+  loopDominance,
   describeModel,
   explainModel,
   summarizeRun,
@@ -176,9 +177,19 @@ export const handlers = {
     return text(r);
   },
 
-  flow_loops({ model }: { model: string }): ToolResult {
-    const rep = analyzeLoops(loadModel(model));
-    return text({ counts: rep.counts, capped: rep.capped, loops: rep.loops.map((l) => ({ polarity: l.polarity, nodes: l.nodes })) });
+  async flow_loops({ model, metric, all, set, scenario }: { model: string; metric?: string; all?: boolean; set?: string[]; scenario?: string }): Promise<ToolResult> {
+    const m = loadModel(model, set, scenario);
+    const rep = analyzeLoops(m);
+    const loops = rep.loops
+      .map((l, i) => ({ index: i + 1, polarity: l.polarity, active: l.active, flips: l.flips, nodes: l.nodes,
+        ...(l.resolvedAt !== undefined ? { resolvedAt: l.resolvedAt } : {}),
+        ...(l.deadLinks ? { deadLinks: l.deadLinks } : {}) }))
+      .filter((l) => all || l.active);
+    const base = { counts: rep.counts, flipping: rep.flipping, inactive: rep.inactive, capped: rep.capped, samples: rep.sampleTimes.length, loops,
+      ...(rep.inactive && !all ? { note: `${rep.inactive} loop(s) never engage in this run (a link is flat at every sample) and are omitted; pass all:true to list them with the flat link` } : {}) };
+    if (!metric) return text(base);
+    const dom = await loopDominance(m, metric, rep);
+    return text({ ...base, dominance: { metric: dom.metric, base: dom.base, rows: dom.rows, skipped: dom.skipped } });
   },
 
   flow_describe({ model, set, scenario }: { model: string; set?: string[]; scenario?: string }): ToolResult {
@@ -277,7 +288,7 @@ Don't guess the syntax. Read the resource flow://reference (a one-page grammar +
 The authoring loop:
 1. flow_check — parse + lint cheaply. Do this after every edit; it returns {line, col, message} diagnostics with a "did you mean" / recovery hint, so fix those before running.
 2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
-3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops) — to understand an existing model before changing it.
+3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops read along the run; with a metric, ranked by knockout) — to understand an existing model before changing it.
 
 Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
 
@@ -438,7 +449,17 @@ export function buildServer(): McpServer {
 
   server.registerTool(
     "flow_loops",
-    { title: "Feedback loops", description: "List the model's feedback loops with R/B polarity (read at t=start).", inputSchema: { model: modelArg } },
+    {
+      title: "Feedback loops",
+      description: "List the model's feedback loops with R/B polarity read along the actual run (a loop gated by an if() gets its polarity once the gate opens; loops that never engage are reported inactive with the flat link named; loops that flip R↔B are flagged). With `metric`, rank the active loops by knockout: cut one link of each, re-run, and report how far the metric moves — the answer to \"which loop is running this system?\".",
+      inputSchema: {
+        model: modelArg,
+        metric: metricArg.optional().describe("Rank loops by knockout on this metric (e.g. min:Cash)."),
+        all: z.boolean().optional().describe("Include loops that never engage in this run (default false)."),
+        set: setArg,
+        scenario: scenarioArg,
+      },
+    },
     guard(handlers.flow_loops),
   );
 

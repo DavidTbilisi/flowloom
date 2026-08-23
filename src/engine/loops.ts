@@ -1,14 +1,33 @@
-import type { Model } from "../lang/types.js";
+import type { Expr, Model } from "../lang/types.js";
 import { freeVars } from "../lang/expr.js";
 import { evalExpr, type EvalCtx } from "./eval.js";
-import { compile } from "./compile.js";
+import { compile, type Compiled } from "./compile.js";
+import { buildPlan, tsBackend, makeSlotMap } from "./codegen.js";
+import { runPlan } from "./simulator.js";
 
 // ── Feedback-loop detection ─────────────────────────────────────────────────
-// A signed influence graph: an edge u → v carries the sign of ∂v/∂u, read at
-// the model's initial operating point by numerical perturbation. A loop's
-// polarity is the product of its edge signs — an even number of negatives is
-// REINFORCING (R), odd is BALANCING (B). Polarity is read at t=start; nonlinear
-// models can change loop polarity as they evolve, which we note in the UI.
+// A signed influence graph: an edge u → v carries the sign of ∂v/∂u, read by
+// numerical perturbation. A loop's polarity is the product of its edge signs —
+// an even number of negatives is REINFORCING (R), odd is BALANCING (B).
+//
+// Signs depend on the operating point. Reading them only at t=start (the
+// classic approach) leaves every gated link — `if(Cash > cushion, …)` before the
+// cushion is reached, `month == 11` outside November — flat, and the loop
+// through it "?". So the analyzer runs the model once and reads every link's
+// sign at up to `samples` steps along the actual trajectory. A loop is *active*
+// at a sample when every link in it is non-zero there; its reading at such a
+// sample is the product of the signs. `polarity` is the reading at start when
+// the loop is active there (stable for the simple models the contract tests
+// pin); otherwise the reading at the first sample where it becomes active
+// (`resolvedAt` says when), or "?" if it never does. `trace` carries the
+// reading at every sample ("?" = inactive there) and `flips` is set when the
+// active readings disagree along the run (logistic growth: R early, B as the
+// ceiling bites). A loop that is never active has a link that is zero at every
+// sample — typically the untaken branch of an if() or a gate that never opens in
+// this run; it is reported as *inactive* with that link named, which for a
+// policy model is the useful fact: flip the switch and the loop comes alive.
+
+export type Polarity = "R" | "B" | "?";
 
 export interface Edge {
   from: string;
@@ -24,15 +43,39 @@ export interface InfluenceGraph {
 export interface Loop {
   /** Node sequence; the loop returns to nodes[0]. */
   nodes: string[];
+  /** Edges with their sign at t=start (what the diagram draws). */
   edges: Edge[];
-  polarity: "R" | "B" | "?";
+  /** Reading at start, or — when start is "?" — the later samples' agreed reading. */
+  polarity: Polarity;
+  /** Polarity at each of the report's `sampleTimes`. */
+  trace: Polarity[];
+  /** The polarity changed sign along the run (R ↔ B). */
+  flips: boolean;
+  /** Time of the first sample where a start-"?" loop became determined. */
+  resolvedAt?: number;
+  /** False when the loop never engages in this run: `deadLinks` are zero at every sample. */
+  active: boolean;
+  deadLinks?: Array<{ from: string; to: string }>;
 }
 
 export interface LoopReport {
   graph: InfluenceGraph;
   loops: Loop[];
   capped: boolean;
+  /** "?" counts loops that never engage in this run (see Loop.active). */
   counts: { R: number; B: number; "?": number };
+  /** Number of loops whose polarity flips along the run. */
+  flipping: number;
+  /** Number of loops that never engage in this run. */
+  inactive: number;
+  /** Times at which link signs were read (the first is t=start). */
+  sampleTimes: number[];
+}
+
+export interface LoopOptions {
+  /** Steps along the trajectory at which to read link signs (default: every
+   *  step, up to 64 evenly spaced; 1 ⇒ start only). */
+  samples?: number;
 }
 
 const MAX_LOOPS = 400;
@@ -43,19 +86,75 @@ const MAX_LOOPS = 400;
 // stop and mark the report capped. Keeps loop analysis bounded-time on any model.
 const MAX_TRAVERSALS = 300_000;
 
-export function analyzeLoops(model: Model): LoopReport {
-  const graph = influenceGraph(model);
-  const { loops, capped } = findLoops(graph);
+export function analyzeLoops(model: Model, opts: LoopOptions = {}): LoopReport {
+  const c = compile(model);
+  const { dt, to, start } = model.settings;
+  const steps = Math.max(1, Math.round((to - start) / dt));
+  const samples = Math.max(1, Math.floor(opts.samples ?? Math.min(steps + 1, 64)));
+  const points = samples > 1 ? trajectoryScopes(model, c, samples) : [{ t: model.settings.start, scope: operatingPoint(model) }];
+
+  // Structure is the same at every point (it comes from the free variables);
+  // only the signs move. Read them once per sample.
+  const links = structure(c);
+  const signsAt = points.map((pt) => readSigns(c, links, pt.scope));
+  const graph: InfluenceGraph = {
+    nodes: links.nodes,
+    edges: links.edges.map((e, k) => ({ from: e.from, to: e.to, sign: signsAt[0]![k]! })),
+  };
+
+  const { loops: found, capped } = findLoops(graph);
+  const edgeIndex = new Map(links.edges.map((e, k) => [`${e.from}|${e.to}`, k] as const));
+  const loops: Loop[] = found.map((l) => {
+    const ks = l.edges.map((e) => edgeIndex.get(`${e.from}|${e.to}`)!);
+    const trace: Polarity[] = signsAt.map((signs) => {
+      let neg = 0, amb = false;
+      for (const k of ks) { const sg = signs[k]!; if (sg === 0) amb = true; else if (sg < 0) neg++; }
+      return amb ? "?" : neg % 2 === 0 ? "R" : "B";
+    });
+    const firstActive = trace.findIndex((p) => p !== "?");
+    const determined = trace.filter((p) => p !== "?");
+    const flips = determined.some((p) => p !== determined[0]);
+    let polarity = trace[0]!;
+    let resolvedAt: number | undefined;
+    if (polarity === "?" && firstActive > 0) {
+      polarity = trace[firstActive]!;
+      resolvedAt = points[firstActive]!.t;
+    }
+    const deadLinks = ks
+      .map((k, j) => ({ k, edge: l.edges[j]! }))
+      .filter(({ k }) => signsAt.every((signs) => signs[k] === 0))
+      .map(({ edge }) => ({ from: edge.from, to: edge.to }));
+    const active = firstActive >= 0;
+    return {
+      nodes: l.nodes, edges: l.edges, polarity, trace, flips, active,
+      ...(resolvedAt !== undefined ? { resolvedAt } : {}),
+      ...(deadLinks.length ? { deadLinks } : {}),
+    };
+  });
+
   const counts = { R: 0, B: 0, "?": 0 };
   for (const l of loops) counts[l.polarity]++;
-  return { graph, loops, capped, counts };
+  const flipping = loops.filter((l) => l.flips).length;
+  const inactive = loops.filter((l) => !l.active).length;
+  return { graph, loops, capped, counts, flipping, inactive, sampleTimes: points.map((p) => p.t) };
 }
 
+/** The signed influence graph at t=start (what the diagram draws). */
 export function influenceGraph(model: Model): InfluenceGraph {
   const c = compile(model);
-  const scope = operatingPoint(model);
-  const ctx: EvalCtx = { scope, tables: c.tables };
+  const links = structure(c);
+  const signs = readSigns(c, links, operatingPoint(model));
+  return { nodes: links.nodes, edges: links.edges.map((e, k) => ({ from: e.from, to: e.to, sign: signs[k]! })) };
+}
 
+interface Structure {
+  nodes: string[];
+  /** Unsigned links, with the expression each one is read from. */
+  edges: Array<{ from: string; to: string; expr: Parameters<typeof freeVars>[0] }>;
+}
+
+/** Nodes and links — who reads whom — independent of any operating point. */
+function structure(c: Compiled): Structure {
   // Fixed-delay outputs are nodes (like delay stocks); their samplers are not —
   // the input expression links straight to the output node instead.
   const nodes = new Set<string>([
@@ -63,34 +162,66 @@ export function influenceGraph(model: Model): InfluenceGraph {
     ...c.fixed.map((f) => f.name),
     ...c.order.filter((v) => v.kind !== "param" && !v.isInternal).map((v) => v.name),
   ]);
-  const edges: Edge[] = [];
-
-  const linkFrom = (target: string, expr: Parameters<typeof freeVars>[0]) => {
-    const sources = [...freeVars(expr)].filter((id) => nodes.has(id));
-    if (sources.length === 0) return;
-    const base = evalExpr(expr, ctx);
-    for (const u of sources) {
-      const x0 = scope[u]!;
-      const h = 1e-6 * Math.max(1, Math.abs(x0));
-      scope[u] = x0 + h;
-      const up = evalExpr(expr, ctx);
-      scope[u] = x0 - h;
-      const dn = evalExpr(expr, ctx);
-      scope[u] = x0;
-      let sign: -1 | 0 | 1 = 0;
-      if (Number.isFinite(up) && Number.isFinite(dn) && Number.isFinite(base)) {
-        const slope = up - dn;
-        sign = slope > 0 ? 1 : slope < 0 ? -1 : 0;
-      }
-      edges.push({ from: u, to: target, sign });
-    }
+  const edges: Structure["edges"] = [];
+  const linkFrom = (target: string, expr: Parameters<typeof freeVars>[0], skipSelf = false) => {
+    for (const u of freeVars(expr)) if (nodes.has(u) && !(skipSelf && u === target)) edges.push({ from: u, to: target, expr });
   };
-
   for (const v of c.order) if (v.kind !== "param" && !v.isInternal) linkFrom(v.name, v.expr);
-  for (const s of c.state) if (s.rateExpr) linkFrom(s.name, s.rateExpr);
+  // A map written as a derivative — change(X) = (next − X) / dt — mentions X only
+  // to cancel it; that is assignment, not feedback. Its self-link would be a
+  // phantom balancing loop that shadows the real ones, so it is dropped. A
+  // genuine self-dependence (X inside `next`'s own expression) is kept.
+  for (const s of c.state) if (s.rateExpr) linkFrom(s.name, s.rateExpr, isMapAssignment(s.rateExpr, s.name));
   for (const f of c.fixed) linkFrom(f.name, f.inputExpr);
-
   return { nodes: [...nodes], edges };
+}
+
+/** `(A − X) / dt`, `(A − X)`, or `A − X` where A does not itself read X: the
+ *  discrete-map idiom for "X becomes A next step". */
+function isMapAssignment(rate: Expr, stock: string): boolean {
+  let e = rate;
+  if (e.kind === "binary" && e.op === "/" && e.right.kind === "ident" && e.right.name === "dt") e = e.left;
+  if (!(e.kind === "binary" && e.op === "-" && e.right.kind === "ident" && e.right.name === stock)) return false;
+  return !freeVars(e.left).has(stock);
+}
+
+/** Sign of every link at one operating point, by central-difference perturbation. */
+function readSigns(c: Compiled, links: Structure, scope: Record<string, number>): Array<-1 | 0 | 1> {
+  const ctx: EvalCtx = { scope, tables: c.tables };
+  return links.edges.map(({ from: u, expr }) => {
+    const x0 = scope[u]!;
+    const h = 1e-6 * Math.max(1, Math.abs(x0));
+    scope[u] = x0 + h;
+    const up = evalExpr(expr, ctx);
+    scope[u] = x0 - h;
+    const dn = evalExpr(expr, ctx);
+    scope[u] = x0;
+    if (!Number.isFinite(up) || !Number.isFinite(dn)) return 0;
+    const slope = up - dn;
+    return slope > 0 ? 1 : slope < 0 ? -1 : 0;
+  });
+}
+
+/** The full scope (every state, var and internal slot) at `samples` evenly
+ *  spaced steps of the actual run, first = start, last = end. */
+function trajectoryScopes(model: Model, c: Compiled, samples: number): Array<{ t: number; scope: Record<string, number> }> {
+  const plan = buildPlan(c);
+  const slots = makeSlotMap(plan);
+  const { dt, to, start } = model.settings;
+  const steps = Math.max(1, Math.round((to - start) / dt));
+  const wanted = new Set<number>();
+  const n = Math.min(samples, steps + 1);
+  for (let k = 0; k < n; k++) wanted.add(Math.round((k * steps) / Math.max(1, n - 1)));
+  const out: Array<{ t: number; scope: Record<string, number> }> = [];
+  runPlan(model, plan, tsBackend(plan), (i, time, mem) => {
+    if (!wanted.has(i)) return;
+    const scope: Record<string, number> = {};
+    for (const [name, slot] of slots) scope[name] = mem[slot]!;
+    scope.dt = dt;
+    out.push({ t: time, scope });
+  });
+  // a run that halted early still yields at least the start point
+  return out.length ? out : [{ t: start, scope: operatingPoint(model) }];
 }
 
 /** The model's t=start scope (stocks at initial values, variables evaluated). */
@@ -162,5 +293,5 @@ function makeLoop(edges: Edge[]): Loop {
   const ambiguous = edges.some((e) => e.sign === 0);
   const polarity: Loop["polarity"] = ambiguous ? "?" : neg % 2 === 0 ? "R" : "B";
   const nodes = [edges[0]!.from, ...edges.map((e) => e.to)];
-  return { nodes, edges, polarity };
+  return { nodes, edges, polarity, trace: [polarity], flips: false, active: polarity !== "?" };
 }

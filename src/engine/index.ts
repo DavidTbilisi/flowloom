@@ -10,7 +10,8 @@ export {
   type DerivBackend,
 } from "./codegen.js";
 export { compile, type Compiled, type StateVar, type CompiledVar, type FixedDelay } from "./compile.js";
-export { analyzeLoops, influenceGraph, findLoops, type Loop, type LoopReport, type Edge, type InfluenceGraph } from "./loops.js";
+export { analyzeLoops, influenceGraph, findLoops, operatingPoint, type Loop, type LoopReport, type LoopOptions, type Polarity, type Edge, type InfluenceGraph } from "./loops.js";
+export { loopDominance, type DominanceResult, type DominanceRow } from "./dominance.js";
 export { evalExpr, EvalError, type EvalCtx } from "./eval.js";
 export { BUILTINS, ARITY, STATEFUL, FIXED_DELAY, lookupTable } from "./builtins.js";
 export { validateModel } from "./validate.js";

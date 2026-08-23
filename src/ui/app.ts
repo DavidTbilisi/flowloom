@@ -744,21 +744,32 @@ export function mountApp(root: HTMLElement): Store {
       loopsWrap.innerHTML = `<p class="hint">No feedback loops — this is an open-loop model (nothing feeds back on itself).</p>`;
       return;
     }
+    const { inactive, flipping, sampleTimes } = run.loops;
     let html = `<p class="loopcount"><span class="badge R">${counts.R} R</span><span class="badge B">${counts.B} B</span>` +
-      (counts["?"] ? `<span class="badge Q">${counts["?"]} ?</span>` : "") +
-      ` &nbsp;${loops.length} loop${loops.length > 1 ? "s" : ""}` + (capped ? ` (capped)` : "") + `</p>`;
-    const sorted = [...loops].sort((a, b) => rank(a.polarity) - rank(b.polarity) || a.edges.length - b.edges.length);
-    for (const lp of sorted) {
+      (inactive ? `<span class="badge Q" title="never engage in this run">${inactive} inactive</span>` : "") +
+      ` &nbsp;${loops.length} loop${loops.length > 1 ? "s" : ""}` + (capped ? ` (capped)` : "") +
+      `<span class="loopnote"> · signs read at ${sampleTimes.length} points of the run${flipping ? ` · ${flipping} flip polarity` : ""}</span></p>`;
+    const sorted = [...loops].sort((a, b) => Number(b.active) - Number(a.active) || rank(a.polarity) - rank(b.polarity) || a.edges.length - b.edges.length);
+    const row = (lp: typeof loops[number]) => {
       let path = `<span class="node">${escapeHtml(lp.nodes[0]!)}</span>`;
       for (const e of lp.edges) {
+        const dead = lp.deadLinks?.some((d) => d.from === e.from && d.to === e.to);
         const sym = e.sign > 0 ? "+" : e.sign < 0 ? "−" : "?";
         const cls = e.sign > 0 ? "pos" : e.sign < 0 ? "neg" : "amb";
-        path += ` <span class="lnk ${cls}">→<sup>${sym}</sup></span> <span class="node">${escapeHtml(e.to)}</span>`;
+        path += ` <span class="lnk ${cls}${dead ? " dead" : ""}"${dead ? ' title="flat at every sample of this run"' : ""}>→<sup>${dead ? "0" : sym}</sup></span> <span class="node">${escapeHtml(e.to)}</span>`;
       }
-      const label = lp.polarity === "R" ? "reinforcing" : lp.polarity === "B" ? "balancing" : "indeterminate";
+      const seq = lp.trace.filter((p) => p !== "?").filter((p, i, a) => i === 0 || p !== a[i - 1]);
+      const label = !lp.active ? "never engages in this run"
+        : lp.flips ? `${seq.join(" → ")} along the run`
+        : (lp.polarity === "R" ? "reinforcing" : "balancing") + (lp.resolvedAt !== undefined ? ` from t=${fmt(lp.resolvedAt)}` : "");
       const bk = lp.polarity === "?" ? "Q" : lp.polarity;
-      html += `<div class="loop" data-help="ui:loop"><span class="badge ${bk}" data-help="ui:badge-${bk}">${lp.polarity}</span>` +
+      return `<div class="loop${lp.active ? "" : " inactive"}" data-help="ui:loop"><span class="badge ${bk}" data-help="ui:badge-${bk}">${lp.active ? (lp.flips ? seq.join("~") : lp.polarity) : "–"}</span>` +
         `<span class="looplabel">${label}</span><div class="path">${path}</div></div>`;
+    };
+    for (const lp of sorted) if (lp.active) html += row(lp);
+    const dead = sorted.filter((lp) => !lp.active);
+    if (dead.length) {
+      html += `<details class="deadloops"><summary>${dead.length} loop${dead.length > 1 ? "s" : ""} never engage${dead.length > 1 ? "" : "s"} in this run — a link (marked <sup>0</sup>) is flat at every sample: an untaken if() branch or a gate that never opens. Flip a switch or pick a scenario to bring them alive.</summary>${dead.map(row).join("")}</details>`;
     }
     loopsWrap.innerHTML = html;
   }
@@ -1110,8 +1121,8 @@ const SHELL = `
     </div>
     <div class="view hidden" id="view-loops">
       <p class="hint">Feedback loops, each labeled <b style="color:var(--green)">R</b> reinforcing or
-        <b style="color:var(--warn)">B</b> balancing. Polarity is the product of link signs read at the
-        initial state — nonlinear models can flip a loop's polarity as they evolve.</p>
+        <b style="color:var(--warn)">B</b> balancing. Polarity is the product of link signs, read at every sampled point of the run —
+        a gated loop engages when its gate opens (“from t=…”), a loop that changes sign is marked R~B, and loops whose links never move are listed as inactive.</p>
       <div id="loopsWrap"></div>
     </div>
     <div class="view hidden" id="view-table">

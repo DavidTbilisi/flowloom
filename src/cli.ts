@@ -27,6 +27,7 @@ import {
   applyScenario,
   compareScenarios,
   searchPolicies,
+  loopDominance,
   describeModel,
   explainModel,
   summarizeRun,
@@ -52,6 +53,8 @@ import {
   type LoopReport,
   type CompareResult,
   type PolicyResult,
+  type Loop,
+  type DominanceResult,
 } from "./engine/index.js";
 
 const VERSION = "0.1.0";
@@ -68,6 +71,7 @@ interface Args {
   switches: string[]; // --switch a,b for policies
   goal?: "max" | "min"; // --goal for policies
   cost: string[]; // --cost a=2,b=1 for policies
+  all: boolean; // --all: loops — list the inactive ones too
   rows: number; // sampled rows for the table view
   chart: boolean; // render sparklines after the table
   params: string[]; // --param: a knob (sweep/solve) or a list (sensitivity)
@@ -86,7 +90,7 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -95,6 +99,7 @@ function parseArgs(argv: string[]): Args {
       case "--tsv": a.format = "tsv"; break;
       case "--json": a.format = "json"; break;
       case "--chart": a.chart = true; break;
+      case "--all": a.all = true; break;
       case "--plot": a.plot.push(...splitList(need(argv, ++i, arg))); break;
       case "-s":
       case "--set": a.sets.push(need(argv, ++i, arg)); break;
@@ -305,17 +310,69 @@ async function cmdRun(args: Args): Promise<void> {
   }
 }
 
-function cmdLoops(args: Args): void {
+/** `[B]`, `[B from t=17]`, `[R~B]` (flips), `[inactive]`. */
+function loopTag(l: Loop): string {
+  if (!l.active) return "[inactive]";
+  const seq = l.trace.filter((p) => p !== "?");
+  const path = seq.filter((p, i) => i === 0 || p !== seq[i - 1]).join("~");
+  const tag = l.flips ? path : l.polarity;
+  return `[${tag}${l.resolvedAt !== undefined ? ` from t=${fmt(l.resolvedAt)}` : ""}]`;
+}
+
+function loopJson(rep: LoopReport, all: boolean) {
+  return {
+    counts: rep.counts, flipping: rep.flipping, inactive: rep.inactive, capped: rep.capped, sampleTimes: rep.sampleTimes,
+    loops: rep.loops
+      .map((l, i) => ({ index: i + 1, polarity: l.polarity, active: l.active, flips: l.flips, nodes: l.nodes,
+        ...(l.resolvedAt !== undefined ? { resolvedAt: l.resolvedAt } : {}),
+        ...(l.deadLinks ? { deadLinks: l.deadLinks } : {}),
+        ...(all || l.flips ? { trace: l.trace.join("") } : {}) }))
+      .filter((l) => all || l.active),
+  };
+}
+
+async function cmdLoops(args: Args): Promise<void> {
   const model = load(args);
   const rep: LoopReport = analyzeLoops(model);
+  let dom: DominanceResult | undefined;
+  if (args.metric) {
+    try { dom = await loopDominance(model, args.metric, rep); } catch (e) { die((e as Error).message); }
+  }
   if (args.format === "json") {
-    out(JSON.stringify({ counts: rep.counts, capped: rep.capped, loops: rep.loops.map((l) => ({ polarity: l.polarity, nodes: l.nodes })) }, null, 2));
+    const dominance = dom ? { metric: dom.metric, base: dom.base, rows: dom.rows, skipped: dom.skipped } : undefined;
+    out(JSON.stringify({ ...loopJson(rep, args.all), ...(dominance ? { dominance } : {}) }, null, 2));
     return;
   }
   const { R, B } = rep.counts;
-  out(`${rep.loops.length} feedback loop${rep.loops.length === 1 ? "" : "s"}  (${R} reinforcing, ${B} balancing${rep.counts["?"] ? `, ${rep.counts["?"]} ambiguous` : ""})${rep.capped ? "  [capped]" : ""}`);
-  rep.loops.forEach((l, i) => out(`  ${String(i + 1).padStart(2)}. [${l.polarity}] ${l.nodes.join(" → ")}`));
-  if (!rep.loops.length) out("  (no closed loops — this model is purely feed-forward)");
+  const n = rep.loops.length;
+  out(`${n} feedback loop${n === 1 ? "" : "s"}  (${R} reinforcing, ${B} balancing` +
+    `${rep.inactive ? `; ${rep.inactive} never engage in this run` : ""}${rep.flipping ? `; ${rep.flipping} flip polarity along the run` : ""})` +
+    `${rep.capped ? "  [capped]" : ""}  — signs read at ${rep.sampleTimes.length} points of the trajectory`);
+  rep.loops.forEach((l, i) => {
+    if (!l.active && !args.all) return;
+    out(`  ${String(i + 1).padStart(2)}. ${loopTag(l)} ${l.nodes.join(" → ")}`);
+    if (!l.active && l.deadLinks?.length) out(`      never engages: ${l.deadLinks.map((d) => `${d.from} → ${d.to}`).join(", ")} stay${l.deadLinks.length === 1 ? "s" : ""} flat`);
+  });
+  if (!n) out("  (no closed loops — this model is purely feed-forward)");
+  if (rep.inactive && !args.all) out(`  … ${rep.inactive} inactive loop${rep.inactive === 1 ? "" : "s"} hidden (a link in each is flat at every sample — an untaken if() branch or a gate that never opens); --all lists them`);
+  if (dom) {
+    out("");
+    out(`loop dominance on ${dom.metric} (base ${fmt(dom.base)}): cut one link of each active loop, re-run, rank by |Δ|`);
+    if (!dom.rows.length) out("  (no active loop could be cut)");
+    const maxAbs = Math.max(...dom.rows.filter((r) => !r.runaway).map((r) => Math.abs(r.delta))) || 1;
+    // Loops that share a cut link get the same Δ by construction — one line, all their numbers.
+    const groups = new Map<string, typeof dom.rows>();
+    for (const r of dom.rows) { const k = `${r.cut.from}|${r.cut.to}`; (groups.get(k) ?? groups.set(k, []).get(k)!).push(r); }
+    for (const rs of groups.values()) {
+      const r = rs[0]!;
+      const bar = r.runaway ? "∞" : "█".repeat(Math.round((Math.abs(r.delta) / maxAbs) * 20)) || "·";
+      const d = r.runaway ? "runaway".padStart(12) : fmt(r.delta).padStart(12);
+      const ids = rs.map((x) => x.loop).join("+");
+      const pol = [...new Set(rs.map((x) => x.polarity))].join("/");
+      out(`  ${ids.padStart(5)}. [${pol}] Δ=${d}  ${bar.padEnd(20)}  cut ${r.cut.from} → ${r.cut.to}${r.shared > rs.length ? ` (also in ${r.shared - rs.length} other active loop${r.shared - rs.length === 1 ? "" : "s"})` : ""}${r.note ? `  [${r.note}]` : ""}`);
+    }
+    for (const s of dom.skipped) out(`  ${String(s.loop).padStart(2)}. skipped — ${s.reason}`);
+  }
 }
 
 function cmdCheck(args: Args): void {
@@ -681,7 +738,9 @@ const HELP = `flowloom ${VERSION} — run text-first systems models from the she
 
 usage:
   flowloom run      <model.flow> [options]   simulate and print results
-  flowloom loops    <model.flow> [--json]    list reinforcing/balancing loops
+  flowloom loops    <model.flow> [--metric SPEC] [--all] [--json]
+                                             feedback loops, polarity read along the run; --metric ranks
+                                             them by knockout (cut a link, re-run); --all lists inactive ones
   flowloom check    <model.flow>             parse + lint; non-zero exit on parse error
   flowloom lint     <model.flow> [--json]    non-fatal warnings (unused params, dead vars, bad τ)
   flowloom describe <model.flow> [--json]    dump model structure (stocks/rates/vars/loops)
@@ -726,6 +785,7 @@ examples:
   flowloom summary examples/predator-prey.flow
   flowloom sweep examples/logistic-growth.flow --param carrying --range 500..2000/7 --metric final:Population
   flowloom sensitivity examples/sir-epidemic.flow --metric max:I
+  flowloom loops budget.flow --metric min:Cash
   flowloom solve examples/sir-epidemic.flow --param beta --metric max:I --target 300
   flowloom montecarlo model.flow --runs 200 --seed 1 --plot Revenue
   flowloom calibrate model.flow --param a,b --data observed.csv --against Infected=I
@@ -742,7 +802,7 @@ async function main(): Promise<void> {
   const args = parseArgs(argv);
   switch (args.cmd) {
     case "run": await cmdRun(args); break;
-    case "loops": cmdLoops(args); break;
+    case "loops": await cmdLoops(args); break;
     case "check": cmdCheck(args); break;
     case "lint": cmdLint(args); break;
     case "describe": cmdDescribe(args); break;

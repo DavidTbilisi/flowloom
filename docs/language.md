@@ -330,6 +330,26 @@ always reflects what ran.
 
 ## Feedback loops
 
+Link signs are read by numerical perturbation at **every sampled step of the
+run** (up to 64, evenly spaced), not only at `start`. A loop is *active* at a
+sample when each of its links is non-zero there; its polarity is the product of
+the signs. The reported polarity is the reading at `start` when the loop is
+active there, else the reading where it first engages (`from t=…`). A loop that
+changes sign along the run is marked `R~B` (logistic growth: reinforcing early,
+balancing as the ceiling bites). A loop with a link that is flat at every sample
+— the untaken branch of an `if()`, a gate that never opens in this run — is
+reported **inactive** with that link named; flipping a switch or choosing a
+scenario is what brings it alive. The map idiom `change(X) = (next − X) / dt`
+does not count as a self-loop of `X`.
+
+`flowloom loops model.flow --metric min:Cash` adds **loop dominance by
+knockout**: for each active loop, one link (the one shared by the fewest other
+active loops) is frozen at its start value, the model re-runs, and loops are
+ranked by how far the metric moves — the answer to "which loop is running this
+system". A cut that sends the metric off the scale is reported as *runaway*
+(the loop was holding the system together). MCP: `flow_loops` with `metric`.
+
+
 flowloom builds a **signed influence graph**: an edge `u → v` carries the sign of
 `∂v/∂u`, measured at the model's initial state. A loop's polarity is the product
 of its edge signs:
