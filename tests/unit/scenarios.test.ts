@@ -92,6 +92,11 @@ describe("scenario", () => {
     expect(parseModel(base + "scenario a k=1 k=2").diagnostics.some((d) => /more than once/.test(d.message))).toBe(true);
   });
 
+  it("warns when a var is named like a sim setting (overrides would miss it)", () => {
+    const m = parseModel(`stock S = 0\nparam start = 5\nchange(S) = start`);
+    expect(m.diagnostics.some((d) => /'start' is also a sim setting/.test(d.message))).toBe(true);
+  });
+
   it("applies like --set, and base is a no-op", () => {
     const m = parseModel(SRC);
     expect(applyScenario(m, "base")).toEqual([]);

@@ -98,3 +98,17 @@ describe("discrete-period lint", () => {
     expect(lintModel(parseModel(euler)).some((d) => /method=euler dt=1/.test(d.message))).toBe(false);
   });
 });
+
+describe("dt in expressions", () => {
+  it("resolves to the step size on every path (run, operating point, WASM)", async () => {
+    const src = `stock S = 0\nchange(S) = 2 / dt\naux d = dt\nsim dt=0.25 to=1 method=euler`;
+    const model = parseModel(src);
+    const res = simulate(model);
+    expect(res.series.get("d")!.every((v) => v === 0.25)).toBe(true);
+    expect(res.series.get("S")!.at(-1)).toBeCloseTo(8, 12); // 4 steps × 2
+    expect(analyzeLoops(model).graph.nodes).not.toContain("dt");
+    const plan = buildPlan(compile(model));
+    const wasm = runPlan(model, plan, await createWasmBackend(plan));
+    expect(wasm.series.get("S")).toEqual(res.series.get("S"));
+  });
+});

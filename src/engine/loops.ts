@@ -96,7 +96,7 @@ export function influenceGraph(model: Model): InfluenceGraph {
 /** The model's t=start scope (stocks at initial values, variables evaluated). */
 export function operatingPoint(model: Model): Record<string, number> {
   const c = compile(model);
-  const scope: Record<string, number> = { t: model.settings.start, time: model.settings.start };
+  const scope: Record<string, number> = { t: model.settings.start, time: model.settings.start, dt: model.settings.dt };
   for (const s of c.state) scope[s.name] = 0;
   for (const f of c.fixed) scope[f.name] = 0;
   for (const v of c.order) scope[v.name] = 0;

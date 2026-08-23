@@ -19,6 +19,8 @@ export interface SimPlan {
   size: number;
   tSlot: number;
   timeSlot: number;
+  /** Scope slot holding the step size (written once by runPlan), so `dt` is usable in expressions. */
+  dtSlot: number;
   /** Scope slot holding the run's RNG seed (written once by runPlan). */
   seedSlot: number;
   /** Scope slot holding the current integer step index (written each step). */
@@ -56,6 +58,7 @@ export function buildPlan(c: Compiled): SimPlan {
   };
   const tSlot = slot("t");
   const timeSlot = slot("time");
+  const dtSlot = slot("dt");
   // Reserved slots for the RNG. The `#` names can't collide with user identifiers
   // (same trick as compile.ts's delay#N internal stocks).
   const seedSlot = slot("#seed");
@@ -106,6 +109,7 @@ export function buildPlan(c: Compiled): SimPlan {
     size: slotOf.size,
     tSlot,
     timeSlot,
+    dtSlot,
     seedSlot,
     stepSlot,
     drawIndex,
@@ -134,6 +138,7 @@ function makeSlotMap(plan: SimPlan): Map<string, number> {
   const m = new Map<string, number>();
   m.set("t", plan.tSlot);
   m.set("time", plan.timeSlot);
+  m.set("dt", plan.dtSlot);
   plan.compiled.state.forEach((s, i) => m.set(s.name, plan.stateSlots[i]!));
   plan.compiled.fixed.forEach((f, i) => m.set(f.name, plan.fixedSlots[i]!.out));
   plan.compiled.order.forEach((v, i) => m.set(v.name, plan.varSteps[i]!.slot));

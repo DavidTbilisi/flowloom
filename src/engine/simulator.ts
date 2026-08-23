@@ -80,6 +80,7 @@ export function runPlan(
   // Seed is constant for the whole run; write it once into its reserved slot
   // (shared with the WASM backend's linear memory). Default 0 ⇒ reproducible.
   backend.mem[plan.seedSlot] = model.settings.seed ?? 0;
+  backend.mem[plan.dtSlot] = dt;
   const settled = initStateInto(plan, backend.mem, model.settings.start);
   const out = runIntegration(plan, backend, model.settings);
   const note = settled

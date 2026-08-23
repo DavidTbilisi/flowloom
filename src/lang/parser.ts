@@ -326,6 +326,11 @@ function claim(m: Raw, name: string, loc: Loc): void {
     push(m, "error", loc, `'${name}' is defined twice`);
     return;
   }
+  // A var named like a sim setting is legal but a trap: `--set start=5` and a
+  // scenario's `start=5` bind the *setting*, never this name.
+  if ((SETTING_KEYS as readonly string[]).includes(name)) {
+    push(m, "warning", loc, `'${name}' is also a sim setting — --set and scenario bindings of '${name}' change the setting, not this declaration; rename it (e.g. ${name}0) to make it overridable`);
+  }
   m.names.add(name);
 }
 
@@ -391,6 +396,7 @@ function validateReferences(m: Raw): void {
   const known = new Set<string>([
     "t",
     "time",
+    "dt",
     ...m.stocks.map((s) => s.name),
     ...m.vars.map((v) => v.name),
   ]);
