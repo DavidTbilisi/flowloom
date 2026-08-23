@@ -58,6 +58,7 @@ export const HELP: Record<string, HelpEntry> = {
   "ui:data": { title: "Load data", body: "Overlay an observed CSV/TSV series (a time column + named columns) as points, to compare against or calibrate to." },
   "ui:calibrate": { title: "Calibrate", body: "Fit the model's params to the loaded data (least normalised-RMSE) and write the fitted values back into the text." },
   "ui:compare": { title: "Compare", body: "Overlay another .flow model's run as dashed lines, to see how two models differ." },
+  "ui:scenario-table": { title: "Scenarios table", body: "Run base and every `scenario` line and tabulate the final / min / max of the visible series, with the change against base — the studio's `flowloom compare`.", doc: "scenarios" },
   "ui:scenario": { title: "Scenario", body: "Run one of the model's `scenario` lines (a named set of overrides) instead of the base text. The base run stays on the plot as dashed lines so the policy's effect is visible at once.", doc: "scenarios" },
   "ui:clear-overlays": { title: "Clear overlays", body: "Remove the Monte Carlo bands, loaded data, and comparison run from the plot." },
   "ui:transport": { title: "Playback", body: "Play, pause, or scrub the simulation clock. All views share it." },

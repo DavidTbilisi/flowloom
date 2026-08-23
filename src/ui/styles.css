@@ -207,6 +207,21 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .deadloops { margin-top: 10px; }
 .deadloops > summary { cursor: pointer; color: var(--dim); font-size: 12px; line-height: 1.45; }
 
+/* ── scenarios × metrics table ─────────────────────────────────────────── */
+.sctable[hidden] { display: none; }
+.sctable { margin-top: 12px; padding: 10px 12px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.sctable-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.sctable-scroll { overflow-x: auto; }
+.sctable table { border-collapse: collapse; font: 12px var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sctable th { color: var(--dim); font-weight: 500; text-align: right; padding: 2px 10px; border-bottom: 1px solid var(--line); }
+.sctable th.ser { color: var(--accent); text-align: center; }
+.sctable td { text-align: right; padding: 3px 10px; }
+.sctable td.name { text-align: left; color: var(--ink); }
+.sctable tr.active td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.sctable .d { display: block; font-size: 10px; color: var(--dim); }
+.sctable .d.up { color: var(--green); }
+.sctable .d.dn { color: var(--red); }
+
 /* ── live parameter sliders (Tune) ────────────────────────────────────── */
 .tune[hidden] { display: none; }
 .tune {

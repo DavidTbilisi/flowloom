@@ -161,7 +161,10 @@ written. Scenarios are applied on top of the base text when chosen:
   scenario with deltas.
 - MCP: every analysis tool takes `scenario`; `flow_compare` tabulates.
 - Studio: the **▣ Scenario** picker under the plot runs one, overlaying the base
-  run as dashed lines; a Tune knob the scenario binds edits the scenario line.
+  run as dashed lines; a Tune knob the scenario binds edits the scenario line;
+  **▤ Scenarios table** runs base and every scenario and tabulates final / min /
+  max of the visible series with the change against base (the studio's
+  `compare`).
 
 ### Tables (graphical functions)
 

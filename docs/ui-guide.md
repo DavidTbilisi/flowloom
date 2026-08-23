@@ -73,3 +73,17 @@ exactly like the diagram and plots:
 - `statusbar.ts` — the bar and the single global hover delegation.
 - `editor.ts` — the highlight overlay and token hit-testing.
 - `tour.ts` / `tutorials.ts` — the guided-learning engine and its content.
+
+## Scenarios, switches, and the ladder
+
+- **▣ Scenario** (plot controls) runs one of the model's `scenario` lines; the
+  base run stays on the plot as dashed lines. **▤ Scenarios table** runs base
+  and every scenario and tabulates final / min / max of the visible series with
+  Δ vs base — click a legend entry to add or drop a column group.
+- **Tune** renders a `switch` as a toggle and writes `on`/`off` back into the
+  text; a `const` gets no slider. While a scenario is active, a knob the scenario
+  binds edits the scenario line, the rest edit the base. Knobs tagged
+  `# @rung N` are grouped under their Meadows rung.
+- **Loops** reads polarity along the run: "from t=…" is when a gated loop first
+  engages, `R~B` marks a loop that flips, and loops that never engage in this
+  run are folded under a summary with the flat link marked <sup>0</sup>.

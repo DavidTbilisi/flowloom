@@ -8,7 +8,7 @@ import {
   renameSymbol, deleteSymbol, uniqueName, referencesTo, readLayout, setLayoutPos,
 } from "./model-build.js";
 import { parseModel, printExpr, type Model, type Expr } from "../lang/index.js";
-import { simulate, parseDataset, calibrate, RANDOM_FNS, MEADOWS_RUNGS } from "../engine/index.js";
+import { simulate, parseDataset, calibrate, compareScenarios, RANDOM_FNS, MEADOWS_RUNGS } from "../engine/index.js";
 import { draftFlow, getStoredKey, setStoredKey } from "./ai-draft.js";
 import { initTheme, applyTheme, currentTheme } from "./theme.js";
 
@@ -413,8 +413,54 @@ export function mountApp(root: HTMLElement): Store {
     }
     scenarioWrap.hidden = !names.length;
     scenarioSel.value = store.scenario;
+    scTableBtn.hidden = !names.length;
+    if (!names.length) { scTableOpen = false; scTable.hidden = true; }
   }
   scenarioSel.onchange = () => { store.setScenario(scenarioSel.value); store.setFrame(store.frameCount - 1); };
+
+  // ── scenarios × metrics table (the studio's `compare`) ────────────────────
+  // Base + every scenario line, reduced to final / min / max of each visible
+  // series. Computed only while open, on the un-overridden text (store.run.model
+  // already carries the active scenario), and re-run when the model or the
+  // visible set changes. Big models are declined rather than frozen.
+  const scTableBtn = $<HTMLButtonElement>("#scTableBtn");
+  const scTable = $<HTMLDivElement>("#scTable");
+  let scTableOpen = false;
+  let scTableSig = "";
+  let scTableGen = 0;
+  scTableBtn.onclick = () => { scTableOpen = !scTableOpen; scTable.hidden = !scTableOpen; scTableSig = ""; renderScTable(); };
+
+  async function renderScTable() {
+    if (!scTableOpen || !store.run.ok || !store.run.model) return;
+    const series = [...store.visible].filter((n) => store.run.result?.series.has(n)).slice(0, 4);
+    const sig = `${store.source}|${store.scenario}|${series.join(",")}`;
+    if (sig === scTableSig) return;
+    scTableSig = sig;
+    if (!series.length) { scTable.innerHTML = `<p class="hint">pick a series in the legend to tabulate it</p>`; return; }
+    let base;
+    try { base = parseModel(store.source); } catch { return; }
+    if (!base.scenarios.size) { scTable.innerHTML = ""; return; }
+    if (base.stocks.length >= 120) { scTable.innerHTML = `<p class="hint">too large to run every scenario on the main thread — use <code>flowloom compare</code></p>`; return; }
+    const gen = ++scTableGen;
+    scTable.innerHTML = `<p class="hint">running ${base.scenarios.size + 1} scenarios…</p>`;
+    const metrics = series.flatMap((s) => [`final:${s}`, `min:${s}`, `max:${s}`]);
+    let r;
+    try { r = await compareScenarios(base, metrics); } catch (e) { scTable.innerHTML = `<p class="hint">compare: ${escapeHtml((e as Error).message)}</p>`; return; }
+    if (gen !== scTableGen) return; // superseded
+    const head = `<tr><th>scenario</th>${series.map((s) => `<th colspan="3" class="ser">${escapeHtml(s)}</th>`).join("")}</tr>` +
+      `<tr><th></th>${series.map(() => `<th>final</th><th>min</th><th>max</th>`).join("")}</tr>`;
+    const rows = r.rows.map((row) => {
+      const cells = row.values.map((v, i) => {
+        const d = row.delta?.[i];
+        return `<td>${fmt(v)}${d !== undefined && d !== 0 ? `<span class="d ${d > 0 ? "up" : "dn"}">${d > 0 ? "+" : ""}${fmt(d)}</span>` : ""}</td>`;
+      }).join("");
+      const active = row.scenario === store.scenario || (row.scenario === "base" && store.scenario === "base");
+      const sets = row.sets.length ? ` title="${escapeHtml(row.sets.join(" "))}"` : "";
+      return `<tr class="${active ? "active" : ""}"${sets}><td class="name">${escapeHtml(row.scenario)}</td>${cells}</tr>`;
+    }).join("");
+    scTable.innerHTML = `<div class="sctable-head"><span class="tune-title">Scenarios</span><span class="tune-hint">base vs each scenario line · Δ vs base · hover a name for its bindings</span></div>` +
+      `<div class="sctable-scroll"><table>${head}${rows}</table></div>`;
+  }
 
   mcBtn.onclick = async () => {
     if (!store.run.ok || !store.run.model) return;
@@ -867,7 +913,7 @@ export function mountApp(root: HTMLElement): Store {
       lab.dataset.help = "ui:legend";
       lab.dataset.name = n;
       lab.innerHTML = `<span class="sw" style="background:${colorFor(r, n)};opacity:${on ? 1 : 0.3}"></span>${escapeHtml(n)} <span class="val" data-series="${escapeHtml(n)}"></span>`;
-      lab.onclick = () => { store.toggleSeries(n); renderLegend(); };
+      lab.onclick = () => { store.toggleSeries(n); renderLegend(); void renderScTable(); };
       legendEl.appendChild(lab);
     }
     updateLegendValues();
@@ -906,6 +952,7 @@ export function mountApp(root: HTMLElement): Store {
     if (store.tab === "plot") drawPlot(plotCanvas, store);
     if (store.tab === "diagram") diagram.render(store);
     refreshOverlayCtrls();
+    void renderScTable();
   });
 
   // ── frame channel: cheap per-frame repaint ──
@@ -1081,12 +1128,14 @@ const SHELL = `
         <label class="scenario-pick" id="scenarioWrap" data-help="ui:scenario" hidden>▣ Scenario
           <select id="scenarioSel" title="run a scenario line from the model; base is overlaid dashed"></select>
         </label>
+        <button id="scTableBtn" class="ghost" title="base vs every scenario, on the visible series" data-help="ui:scenario-table" hidden>▤ Scenarios table</button>
         <button id="clearOvBtn" class="ghost" title="remove all overlays" data-help="ui:clear-overlays" hidden>✕ overlays</button>
         <span id="calParams" class="cal-params" data-help="ui:calibrate" hidden></span>
         <span id="ovMsg" class="ov-msg"></span>
         <input id="dataInput" type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style="display:none" />
         <input id="cmpInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />
       </div>
+      <div class="sctable" id="scTable" hidden></div>
       <div class="tune" id="tuneWrap" hidden></div>
     </div>
     <div class="view hidden" id="view-diagram">
