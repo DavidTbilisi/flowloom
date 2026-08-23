@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseModel, ModelError } from "../../src/lang/index.js";
-import { simulate, simulateAsync, lintModel, analyzeLoops, compile, buildPlan, tsBackend, runPlan } from "../../src/engine/index.js";
+import { simulate, simulateAsync, lintModel, analyzeLoops, compile, buildPlan, tsBackend, runPlan, applyOverride } from "../../src/engine/index.js";
 import { createWasmBackend } from "../../src/engine/wasm/backend.js";
 
 // CONTRACT: previous(X) / delay_fixed(X, n) are *pipeline* delays on the time
@@ -91,11 +91,76 @@ describe("delay_fixed()", () => {
 });
 
 describe("discrete-period lint", () => {
-  it("warns when the clock is tested on the grid under rk4, not under euler", () => {
+  it("warns when the clock is tested on the grid under rk4, not under euler or map", () => {
     const rk4 = `stock S = 0\nchange(S) = if(t % 12 == 0, 1, 0)\nsim dt=1 to=24 method=rk4`;
     const euler = rk4.replace("rk4", "euler");
-    expect(lintModel(parseModel(rk4)).some((d) => /method=euler dt=1/.test(d.message))).toBe(true);
-    expect(lintModel(parseModel(euler)).some((d) => /method=euler dt=1/.test(d.message))).toBe(false);
+    const map = rk4.replace("rk4", "map");
+    expect(lintModel(parseModel(rk4)).some((d) => /method=map/.test(d.message))).toBe(true);
+    expect(lintModel(parseModel(euler)).some((d) => /method=map/.test(d.message))).toBe(false);
+    expect(lintModel(parseModel(map)).some((d) => /method=map/.test(d.message))).toBe(false);
+  });
+});
+
+// CONTRACT: `sim method=map` is a difference equation. stock(t+dt) = stock(t) +
+// change(t), change() being a per-step increment in the stock's own units — no
+// × dt, so the Euler-era `(x - S) / dt` idiom is gone and the units check expects
+// stock units, not stock/time. The internal states of smooth/delay1/delay3 still
+// integrate with dt (their time constants stay in time units).
+describe("method=map", () => {
+  it("steps stock += change once per step, whatever dt is", () => {
+    const src = `stock S = 100\nflow inc = 30\nflow out = 20\nchange(S) = inc - out\nsim dt=0.5 to=2 method=map`;
+    expect(series(src, "S")).toEqual([100, 110, 120, 130, 140]);
+    // euler with the same text multiplies by dt — half the increment per step
+    expect(series(src.replace("map", "euler"), "S")).toEqual([100, 105, 110, 115, 120]);
+  });
+
+  it("equals euler dt=1 when the flows were written per time unit", () => {
+    const euler = `stock S = 5\nchange(S) = if(t % 2 == 0, 3, -1) * 0.5 * S\nsim dt=1 to=8 method=euler`;
+    expect(series(euler.replace("euler", "map"), "S")).toEqual(series(euler, "S"));
+  });
+
+  it("keeps smooth/delay time constants in time units (internal states use dt)", () => {
+    const src = `stock S = 100\nchange(S) = 10\naux sm = smooth(S, 3)\nsim dt=0.5 to=1.5 method=map`;
+    const sm = series(src, "sm");
+    // S: 100, 110, 120, 130. smooth: sm += dt * (S - sm) / 3
+    expect(sm[0]).toBe(100);
+    expect(sm[1]).toBeCloseTo(100, 12);
+    expect(sm[2]).toBeCloseTo(100 + 0.5 * (110 - 100) / 3, 12);
+    expect(sm[3]).toBeCloseTo(sm[2]! + 0.5 * (120 - sm[2]!) / 3, 12);
+  });
+
+  it("units: change() carries the stock's own units, not per time", () => {
+    const ok = `stock Cash [GEL] = 0\nflow inc [GEL] = 5\nchange(Cash) = inc\nsim dt=1 to=3 method=map timeunit=month`;
+    expect(lintModel(parseModel(ok)).filter((d) => /change\(Cash\)/.test(d.message))).toEqual([]);
+    const bad = ok.replace("[GEL] = 5", "[GEL/month] = 5");
+    expect(lintModel(parseModel(bad)).some((d) => /change\(Cash\) should be gel \(a per-step increment/.test(d.message))).toBe(true);
+    // the same text under euler wants gel/month
+    expect(lintModel(parseModel(bad.replace("map", "euler"))).filter((d) => /change\(Cash\)/.test(d.message))).toEqual([]);
+  });
+
+  it("lint flags a leftover / dt inside change() under map only", () => {
+    const src = `stock S = 0\naux goal = 10\nchange(S) = (goal - S) / dt\nsim dt=1 to=3 method=map`;
+    expect(lintModel(parseModel(src)).some((d) => /drop the `\/ dt`/.test(d.message))).toBe(true);
+    expect(lintModel(parseModel(src.replace("map", "euler"))).some((d) => /drop the/.test(d.message))).toBe(false);
+  });
+
+  it("is accepted by the parser, scenarios and overrides; anything else is rejected", () => {
+    const m = parseModel(`stock S = 0\nchange(S) = 1\nscenario fast method=map dt=2\nsim dt=1 to=4 method=map`);
+    expect(m.settings.method).toBe("map");
+    expect(m.scenarios.get("fast")!.sets.find((s) => s.key === "method")!.value).toBe("map");
+    expect(() => parseModel(`stock S = 0\nchange(S) = 1\nsim method=leapfrog`)).toThrow(/euler, rk4 or map/);
+    expect(() => parseModel(`stock S = 0\nchange(S) = 1\nscenario x method=leapfrog`)).toThrow(/euler, rk4 or map/);
+    const m2 = parseModel(`stock S = 0\nchange(S) = 1\nsim dt=0.5 to=1 method=rk4`);
+    applyOverride(m2, "method=map");
+    expect(simulate(m2).series.get("S")).toEqual([0, 1, 2]);
+  });
+
+  it("produces identical numbers on the WASM backend", async () => {
+    const model = parseModel(`stock S = 1\nchange(S) = 0.1 * S + previous(S)\naux sm = smooth(S, 2)\nsim dt=0.5 to=4 method=map`);
+    const plan = buildPlan(compile(model));
+    const ts = runPlan(model, plan, tsBackend(plan));
+    const wasm = runPlan(model, plan, await createWasmBackend(buildPlan(compile(model))));
+    for (const n of ["S", "sm"]) expect(wasm.series.get(n)).toEqual(ts.series.get(n));
   });
 });
 

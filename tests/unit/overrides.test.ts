@@ -75,6 +75,6 @@ describe("applyOverride: errors teach the fix", () => {
   });
 
   it("an invalid method value is rejected with the allowed set", () => {
-    expect(() => applyOverride(model(), "method=heun")).toThrow(/method must be euler or rk4/);
+    expect(() => applyOverride(model(), "method=heun")).toThrow(/method must be euler, rk4 or map/);
   });
 });

@@ -32,7 +32,7 @@ import { suggestName, suggestSuffix } from "./suggest.js";
 //   table NAME = (x,y) (x,y) ...    # a piecewise-linear graphical function
 //   scenario NAME key=value …       # a named set of overrides, applied on request
 //   link A -> B +                   # a declared signed influence (a causal-loop sketch; + or -)
-//   sim dt=0.1 to=50 start=0 method=rk4
+//   sim dt=0.1 to=50 start=0 method=rk4        (method: euler | rk4 | map)
 //   plot A B C
 //
 // A trailing `# ...` after any declaration becomes that symbol's doc string.
@@ -338,8 +338,8 @@ function parseSim(m: Raw, body: string, loc: Loc): void {
     else if (k === "to") m.settings.to = num(m, v, loc, "to");
     else if (k === "start") m.settings.start = num(m, v, loc, "start");
     else if (k === "method") {
-      if (v === "euler" || v === "rk4") m.settings.method = v;
-      else push(m, "error", loc, `unknown method '${v}' (use euler or rk4)`);
+      if (v === "euler" || v === "rk4" || v === "map") m.settings.method = v;
+      else push(m, "error", loc, `unknown method '${v}' (use euler, rk4 or map)`);
     } else if (k === "timeunit") m.settings.timeunit = v;
     else if (k === "seed") m.settings.seed = num(m, v, loc, "seed");
     else {
@@ -478,7 +478,7 @@ function validateScenarios(m: Raw): void {
       if (seen.has(key)) push(m, "warning", sc.loc, `scenario ${sc.name} sets '${key}' more than once — the last one wins`);
       seen.add(key);
       if (key === "method") {
-        if (value !== "euler" && value !== "rk4") push(m, "error", sc.loc, `scenario ${sc.name}: method must be euler or rk4, got '${value}'`);
+        if (value !== "euler" && value !== "rk4" && value !== "map") push(m, "error", sc.loc, `scenario ${sc.name}: method must be euler, rk4 or map, got '${value}'`);
         continue;
       }
       if (settingKeys.has(key)) {

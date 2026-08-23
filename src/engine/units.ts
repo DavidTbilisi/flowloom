@@ -433,15 +433,20 @@ export function checkUnits(model: Model, out: Diagnostic[]): void {
     }
   }
 
-  // d(stock) must be stock-units per unit of time.
+  // d(stock) must be stock-units per unit of time — except under method=map,
+  // where change() is a per-step increment and carries the stock's own units.
+  const isMap = model.settings.method === "map";
   for (const [name, r] of model.rates) {
     const stockDim = env.names.get(name);
     if (!stockDim || stockDim === UNKNOWN || stockDim === LITERAL) continue;
     const rateDim = inferDim(r.expr, env, out);
     if (rateDim === UNKNOWN || rateDim === LITERAL) continue;
-    const expected = divDim(stockDim, env.time);
+    const expected = isMap ? stockDim : divDim(stockDim, env.time);
     if (!eqDim(rateDim, expected)) {
-      out.push(warn(r.loc, `change(${name}) should be ${fmtDim(expected)} (${fmtDim(stockDim)} per ${fmtDim(env.time)}), got ${fmtDim(rateDim)}`));
+      const why = isMap
+        ? `(a per-step increment under method=map — the stock's own units, not per ${fmtDim(env.time)})`
+        : `(${fmtDim(stockDim)} per ${fmtDim(env.time)})`;
+      out.push(warn(r.loc, `change(${name}) should be ${fmtDim(expected)} ${why}, got ${fmtDim(rateDim)}`));
     }
   }
 }

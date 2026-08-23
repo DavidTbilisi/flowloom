@@ -32,7 +32,7 @@ Grammar (one statement per line; # starts a comment):
   table NAME = (x,y) (x,y) ...    a piecewise-linear lookup; call as NAME(x)
   scenario NAME key=value ...     a named override set (params, switches on/off, stock inits, dt/to)
   link A -> B +|-                 a declared signed influence; a sketch of links alone is valid (draws, has loops, doesn't run)
-  sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4)
+  sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4 | map)
   plot A B C                      which series are visible by default
 
 Operators: + - * / % ^, comparisons (< <= > >= == !=) and && || ! returning 1/0.
@@ -45,7 +45,8 @@ Builtins: min max abs exp ln log10 sqrt pow sin cos tan floor ceil round sign
 Rules: every referenced name must be defined; a model needs >=1 stock; a stock
 changes ONLY through its change()/d() rate; if(c,a,b) evaluates BOTH branches, so
 guard the operand (x/max(y,1e-9)), not the branch. A discrete-period model (monthly,
-yearly) should use sim method=euler dt=1. Prefer a short comment header
+yearly) should use sim method=map dt=1: change() is then a per-step increment in the
+stock's own units (flow income [GEL], no multiplying by dt). Prefer a short comment header
 explaining the model, sensible param values, and a plot line. Pick dt/to so the
 interesting dynamics are visible.`;
 

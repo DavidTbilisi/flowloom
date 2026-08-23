@@ -1,5 +1,5 @@
 # Family budget — Donella Meadows' twelve leverage points, one household move each.
-# A discrete monthly map (euler, dt=1): Cash(t+1) = Cash(t) + change. Needs drift up
+# A discrete monthly map (sim method=map): Cash(t+1) = Cash(t) + change. Needs drift up
 # toward a cap; Wants creep toward a share of pay whenever the balance *feels* comfortable
 # and a weak monthly review pulls them back — but the review reads the card statement,
 # which arrives two months late (delay_fixed). A shock calendar repeats every three years.
@@ -11,19 +11,19 @@
 #   ▣ Scenario (under Plot) runs one against the dashed base;
 #   flowloom compare <file> --metric final:Cash,min:Cash,final:MonthsInDebt   tabulates them all;
 #   flowloom sensitivity <file> --metric min:Cash                             ranks the switches.
-# Monthly amounts are [GEL/month]; where a month's amount lands on a [GEL] balance it is
-# multiplied by dt (= 1 month), so the units check passes for the right reason.
+# Under method=map every change() is a per-step increment in the stock's own units, so a
+# month's amounts are plain [GEL]; only a true rate (sideRamp, per month of ramp) is /month.
 # The teaching baseline is invented; the measured scenario's income, opening balance and
 # target are measured, its loop constants are still assumptions.
 
 # ── knobs ──────────────────────────────────────────────────────────────────────
-param income      [GEL/month] = 6400     # take-home pay at t=0
+param income      [GEL]       = 6400     # take-home pay at t=0
 param growth                  = 0.02     # annual raise, compounded monthly
-param needsItems  [GEL/month] = 3492     # the line items that always bite
-param needsCap    [GEL/month] = 4000     # the Needs ceiling; headroom = cap - items
+param needsItems  [GEL]       = 3492     # the line items that always bite
+param needsCap    [GEL]       = 4000     # the Needs ceiling; headroom = cap - items
 param capFill                 = 0.5      # how much of the headroom gets spent anyway
-param wants       [GEL/month] = 1805     # @rung 12 the Wants level at t=0, and what the review pulls toward
-param savingsLine [GEL/month] = 1600     # @rung 10 the Safe transfer when separate is on
+param wants       [GEL]       = 1805     # @rung 12 the Wants level at t=0, and what the review pulls toward
+param savingsLine [GEL]       = 1600     # @rung 10 the Safe transfer when separate is on
 param delay       [month]     = 2        # @rung 9 statement lag: the review reads Cash this many months old (0 = live balance)
 param creepRate               = 0.03     # @rung 6 Wants drift toward creepCap×income at this fraction of the gap per month …
 param creepCap                = 0.45     # … but only while the felt balance is above the cushion
@@ -36,13 +36,13 @@ param depRate                 = 0.005    # @rung 7 monthly deposit interest abov
 param cash0       [GEL]       = 1500     # Cash at t=0
 param bufferMonths            = 3        # @rung 11 bufferFirst: no vacation until Cash ≥ bufferMonths × needsCap
 param plateFloor              = 0.85     # @rung 10 separate: Wants can't be squeezed below this share of (wants + impulse)
-param sideAmount  [GEL/month] = 600      # @rung 4 sideIncome: the second Door, ramping up from sideStart …
-param sideRamp    [GEL/month] = 50       # @rung 4 … by this much per month
+param sideAmount  [GEL]       = 600      # @rung 4 sideIncome: the second Door, ramping up from sideStart …
+param sideRamp    [GEL/month] = 50       # @rung 4 … by this much per month of ramp
 param sideStart   [month]     = 10    # @rung 4
 const yearLen     [month]     = 12       # the calendar, not a knob
 param vacationCost [GEL]      = 4500     # once a year, month 11 of each year
 param shockScale              = 1        # scales the spend shocks (car 1400 · fridge 900 · dentist 600)
-param enough      [GEL/month] = 1500     # @rung 2 enoughOn: Wants pinned here, creep and review switched off
+param enough      [GEL]       = 1500     # @rung 2 enoughOn: Wants pinned here, creep and review switched off
 
 # ── policy switches (one per rung that is a yes/no move) ───────────────────────
 switch separate     = off      # @rung 10 pay the Safe first at another bank; spend from what's left
@@ -61,7 +61,7 @@ param yieldRate     = 0.012    # @rung 7 monthly return on Assets (~15 %/yr), pa
 
 # ── stocks ─────────────────────────────────────────────────────────────────────
 stock Cash         [GEL]       = cash0
-stock Level        [GEL/month] = wants         # the Wants level — it ratchets
+stock Level        [GEL]       = wants         # the Wants level — it ratchets
 stock MonthsInDebt             = 0
 stock DebtPeak     [GEL]       = 0             # deepest the Safe went (as a positive number)
 stock InterestPaid [GEL]       = 0
@@ -73,47 +73,47 @@ stock Assets       [GEL]       = 0             # the Engine's stock — only mov
 table pattern = (0,40) (1,-30) (2,110) (3,-60) (4,20) (5,90) (6,-20) (7,150) (8,-40) (9,60) (10,130) (11,-10)
 aux month  = t % yearLen
 aux cycle  = t % 36
-aux needsVar [GEL/month] = round(150 * cos(2 * PI * t / yearLen) + pattern(month))
-aux impulseRaw [GEL/month] = if(t % 9 == 5, 450, if(t % 4 == 2, 300, if(t % 7 == 3, 180, 0))) * impulseScale
-aux impulse    [GEL/month] = if(rule48 && impulseRaw > 200, 0.3 * impulseRaw, impulseRaw)
-aux shockSpend [GEL/month] = if(cycle == 7, 1400, if(cycle == 25, 900, if(cycle == 31, 600, 0))) * shockScale
+aux needsVar [GEL] = round(150 * cos(2 * PI * t / yearLen) + pattern(month))
+aux impulseRaw [GEL] = if(t % 9 == 5, 450, if(t % 4 == 2, 300, if(t % 7 == 3, 180, 0))) * impulseScale
+aux impulse    [GEL] = if(rule48 && impulseRaw > 200, 0.3 * impulseRaw, impulseRaw)
+aux shockSpend [GEL] = if(cycle == 7, 1400, if(cycle == 25, 900, if(cycle == 31, 600, 0))) * shockScale
 aux incomeMul = if(gapOn && (cycle == 16 || cycle == 17), 0, 1)
 
 # ── income: plain growth, or the recovery plan (USD → GEL at a strengthening fx, net of 1 % tax)
 aux raise = (1 + growth) ^ (t / 12)
 aux fx = 2.70 - 0.30 * min(1, max(0, (t - 12) / 12))
-aux mission [USD/month] = if(t < 10, 1500, 0)
-aux trackA  [USD/month] = 600 * min(5, max(0, t - 2)) - if(t >= 10, 1500, 0)
-aux trackB  [USD/month] = if(t >= 10, 5500 + 3000 * min(1, (t - 10) / 26), 0)
-aux recoveryGEL [GEL/month] = (mission + trackA + trackB) * fx * 0.99
-aux side [GEL/month] = if(sideIncome && t >= sideStart, min(sideAmount, sideRamp * (t - sideStart + dt) / dt) * raise, 0)
-aux passive [GEL/month] = if(engine, yieldRate * Assets / dt, 0)      # the Engine's cash-on-cash return
-aux pay  [GEL/month] = if(recovery, recoveryGEL, income * raise) * incomeMul + side + passive
+aux mission [USD] = if(t < 10, 1500, 0)
+aux trackA  [USD] = 600 * min(5, max(0, t - 2)) - if(t >= 10, 1500, 0)
+aux trackB  [USD] = if(t >= 10, 5500 + 3000 * min(1, (t - 10) / 26), 0)
+aux recoveryGEL [GEL] = (mission + trackA + trackB) * fx * 0.99
+aux side [GEL] = if(sideIncome && t >= sideStart, min(sideAmount, sideRamp * (t - sideStart + 1)) * raise, 0)
+aux passive [GEL] = if(engine, yieldRate * Assets, 0)      # the Engine's cash-on-cash return
+aux pay  [GEL] = if(recovery, recoveryGEL, income * raise) * incomeMul + side + passive
 
 # ── needs ──────────────────────────────────────────────────────────────────────
-aux headroom [GEL/month] = needsCap - needsItems
-aux needs [GEL/month] = needsItems + needsVar + if(bufferFirst, 0, capFill * max(0, headroom - needsVar)) + shockSpend
+aux headroom [GEL] = needsCap - needsItems
+aux needs [GEL] = needsItems + needsVar + if(bufferFirst, 0, capFill * max(0, headroom - needsVar)) + shockSpend
 
 # ── wants: creep feels today's balance; the review reads the lagged statement ──
-aux base [GEL/month] = if(enoughOn, enough, wants)
+aux base [GEL] = if(enoughOn, enough, wants)
 aux seen [GEL] = if(delay > 0, delay_fixed(Cash, max(delay, 1)), Cash)
-aux perceived [GEL] = if(separate, max(0, pay - savingsLine - needs) * dt, Cash)
-aux creep  [GEL/month] = if(enoughOn, 0, if(perceived > cushion, creepRate * (creepCap * pay - Level), 0))
-aux afterCreep [GEL/month] = Level + creep
+aux perceived [GEL] = if(separate, max(0, pay - savingsLine - needs), Cash)
+aux creep  [GEL] = if(enoughOn, 0, if(perceived > cushion, creepRate * (creepCap * pay - Level), 0))
+aux afterCreep [GEL] = Level + creep
 aux shortfall = min(1, max(0, target - seen) / target)
-aux review [GEL/month] = if(enoughOn, 0, if(shortfall > 0, k * (base * (1 - 0.35 * shortfall) - afterCreep), 0))
-aux levelNow [GEL/month] = if(enoughOn, enough, afterCreep + review)
-change(Level) = (levelNow - Level) / dt
+aux review [GEL] = if(enoughOn, 0, if(shortfall > 0, k * (base * (1 - 0.35 * shortfall) - afterCreep), 0))
+aux levelNow [GEL] = if(enoughOn, enough, afterCreep + review)
+change(Level) = levelNow - Level
 
-aux carry [GEL/month] = previous(max(0, wantsFinal - base), 0)      # last month's overrun
-aux wantsAsk [GEL/month] = levelNow + impulse - if(ruleCarry, min(carry, 0.5 * base), 0)
+aux carry [GEL] = previous(max(0, wantsFinal - base), 0)      # last month's overrun
+aux wantsAsk [GEL] = levelNow + impulse - if(ruleCarry, min(carry, 0.5 * base), 0)
 
 # ── the two plumbings: one account, or Safe first ──────────────────────────────
-aux spendable [GEL/month] = pay - savingsLine - needs
-aux wantsFinal [GEL/month] = if(separate, max(min(wantsAsk, spendable), plateFloor * (base + impulse)), wantsAsk)
-aux overrun [GEL/month] = max(0, wantsFinal - spendable)
-flow save [GEL/month] = if(separate, savingsLine, pay - needs - wantsFinal)
-aux afterMonth [GEL] = Cash + if(separate, save + max(0, spendable - wantsFinal) - overrun, save) * dt
+aux spendable [GEL] = pay - savingsLine - needs
+aux wantsFinal [GEL] = if(separate, max(min(wantsAsk, spendable), plateFloor * (base + impulse)), wantsAsk)
+aux overrun [GEL] = max(0, wantsFinal - spendable)
+flow save [GEL] = if(separate, savingsLine, pay - needs - wantsFinal)
+aux afterMonth [GEL] = Cash + if(separate, save + max(0, spendable - wantsFinal) - overrun, save)
 
 # ── the annual vacation, gated by the buffer and the goal ──────────────────────
 aux bufferOK = !bufferFirst || afterMonth >= bufferMonths * needsCap
@@ -122,18 +122,18 @@ aux tripNow  = vacation && month == 11 && bufferOK && goalOK
 aux afterTrip [GEL] = afterMonth - if(tripNow, vacationCost, 0)
 
 # ── interest on both sides of zero ─────────────────────────────────────────────
-flow interest [GEL/month] = if(afterTrip < 0, afterTrip * debtRate, afterTrip * depRate)
-aux next [GEL] = afterTrip + interest * dt
+flow interest [GEL] = if(afterTrip < 0, afterTrip * debtRate, afterTrip * depRate)
+aux next [GEL] = afterTrip + interest
 
 # ── the Engine: once the buffer is full, a share of the excess goes to work ────
-aux bufferTarget [GEL] = bufferMonths * needsCap * dt
-flow investing [GEL/month] = if(engine, invest * max(0, next - bufferTarget), 0) / dt
-change(Cash)   = (next - Cash) / dt - investing
+aux bufferTarget [GEL] = bufferMonths * needsCap
+flow investing [GEL] = if(engine, invest * max(0, next - bufferTarget), 0)
+change(Cash)   = next - Cash - investing
 change(Assets) = investing
 aux netWorth [GEL] = Cash + Assets
 
 change(MonthsInDebt) = if(afterTrip < 0, 1, 0)
-change(DebtPeak)     = max(0, -next - DebtPeak) / dt
+change(DebtPeak)     = max(0, -next - DebtPeak)
 change(InterestPaid) = max(0, -interest)
 change(Earned)       = max(0, interest)
 change(Vacations)    = if(tripNow, 1, 0)
@@ -156,5 +156,5 @@ scenario measured  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 cre
 scenario recovery  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 creepCap=0.10 bufferFirst=on bufferMonths=4 target=23000 recovery=on gapOn=off
 scenario recovery_engine  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 creepCap=0.10 bufferFirst=on bufferMonths=4 target=23000 recovery=on gapOn=off engine=on   # @rung 10 the plan with the Engine running
 
-sim dt=1 to=36 method=euler timeunit=month
+sim dt=1 to=36 method=map timeunit=month
 plot Cash netWorth wantsFinal needs pay

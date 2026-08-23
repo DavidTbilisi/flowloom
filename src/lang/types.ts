@@ -140,7 +140,7 @@ export interface SimSettings {
   dt: number;
   to: number;
   start: number;
-  method: "euler" | "rk4";
+  method: "euler" | "rk4" | "map";
   /** Optional name of the time unit, used by units checking (e.g. "month"). */
   timeunit?: string;
   /** RNG seed for random*() builtins. Defaults to 0 ⇒ runs are reproducible. */

@@ -46,7 +46,7 @@ export interface SeriesSummary {
 
 export interface RunSummary {
   dt: number;
-  method: "euler" | "rk4";
+  method: "euler" | "rk4" | "map";
   steps: number;
   tStart: number;
   tEnd: number;

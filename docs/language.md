@@ -241,10 +241,16 @@ flow receiving = delay3(orders, leadTime)   # orders arrive after a delay
 ### Discrete periods: `previous`, `delay_fixed`
 
 A monthly budget or a yearly census is a **map on the time grid**, not an ODE:
-`stock(t+1) = stock(t) + change(t)`. Write it with `sim method=euler dt=1` (and
-`timeunit=month`) — under `rk4` the derivative is also sampled at `t + dt/2`, where
-a clock test like `t % 12 == 0` is false and `t == 7` never fires; `lint` warns when
-it sees clock tests under rk4.
+`stock(t+dt) = stock(t) + change(t)`. Write it with `sim method=map dt=1
+timeunit=month`: under `map` every `change()` is a **per-step increment** in the
+stock's own units — `change(Cash) = income - spend` with `income [GEL]` — and no
+`× dt` / `÷ dt` bookkeeping is needed (the units check expects `[GEL]`, not
+`[GEL/month]`, and `lint` flags a leftover `/ dt`). Under `rk4` the derivative is
+also sampled at `t + dt/2`, where a clock test like `t % 12 == 0` is false and
+`t == 7` never fires; `lint` warns when it sees clock tests under rk4. (`euler
+dt=1` with per-time-unit flows gives the same numbers as `map`; `map` says what
+the model *is*.) `smooth`/`delay1`/`delay3` keep their time constants in time
+units under `map` — their internal states still integrate with `dt`.
 
 | Call | Behaviour |
 |---|---|
@@ -339,14 +345,16 @@ indexing, per-element values, full and partial/axis `sum`. Other reducers
 ## Simulation settings
 
 ```flow
-sim dt=0.1 to=50 start=0 method=rk4
+sim dt=0.1 to=50 start=0 method=rk4   # method: rk4 | euler | map
 ```
 
 - `dt` — integration step. Smaller is more accurate and slower.
 - `to` — end time. `start` — start time (default `0`).
-- `method` — `rk4` (classical Runge–Kutta, default, accurate) or `euler`
-  (simple, fast, and the *right* choice when a model is defined on discrete
-  periods — see [Discrete periods](#discrete-periods-previous-delay_fixed)).
+- `method` — `rk4` (classical Runge–Kutta, default, accurate), `euler`
+  (simple, fast), or `map` — a difference equation, `stock(t+dt) = stock(t) +
+  change(t)`, where `change()` is a per-step increment in the stock's own units:
+  the *right* choice when a model is defined on discrete periods — see
+  [Discrete periods](#discrete-periods-previous-delay_fixed).
 - `timeunit` — the name of the time unit for units checking (e.g. `month`).
 - `seed` — the RNG seed for `random*()` (default `0`, so runs are reproducible).
 

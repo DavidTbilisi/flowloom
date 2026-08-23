@@ -37,7 +37,7 @@ export const HELP: Record<string, HelpEntry> = {
   "ui:run": { title: "Run", body: "Parse, simulate, and redraw. Shortcut: ⌘/Ctrl + Enter." },
   "ui:dt": { title: "dt — step size", body: "Integration time step. Smaller is more accurate but slower. Edits the sim line." },
   "ui:to": { title: "to — end time", body: "How far to simulate. Edits the sim line." },
-  "ui:method": { title: "method — integrator", body: "RK4 is accurate; Euler is simple and fast. Edits the sim line." },
+  "ui:method": { title: "method — integrator", body: "RK4 is accurate; Euler is simple and fast; Map steps stock += change per step (a difference equation — for monthly/yearly models). Edits the sim line." },
   "ui:copy": { title: "Copy", body: "Copy the model text to share with a person or an AI." },
   "ui:share": { title: "Share", body: "Copy a link that encodes the whole model in the URL — open it to get the exact model back." },
   "ui:download": { title: "Download", body: "Save the model as a .flow file." },

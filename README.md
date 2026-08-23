@@ -42,11 +42,12 @@ dynamics, and check the numbers. Validate, don't vibe.
   set, the cheapest reaching a target, and a Shapley share per switch. Tag levers
   with `# @rung N` and **`leverage`** lays them out on Meadows' twelve leverage
   points, each measured.
-- **A proper engine** — Euler and classical **RK4** integration; `step`/`pulse`/
+- **A proper engine** — Euler and classical **RK4** integration, plus **`map`**
+  for difference equations; `step`/`pulse`/
   `ramp` test inputs; graphical **lookup tables**; first- and third-order
   **delays and smoothing** (`smooth`, `delay1`, `delay3`, …), and **fixed pipeline
   delays** for discrete-period models (`previous`, `delay_fixed` — a monthly budget
-  is a map, not an ODE; `sim method=euler dt=1`). Expressions compile
+  is a map, not an ODE; `sim method=map` steps `stock += change` with no `× dt`). Expressions compile
   to slots in a reused typed array (no `eval`), and **very large models run in a
   Web Worker with a generated WebAssembly backend** so the UI never blocks.
 - **Automatic feedback-loop analysis** — a signed influence graph finds every
@@ -271,7 +272,7 @@ you've annotated enough to make the claim. Set the time unit with
 
 ```flow
 sim dt=0.1 to=50 start=0 method=rk4   # dt: step (smaller = more accurate, slower)
-plot S I R                            # method: rk4 (default, accurate) or euler
+plot S I R                            # method: rk4 (default, accurate), euler, or map (stock += change per step)
 ```
 
 The toolbar's dt / to / method controls rewrite this exact line, so the text

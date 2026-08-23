@@ -36,7 +36,7 @@ animation are all derived from it. Read and edit a model entirely as text.
   link A -> B +|-                       a declared signed influence (+ with, - against): a causal-loop sketch before equations; links alone draw and have R/B loops but do not run
   dim NAME = A, B, C                     a subscript dimension (array index) of named elements
   stock NAME[dim] = EXPR                 an array: one stock per element; refer to NAME[dim] / NAME[A]; sum(NAME) collapses it
-  sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4); add timeunit=month for units, seed=N for random*()
+  sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4 | map); add timeunit=month for units, seed=N for random*()
   plot A B C                            which series are visible by default
   # text after a hash is a comment; a trailing # on a decl is its doc string
 
@@ -80,7 +80,9 @@ ${group("stateful", "Stateful builtins — carry state across steps")}
   their init (default: X's initial value). If X depends on the delay's own output
   and no init is given, the initial state is circular — give an explicit init.
 - Discrete-period models (a monthly budget, a yearly census) are maps, not ODEs:
-  write \`sim method=euler dt=1\` so stock(t+1) = stock(t) + change(t) exactly.
+  write \`sim method=map dt=1\` so stock(t+dt) = stock(t) + change(t) exactly,
+  with change() a per-step increment in the stock's own units (flow income [GEL],
+  not [GEL/month]; no × dt / ÷ dt bookkeeping — lint flags a leftover / dt).
   Under rk4, tests on the clock (t % 12 == 0, t == 7) also get evaluated at
   t + dt/2 where they are false — lint warns about this.
 - Bare numbers are unit-polymorphic in the units check: \`Cash < 0\`, \`max(0, x)\`,

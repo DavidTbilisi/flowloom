@@ -23,7 +23,7 @@ export interface SimResult {
   stockNames: string[];
   varNames: string[];
   dt: number;
-  method: "euler" | "rk4";
+  method: "euler" | "rk4" | "map";
   /** Set if the run halted early (e.g. a stock went non-finite). */
   note?: string;
 }

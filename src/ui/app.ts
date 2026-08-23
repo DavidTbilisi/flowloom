@@ -1088,7 +1088,7 @@ const SHELL = `
       <label data-help="ui:dt">dt</label><input id="dt" type="number" step="0.01" value="0.1" data-help="ui:dt" />
       <label data-help="ui:to">to</label><input id="to" type="number" step="1" value="50" data-help="ui:to" />
       <label data-help="ui:method">method</label>
-      <select id="method" data-help="ui:method"><option value="rk4">RK4</option><option value="euler">Euler</option></select>
+      <select id="method" data-help="ui:method"><option value="rk4">RK4</option><option value="euler">Euler</option><option value="map">Map</option></select>
       <button id="copy" class="ghost" title="copy model text" data-help="ui:copy">⧉ Copy</button>
       <button id="share" class="ghost" title="copy a shareable link" data-help="ui:share">🔗 Share</button>
       <button id="download" class="ghost" title="download .flow" data-help="ui:download">⤓</button>

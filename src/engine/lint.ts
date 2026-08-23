@@ -119,8 +119,10 @@ function checkCircularInit(model: Model, out: Diagnostic[]): void {
  * things silently go wrong with them under the defaults, so say so:
  *   • RK4 evaluates the derivative between grid points (t + dt/2), where a
  *     `t % n == k` test is false and a `t == k` test never fires — the model
- *     runs, with the wrong dynamics. Euler with dt=1 is the honest integrator
- *     for a map: state(t+1) = state(t) + change(t).
+ *     runs, with the wrong dynamics. `method=map` is the honest stepper for a
+ *     difference equation: state(t+dt) = state(t) + change(t).
+ *   • under method=map a change() that still divides by dt is the Euler-era
+ *     idiom for "this is a per-step amount" — now a double conversion.
  *   • a fixed delay shorter than one step rounds up to one step.
  */
 function checkDiscreteTime(model: Model, out: Diagnostic[]): void {
@@ -131,17 +133,22 @@ function checkDiscreteTime(model: Model, out: Diagnostic[]): void {
   const constValue = (e: Expr): number | undefined =>
     e.kind === "num" ? e.value : e.kind === "ident" ? resolve()[e.name] : undefined;
   const isClock = (e: Expr) => e.kind === "ident" && (e.name === "t" || e.name === "time");
+  const isDt = (e: Expr) => e.kind === "ident" && e.name === "dt";
+  const dtDivisions: Loc[] = [];
 
-  const visit = (e: Expr, loc: Loc): void => {
+  const visit = (e: Expr, loc: Loc, inRate = false): void => {
     switch (e.kind) {
       case "binary":
         // `t % n`, `t == k`, `t != k`: only meaningful on the grid
         if ((e.op === "%" || e.op === "==" || e.op === "!=") && (isClock(e.left) || isClock(e.right))) gridTests.push(loc);
-        visit(e.left, loc);
-        visit(e.right, loc);
+        // `… / dt` inside a change() under method=map: the per-step amount is
+        // already what the stepper adds, so the division converts it twice.
+        if (inRate && e.op === "/" && isDt(e.right)) dtDivisions.push(loc);
+        visit(e.left, loc, inRate);
+        visit(e.right, loc, inRate);
         break;
       case "unary":
-        visit(e.arg, loc);
+        visit(e.arg, loc, inRate);
         break;
       case "call": {
         if (e.name.toLowerCase() === "delay_fixed" && e.args[1]) {
@@ -152,18 +159,22 @@ function checkDiscreteTime(model: Model, out: Diagnostic[]): void {
             else if (Math.abs(len / dt - Math.round(len / dt)) > 1e-9) out.push(warn(loc, `delay_fixed(…) length ${len} is not a whole number of steps (dt=${dt}) — it will be rounded to ${Math.max(1, Math.round(len / dt))} step(s)`));
           }
         }
-        for (const a of e.args) visit(a, loc);
+        for (const a of e.args) visit(a, loc, inRate);
         break;
       }
     }
   };
   for (const v of model.vars) for (const e of declExprs(v.expr, v.elemExprs)) visit(e, v.loc);
-  for (const r of model.rates.values()) visit(r.expr, r.loc);
+  for (const r of model.rates.values()) visit(r.expr, r.loc, method === "map");
   for (const s of model.stocks) for (const e of declExprs(s.initExpr, s.elemExprs)) visit(e, s.loc);
 
   if (method === "rk4" && gridTests.length) {
     const first = gridTests[0]!;
-    out.push(warn(first, `this model tests the clock on the time grid (t % n, t == k) but runs under rk4, which also samples between steps (t + dt/2) where those tests are false — for a discrete-period model use \`sim method=euler dt=1\`${gridTests.length > 1 ? ` (${gridTests.length} places)` : ""}`));
+    out.push(warn(first, `this model tests the clock on the time grid (t % n, t == k) but runs under rk4, which also samples between steps (t + dt/2) where those tests are false — for a discrete-period model use \`sim method=map\` (stock(t+dt) = stock(t) + change(t))${gridTests.length > 1 ? ` (${gridTests.length} places)` : ""}`));
+  }
+  if (method === "map" && dtDivisions.length) {
+    const first = dtDivisions[0]!;
+    out.push(warn(first, `under method=map change() is already a per-step increment — dividing it by dt converts twice; drop the \`/ dt\`${dtDivisions.length > 1 ? ` (${dtDivisions.length} places)` : ""}`));
   }
 }
 

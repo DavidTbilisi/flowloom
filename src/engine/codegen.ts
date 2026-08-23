@@ -29,6 +29,11 @@ export interface SimPlan {
   drawIndex: Map<Expr, number>;
   /** Scope slot of each integration state var, in `Compiled.state` order. */
   stateSlots: number[];
+  /** How many leading entries of `stateSlots` are user stocks (the rest are the
+   *  internal states of smooth/delay1/delay3). Under `method=map` the user
+   *  stocks step by their change() as a per-step increment, while the internal
+   *  states keep integrating with dt so their time constants stay in time units. */
+  userStates: number;
   /** Sample-and-hold delays (previous / delay_fixed), in `Compiled.fixed` order:
    *  the output slot the backends read, the slot of the internal aux that samples
    *  the input, and the length/init expressions (evaluated in TS at t=start). */
@@ -114,6 +119,7 @@ export function buildPlan(c: Compiled): SimPlan {
     stepSlot,
     drawIndex,
     stateSlots,
+    userStates: c.userStocks.length,
     fixedSlots,
     varSteps,
     rateExprs: c.state.map((s) => s.rateExpr),
@@ -284,7 +290,7 @@ export interface RunResult {
 export function runIntegration(
   plan: SimPlan,
   backend: DerivBackend,
-  settings: { dt: number; to: number; start: number; method: "euler" | "rk4" },
+  settings: { dt: number; to: number; start: number; method: "euler" | "rk4" | "map" },
   /** Called after each step's first derivative evaluation, with the full scope
    *  vector (every state, var and internal slot at that instant). Used by the
    *  loop analyzer to read link signs along the actual trajectory. */
@@ -338,6 +344,13 @@ export function runIntegration(
 
     if (method === "euler") {
       for (let j = 0; j < ns; j++) setState(j, getState(j) + dt * k1[j]!);
+    } else if (method === "map") {
+      // A difference equation: stock(t+dt) = stock(t) + change(t), the change
+      // being a per-step increment in the stock's own units (no × dt). The
+      // internal smooth/delay states are still rates per time unit — their time
+      // constants are written in time units — so they take the Euler step.
+      for (let j = 0; j < plan.userStates; j++) setState(j, getState(j) + k1[j]!);
+      for (let j = plan.userStates; j < ns; j++) setState(j, getState(j) + dt * k1[j]!);
     } else {
       for (let j = 0; j < ns; j++) base[j] = getState(j);
       const stage = (kIn: Float64Array, h: number, tt: number, kOut: Float64Array) => {

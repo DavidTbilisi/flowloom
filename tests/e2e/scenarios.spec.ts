@@ -96,6 +96,20 @@ sim dt=1 to=10 method=euler`);
   await expect(page.locator("#loopsWrap .loopcount")).toContainText("1 inactive");
 });
 
+test("method=map is in the toolbar picker and steps stock += change with no dt factor", async ({ page }) => {
+  await page.locator("#src").fill(`stock S = 100
+flow inc = 30
+change(S) = inc
+sim dt=0.5 to=2 method=rk4`);
+  await page.locator("#run").click();
+  await page.waitForFunction(() => (window as any).flowloom.run.ok === true);
+  await page.locator("#method").selectOption("map");
+  await expect(page.locator("#src")).toHaveValue(/method=map/);
+  await page.waitForFunction(() => (window as any).flowloom.run.ok === true && (window as any).flowloom.run.model.settings.method === "map");
+  expect(await page.evaluate(() => (window as any).flowloom.run.result.series.get("S").at(-1))).toBe(220); // 4 steps × 30, no dt factor
+  await expect(page.locator("#method")).toHaveValue("map");
+});
+
 test("a links-only sketch draws, has loops, and shows a note instead of a run", async ({ page }) => {
   await page.locator("#src").fill(`link population -> births +
 link births -> population +

@@ -85,7 +85,7 @@ describe("scenario", () => {
     expect(() => parseModel(base + "scenario a kk=2")).toThrow(/no param, switch, stock, or sim setting named 'kk' — did you mean 'k'/);
     expect(() => parseModel(base + "scenario a on1=0.5")).toThrow(/switch 'on1' must be on or off/);
     expect(() => parseModel(base + "scenario a k=fast")).toThrow(/'k' must be a number/);
-    expect(() => parseModel(base + "scenario a method=leapfrog")).toThrow(/method must be euler or rk4/);
+    expect(() => parseModel(base + "scenario a method=leapfrog")).toThrow(/method must be euler, rk4 or map/);
     expect(() => parseModel(base + "scenario base k=2")).toThrow(/'base' is the model itself/);
     expect(() => parseModel(base + "scenario a k")).toThrow(/expected key=value/);
     expect(() => parseModel(base + "scenario a")).toThrow(/needs at least one key=value/);

@@ -20,7 +20,7 @@ export function applyOverride(model: Model, spec: string): string[] {
   const raw = spec.slice(eq + 1).trim();
 
   if (key === "method") {
-    if (raw !== "euler" && raw !== "rk4") throw new Error(`method must be euler or rk4, got "${raw}"`);
+    if (raw !== "euler" && raw !== "rk4" && raw !== "map") throw new Error(`method must be euler, rk4 or map, got "${raw}"`);
     model.settings.method = raw;
     return warnings;
   }
