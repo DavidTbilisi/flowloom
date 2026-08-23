@@ -833,6 +833,8 @@ examples:
   cat model.flow | flowloom loops -`;
 
 async function main(): Promise<void> {
+  // `flowloom loops model.flow | head` closes our stdout early — exit quietly.
+  process.stdout.on("error", (e: NodeJS.ErrnoException) => { if (e.code === "EPIPE") process.exit(0); throw e; });
   const argv = process.argv.slice(2);
   if (!argv.length || argv[0] === "-h" || argv[0] === "--help") { out(HELP); return; }
   if (argv[0] === "-v" || argv[0] === "--version") { out(VERSION); return; }

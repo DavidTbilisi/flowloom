@@ -294,16 +294,19 @@ param shockScale              = 1        # scales the spend shocks (car 1400 · 
 param enough      [GEL/month] = 1500     # @rung 2 enoughOn: Wants pinned here, creep and review switched off
 
 # ── policy switches (one per rung that is a yes/no move) ───────────────────────
-switch separate     = off      # @rung 10 rung 10 — pay the Safe first at another bank; spend from what's left
-switch rule48       = off      # @rung 5 rung 5  — 48-hour rule: an impulse over 200 shrinks to 30 %
-switch ruleCarry    = off      # @rung 5 rung 5  — last month's overrun comes off this month's Wants
-switch sideIncome   = off      # @rung 4 rung 4  — a second Door / the career ladder
-switch bufferFirst  = off      # @rung 11 rung 11 — keep the headroom; vacation waits for the buffer
+switch separate     = off      # @rung 10 pay the Safe first at another bank; spend from what's left
+switch rule48       = off      # @rung 5 48-hour rule: an impulse over 200 shrinks to 30 %
+switch ruleCarry    = off      # @rung 5 last month's overrun comes off this month's Wants
+switch sideIncome   = off      # @rung 4 a second Door / the career ladder
+switch bufferFirst  = off      # @rung 11 keep the headroom; vacation waits for the buffer
 switch vacation     = on       # the annual 4,500 trip happens at all
-switch vacationWaits = off     # @rung 3 rung 3  — vacation waits until Cash ≥ target
+switch vacationWaits = off     # @rung 3 vacation waits until Cash ≥ target
 switch gapOn        = on       # the two-month income gap (months 16–17) happens
 switch recovery     = off      # income follows the recovery plan instead of income×growth
-switch enoughOn     = off      # @rung 2 rung 2  — "enough": Wants pinned at enough
+switch enoughOn     = off      # @rung 2 "enough": Wants pinned at enough
+switch engine       = off      # @rung 10 the Engine from financial-prognosis.flow: sweep cash above the buffer into Assets
+param invest        = 0.60     # @rung 10 share of the cash above the buffer swept into Assets each month
+param yieldRate     = 0.012    # @rung 7 monthly return on Assets (~15 %/yr), paid back into income
 
 # ── stocks ─────────────────────────────────────────────────────────────────────
 stock Cash         [GEL]       = cash0
@@ -313,6 +316,7 @@ stock DebtPeak     [GEL]       = 0             # deepest the Safe went (as a pos
 stock InterestPaid [GEL]       = 0
 stock Earned       [GEL]       = 0
 stock Vacations                = 0
+stock Assets       [GEL]       = 0             # the Engine's stock — only moves with engine on
 
 # ── calendar: seasonal needs, impulse buys, shocks repeating every 36 months ───
 table pattern = (0,40) (1,-30) (2,110) (3,-60) (4,20) (5,90) (6,-20) (7,150) (8,-40) (9,60) (10,130) (11,-10)
@@ -332,7 +336,8 @@ aux trackA  [USD/month] = 600 * min(5, max(0, t - 2)) - if(t >= 10, 1500, 0)
 aux trackB  [USD/month] = if(t >= 10, 5500 + 3000 * min(1, (t - 10) / 26), 0)
 aux recoveryGEL [GEL/month] = (mission + trackA + trackB) * fx * 0.99
 aux side [GEL/month] = if(sideIncome && t >= sideStart, min(sideAmount, sideRamp * (t - sideStart + dt) / dt) * raise, 0)
-aux pay  [GEL/month] = if(recovery, recoveryGEL, income * raise) * incomeMul + side
+aux passive [GEL/month] = if(engine, yieldRate * Assets / dt, 0)      # the Engine's cash-on-cash return
+aux pay  [GEL/month] = if(recovery, recoveryGEL, income * raise) * incomeMul + side + passive
 
 # ── needs ──────────────────────────────────────────────────────────────────────
 aux headroom [GEL/month] = needsCap - needsItems
@@ -368,7 +373,13 @@ aux afterTrip [GEL] = afterMonth - if(tripNow, vacationCost, 0)
 # ── interest on both sides of zero ─────────────────────────────────────────────
 flow interest [GEL/month] = if(afterTrip < 0, afterTrip * debtRate, afterTrip * depRate)
 aux next [GEL] = afterTrip + interest * dt
-change(Cash) = (next - Cash) / dt
+
+# ── the Engine: once the buffer is full, a share of the excess goes to work ────
+aux bufferTarget [GEL] = bufferMonths * needsCap * dt
+flow investing [GEL/month] = if(engine, invest * max(0, next - bufferTarget), 0) / dt
+change(Cash)   = (next - Cash) / dt - investing
+change(Assets) = investing
+aux netWorth [GEL] = Cash + Assets
 
 change(MonthsInDebt) = if(afterTrip < 0, 1, 0)
 change(DebtPeak)     = max(0, -next - DebtPeak) / dt
@@ -392,9 +403,10 @@ scenario rung2_enough     enoughOn=on impulseScale=0.5       # @rung 2 "enough"
 # ── the households from the page ───────────────────────────────────────────────
 scenario measured  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 creepCap=0.40 bufferFirst=on bufferMonths=4 target=16000
 scenario recovery  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 creepCap=0.10 bufferFirst=on bufferMonths=4 target=23000 recovery=on gapOn=off
+scenario recovery_engine  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 creepCap=0.10 bufferFirst=on bufferMonths=4 target=23000 recovery=on gapOn=off engine=on   # @rung 10 the plan with the Engine running
 
 sim dt=1 to=36 method=euler timeunit=month
-plot Cash wantsFinal needs pay`,
+plot Cash netWorth wantsFinal needs pay`,
   },
   {
     name: "Causal-loop sketch (no equations)",
