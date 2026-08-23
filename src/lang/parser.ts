@@ -6,6 +6,7 @@ import {
   type TableDecl,
   type DimDecl,
   type ScenarioDecl,
+  type ExpectDecl,
   type ScenarioSet,
   type LinkDecl,
   type VarKind,
@@ -55,6 +56,7 @@ interface Raw {
   dims: Map<string, DimDecl>;
   scenarios: Map<string, ScenarioDecl>;
   links: LinkDecl[];
+  expects: ExpectDecl[];
   settings: SimSettings;
   plot: string[];
   names: Set<string>;
@@ -75,6 +77,7 @@ const RE = {
   table: /^table\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   scenario: /^scenario\s+([A-Za-z_]\w*)\s*:?\s*(.*)$/,
   link: /^link\s+([A-Za-z_]\w*)\s*(?:->|→)\s*([A-Za-z_]\w*)\s*([+-]|\+|−)?\s*$/,
+  expect: /^expect\s+(.+)$/,
   sim: /^sim\s+(.+)$/,
   plot: /^plot\s+(.+)$/,
 };
@@ -90,6 +93,7 @@ export function parseModel(text: string): Model {
     dims: new Map(),
     scenarios: new Map(),
     links: [],
+    expects: [],
     settings: { ...DEFAULT_SETTINGS },
     plot: [],
     names: new Set(),
@@ -145,6 +149,7 @@ export function parseModel(text: string): Model {
   validateReferences(m);
   validateSubscripts(m);
   validateScenarios(m);
+  validateExpects(m);
 
   const model: Model = {
     stocks: m.stocks,
@@ -155,6 +160,7 @@ export function parseModel(text: string): Model {
     dims: m.dims,
     scenarios: m.scenarios,
     links: m.links,
+    expects: m.expects,
     settings: m.settings,
     plot: m.plot,
     order,
@@ -291,6 +297,8 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
       if (m.links.some((l) => l.from === from && l.to === to)) push(m, "error", loc, `link ${from} -> ${to} is declared twice`);
       if (RESERVED.has(from!) || RESERVED.has(to!)) push(m, "error", loc, `a link can't use the reserved name '${RESERVED.has(from!) ? from : to}'`);
       m.links.push({ from: from!, to: to!, sign, doc, loc });
+    } else if ((mt = line.match(RE.expect))) {
+      parseExpect(m, mt[1]!, doc, loc);
     } else if ((mt = line.match(RE.table))) {
       const [, name, body] = mt;
       claim(m, name!, loc);
@@ -470,6 +478,68 @@ const BUILTIN_CONSTS = new Set(["PI", "E"]);
  *  param/switch, a stock's initial value, or a sim setting — with a value of the
  *  right shape. Checked at parse time so a typo in a scenario is a located error
  *  in the editor, not a surprise when the scenario is finally selected. */
+/** Metric ops resolveMetric() understands, plus the loop-census pseudo-metrics. */
+export const METRIC_OPS = ["final", "max", "min", "mean", "at", "time-to-peak", "settle-time"] as const;
+export const LOOP_METRICS = ["active", "total", "reinforcing", "balancing", "inactive"] as const;
+const EXPECT_OPS = new Set(["<", "<=", ">", ">=", "=="]);
+
+/** `expect [SCENARIO] METRIC OP VALUE [± TOL[%]]`. The scenario is optional and
+ *  recognisable without lookahead: a metric spec always carries a colon, a
+ *  scenario name never does. `base` names the model itself. */
+function parseExpect(m: Raw, body: string, doc: string | undefined, loc: Loc): void {
+  const toks = body.split(/\s+/).filter(Boolean);
+  const usage = "expect [scenario] <op>:<series> <|<=|>|>=|== <number> [± <tol>[%]]";
+  let scenario: string | undefined;
+  if (toks.length && !toks[0]!.includes(":")) scenario = toks.shift();
+  const [metric, op, valueTok, pm, tolTok, ...extra] = toks;
+  if (!metric || !op || valueTok === undefined) { push(m, "error", loc, `expect: ${usage}`); return; }
+  if (!EXPECT_OPS.has(op)) { push(m, "error", loc, `expect: comparison must be one of < <= > >= ==, got '${op}'`); return; }
+  const value = Number(valueTok);
+  if (!Number.isFinite(value)) { push(m, "error", loc, `expect: expected a number after '${op}', got '${valueTok}'`); return; }
+  const e: ExpectDecl = { metric, op: op as ExpectDecl["op"], value, loc };
+  if (scenario && scenario !== "base") e.scenario = scenario;
+  if (doc) e.doc = doc;
+  if (pm !== undefined) {
+    if (!(pm === "±" || pm === "+-" || pm === "+/-") || tolTok === undefined) { push(m, "error", loc, `expect: a tolerance is written ± <number> or ± <percent>%, got '${[pm, tolTok].filter((x) => x !== undefined).join(" ")}'`); return; }
+    if (op !== "==") push(m, "warning", loc, `expect: a tolerance only applies to ==, ignored after '${op}'`);
+    const pct = tolTok.endsWith("%");
+    const tv = Number(pct ? tolTok.slice(0, -1) : tolTok);
+    if (!Number.isFinite(tv) || tv < 0) { push(m, "error", loc, `expect: tolerance must be a non-negative number, got '${tolTok}'`); return; }
+    if (op === "==") e.tol = { value: pct ? tv / 100 : tv, pct };
+  }
+  if (extra.length) { push(m, "error", loc, `expect: unexpected '${extra.join(" ")}' — ${usage}`); return; }
+  m.expects.push(e);
+}
+
+function validateExpects(m: Raw): void {
+  const seriesNames = [...m.stocks.map((s) => s.name), ...m.vars.filter((v) => v.kind !== "param").map((v) => v.name)];
+  for (const e of m.expects) {
+    if (e.scenario && !m.scenarios.has(e.scenario)) {
+      const hint = suggestName(e.scenario, [...m.scenarios.keys()]);
+      push(m, "error", e.loc, `expect: no scenario named '${e.scenario}'${hint ? ` — did you mean '${hint}'?` : ""} (or did you mean a metric like final:${e.scenario}?)`);
+      continue;
+    }
+    const parts = e.metric.split(":");
+    const op = parts[0]!;
+    if (op === "loops") {
+      if (parts.length !== 2 || !(LOOP_METRICS as readonly string[]).includes(parts[1]!)) push(m, "error", e.loc, `expect: loops:<what> takes ${LOOP_METRICS.join("|")}, got '${e.metric}'`);
+      continue;
+    }
+    if (!(METRIC_OPS as readonly string[]).includes(op)) {
+      const hint = suggestName(op, [...METRIC_OPS, "loops"]);
+      push(m, "error", e.loc, `expect: unknown metric '${op}:'${hint ? ` — did you mean '${hint}:'?` : ""} (${METRIC_OPS.join("|")}|loops)`);
+      continue;
+    }
+    if (op === "at" ? parts.length !== 3 || !Number.isFinite(Number(parts[1])) : parts.length !== 2) { push(m, "error", e.loc, `expect: metric '${e.metric}' is malformed — ${op === "at" ? "at:<time>:<series>" : `${op}:<series>`}`); continue; }
+    const series = parts[parts.length - 1]!;
+    const base = series.split(/[[.]/)[0]!;
+    if (!seriesNames.includes(base)) {
+      const hint = suggestName(base, seriesNames);
+      push(m, "error", e.loc, `expect: no stock, flow or aux named '${base}'${hint ? ` — did you mean '${hint}'?` : ""}${m.varIndex.get(base)?.kind === "param" ? " (a param is not a series — expect reads outputs)" : ""}`);
+    }
+  }
+}
+
 function validateScenarios(m: Raw): void {
   const settingKeys = new Set<string>(SETTING_KEYS);
   for (const sc of m.scenarios.values()) {

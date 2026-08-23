@@ -34,6 +34,7 @@ animation are all derived from it. Read and edit a model entirely as text.
   table NAME = (x,y) (x,y) ...          piecewise-linear lookup; call it as NAME(x)
   scenario NAME key=value key=value …   a named override set kept in the text: params, switches (on/off), stock inits, dt/to/start/seed/method
   link A -> B +|-                       a declared signed influence (+ with, - against): a causal-loop sketch before equations; links alone draw and have R/B loops but do not run
+  expect [SCENARIO] METRIC OP VALUE [± TOL[%]]   a claim the model must keep satisfying (its own test): expect final:Cash > 0 · expect recovery final:netWorth == 493370 ± 1% · expect loops:active == 9
   dim NAME = A, B, C                     a subscript dimension (array index) of named elements
   stock NAME[dim] = EXPR                 an array: one stock per element; refer to NAME[dim] / NAME[A]; sum(NAME) collapses it
   sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4 | map); add timeunit=month for units, seed=N for random*()
@@ -109,6 +110,17 @@ ${group("stateful", "Stateful builtins — carry state across steps")}
   raise=on income=9000 Cash=5000\`. Run it with --scenario NAME (CLI/MCP) or the
   studio's Scenario picker; \`compare\` runs base + every scenario and tabulates
   chosen metrics with deltas. "base" is always the model as written.
+- An expect line is a claim kept in the model: \`expect [scenario] <metric> <op>
+  <value> [± tol]\` with op in < <= > >= ==, metric a spec (final:Cash, min:Cash,
+  at:12:Cash) or a loop census (loops:active, loops:total). == is exact unless
+  given ± tol (absolute, or a percent like ± 1%). \`test\` runs them, one
+  simulation per scenario, and exits non-zero on a failure. When a number from
+  the model is cited anywhere, write it as an expect first.
+- After any edit, \`diff before.flow after.flow\` (flow_diff) says whether the
+  numbers changed — every series under base and every shared scenario — and
+  whether the live-loop census changed (a refactor can keep every number and
+  still add or lose a loop). identical = the refactor verdict; structure changes
+  (new var, renamed scenario, a param value) are listed but do not fail it.
 - Feedback-loop polarity — R (reinforcing) / B (balancing) — is read by numerical
   perturbation at every sampled step of the run. A loop gated by an if() gets
   its polarity when the gate opens ("from t=…"); a loop that changes sign is
@@ -150,6 +162,8 @@ ${example!.source.replace(/\s*$/, "")}
   flowloom compare model.flow --metric a,b [--scenario x,y]   base vs each scenario: one row per scenario, with deltas
   flowloom policies model.flow --metric SPEC [--switch a,b] [--target N] [--cost a=2]   every combination of the switches still off: best, cheapest-to-target, Shapley share per switch
   flowloom leverage model.flow --metric SPEC       the model's levers on Meadows' twelve leverage points (tag with "# @rung N" in a doc comment), each measured
+  flowloom test model.flow [--scenario a,b]        the model's own expect lines; non-zero exit on a failure
+  flowloom diff before.flow after.flow [--tol T] [--no-loops]   did the edit change the numbers or the live loops? non-zero exit if so
   flowloom reference --json                         this catalog as JSON
   (any command takes --scenario NAME to run a scenario line, and --set k=v on top)
 

@@ -405,6 +405,18 @@ scenario measured  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 cre
 scenario recovery  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 creepCap=0.10 bufferFirst=on bufferMonths=4 target=23000 recovery=on gapOn=off
 scenario recovery_engine  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 creepCap=0.10 bufferFirst=on bufferMonths=4 target=23000 recovery=on gapOn=off engine=on   # @rung 10 the plan with the Engine running
 
+# ── the numbers the wiki cites — checked by: flowloom test <file> ──
+expect final:Cash == 8000.92 ± 0.01                  # the teaching baseline's three-year balance
+expect min:Cash == -2490.35 ± 0.01                   # … and its floor
+expect loops:active == 9                              # nine loops engage in the base run
+expect rung10_separate min:Cash >= 0                 # Profit First keeps the family out of the card
+expect rung2_enough min:Cash >= 0                    # so does "enough"
+expect rung3_goal min:Cash >= 0                      # and the runway goal with vacations waiting
+expect rung11_buffer min:Cash >= 0                   # the buffer rule too (a close fourth by swing)
+expect measured final:Cash < 0                       # the June-2026 household is treading water
+expect recovery final:Cash == 456467 ± 1             # the recovery plan, cash-only
+expect recovery_engine final:netWorth == 493370 ± 1  # with the Engine: vs the source model's 487k
+
 sim dt=1 to=36 method=map timeunit=month
 plot Cash netWorth wantsFinal needs pay`,
   },

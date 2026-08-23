@@ -20,6 +20,8 @@ export interface ModelDescription {
   scenarios: Array<{ name: string; sets: Array<{ key: string; value: string }>; doc?: string; rung?: number }>;
   /** Declared signed influences (`link` lines). */
   links: Array<{ from: string; to: string; sign: 1 | -1; doc?: string }>;
+  /** The model's own claims (`expect` lines): scenario (base = the model), metric, comparison, value, tolerance. */
+  expects: Array<{ scenario: string; metric: string; op: string; value: number; tol?: { value: number; pct: boolean }; doc?: string }>;
   /** True when the model is a causal-loop sketch: links, no stock to integrate. */
   qualitative: boolean;
   settings: Model["settings"];
@@ -81,6 +83,7 @@ export function describeModel(model: Model): ModelDescription {
       ...(s.rung !== undefined ? { rung: s.rung } : {}),
     })),
     links: model.links.map((l) => ({ from: l.from, to: l.to, sign: l.sign, ...(l.doc ? { doc: l.doc } : {}) })),
+    expects: model.expects.map((e) => ({ scenario: e.scenario ?? "base", metric: e.metric, op: e.op, value: e.value, ...(e.tol ? { tol: e.tol } : {}), ...(e.doc ? { doc: e.doc } : {}) })),
     qualitative: model.stocks.length === 0 && model.links.length > 0,
     settings: model.settings,
     plot: model.plot,
@@ -149,6 +152,11 @@ export function explainModel(model: Model): string {
   if (d.links.length) {
     lines.push("", "Declared links (a causal-loop sketch; + same direction, − opposite):");
     for (const l of d.links) lines.push(`  • ${l.from} ${l.sign > 0 ? "—(+)→" : "—(−)→"} ${l.to}${l.doc ? ` — ${l.doc}` : ""}`);
+  }
+
+  if (d.expects.length) {
+    lines.push("", `Expectations (${d.expects.length} — the model's own tests; run them with \`test\`):`);
+    for (const e of d.expects) lines.push(`  • ${e.scenario} ${e.metric} ${e.op} ${e.value}${e.tol ? ` ± ${e.tol.pct ? `${e.tol.value * 100}%` : e.tol.value}` : ""}${e.doc ? ` — ${e.doc}` : ""}`);
   }
 
   if (d.tables.length) {

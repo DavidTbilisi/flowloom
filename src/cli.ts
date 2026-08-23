@@ -29,6 +29,9 @@ import {
   searchPolicies,
   loopDominance,
   leverageLadder,
+  runExpects,
+  formatExpect,
+  diffModels,
   describeModel,
   explainModel,
   summarizeRun,
@@ -57,6 +60,8 @@ import {
   type Loop,
   type DominanceResult,
   type LeverageResult,
+  type ExpectReport,
+  type DiffResult,
 } from "./engine/index.js";
 
 const VERSION = "0.1.0";
@@ -65,6 +70,8 @@ const VERSION = "0.1.0";
 interface Args {
   cmd: string;
   file?: string;
+  file2?: string; // diff: the second model
+  noLoops: boolean; // diff: skip the loop census
   format: "table" | "csv" | "tsv" | "json";
   plot: string[]; // explicit column selection; empty = use model defaults
   sets: string[]; // raw "key=value" overrides, applied in order
@@ -92,7 +99,7 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", noLoops: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -102,6 +109,7 @@ function parseArgs(argv: string[]): Args {
       case "--json": a.format = "json"; break;
       case "--chart": a.chart = true; break;
       case "--all": a.all = true; break;
+      case "--no-loops": a.noLoops = true; break;
       case "--plot": a.plot.push(...splitList(need(argv, ++i, arg))); break;
       case "-s":
       case "--set": a.sets.push(need(argv, ++i, arg)); break;
@@ -152,8 +160,9 @@ function parseArgs(argv: string[]): Args {
   if (rest.length && (rest[0] === "-" || rest[0]!.endsWith(".flow"))) rest.unshift("run");
   a.cmd = rest[0] ?? "";
   a.file = rest[1];
-  // Every command but `compare` takes one scenario; compare takes the list.
-  if (a.cmd !== "compare") {
+  a.file2 = rest[2];
+  // Every command but compare/test/diff takes one scenario; those take a list.
+  if (a.cmd !== "compare" && a.cmd !== "test" && a.cmd !== "diff") {
     if (a.scenarios.length > 1) die(`--scenario takes one name here (compare takes a list), got ${a.scenarios.join(", ")}`);
     a.scenario = a.scenarios[0];
   }
@@ -767,6 +776,83 @@ function die(msg: string): never {
   process.exit(1);
 }
 
+function renderExpects(r: ExpectReport, file: string): string {
+  const lines: string[] = [];
+  const w = Math.max(...r.results.map((x) => formatExpect(x.expect).length));
+  for (const x of r.results) {
+    const claim = formatExpect(x.expect).padEnd(w);
+    let why = "";
+    if (x.error) why = `  ${x.error}`;
+    else if (!x.pass && x.off !== undefined) {
+      const pct = x.expect.value !== 0 ? ` (${(100 * x.off / Math.abs(x.expect.value)).toPrecision(2)} %)` : "";
+      why = `  off by ${fmt(x.off)}${pct}${x.allowed ? `, allowed ${fmt(x.allowed)}` : " — add ± <tol> if that is acceptable"}`;
+    }
+    lines.push(`  ${x.pass ? "✓" : "✗"} ${claim}  ${Number.isFinite(x.actual) ? fmt(x.actual) : "—"}${why}${x.note ? `  [${x.note}]` : ""}${x.expect.doc ? `   # ${x.expect.doc}` : ""}`);
+  }
+  lines.push(`${file}: ${r.passed} passed, ${r.failed} failed  (${r.scenarios.length} run${r.scenarios.length === 1 ? "" : "s"})`);
+  return lines.join("\n");
+}
+
+async function cmdTest(args: Args): Promise<void> {
+  const model = load(args);
+  if (!model.expects.length) die("the model declares no `expect` lines — add e.g. `expect final:Cash > 0` or `expect recovery final:netWorth == 493370 ± 1%`");
+  let r: ExpectReport;
+  try { r = await runExpects(model, args.scenarios); } catch (e) { die((e as Error).message); }
+  if (!r.results.length) die(`no expect line is under ${args.scenarios.map((x) => `'${x}'`).join(", ")}`);
+  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderExpects(r, args.file!));
+  if (r.failed) process.exit(1);
+}
+
+function loadFile(path: string): Model {
+  let text: string;
+  try { text = readFileSync(path, "utf8"); } catch (e) { die(`cannot read ${path}: ${(e as Error).message}`); }
+  try { return parseModel(text!); } catch (e) {
+    if (e instanceof ModelError) { for (const d of e.diagnostics) process.stderr.write(`error: ${path}: line ${d.loc.line}: ${d.message}\n`); process.exit(1); }
+    throw e;
+  }
+}
+
+function renderDiff(r: DiffResult, fa: string, fb: string): string {
+  const lines = [`diff ${fa} ${fb}  (tol ${r.tol}: |Δ| ≤ tol × max(1, |a|, |b|))`];
+  const st = r.structure;
+  const parts: string[] = [];
+  const tag = (sign: string, kind: string, names: string[]) => { if (names.length) parts.push(`${sign}${kind} ${names.join(", ")}`); };
+  tag("−", "stock", st.stocksOnlyA); tag("+", "stock", st.stocksOnlyB);
+  tag("−", "var", st.varsOnlyA); tag("+", "var", st.varsOnlyB);
+  tag("−", "scenario", st.scenariosOnlyA); tag("+", "scenario", st.scenariosOnlyB);
+  for (const v of st.values) parts.push(`${v.name} ${fmt(v.a)} → ${fmt(v.b)}`);
+  for (const v of st.settings) parts.push(`sim ${v.key} ${v.a} → ${v.b}`);
+  lines.push(parts.length ? `structure: ${parts.join("; ")}` : "structure: same declarations, values and settings");
+  const wn = Math.max(4, ...r.scenarios.map((s) => s.scenario.length));
+  for (const s of r.scenarios) {
+    const head = `  ${s.scenario.padEnd(wn)}`;
+    if (s.error) { lines.push(`${head}  error: ${s.error}`); continue; }
+    const grid = s.steps[0] === s.steps[1] && s.shared === s.steps[0] ? `${s.shared} steps` : `grids differ (${s.steps[0]} vs ${s.steps[1]} steps, ${s.shared} shared)`;
+    const loops = s.loops ? `  loops ${s.loops.a.total}/${s.loops.a.active}${s.loops.a.total !== s.loops.b.total || s.loops.a.active !== s.loops.b.active ? ` → ${s.loops.b.total}/${s.loops.b.active}` : ""} live` : "";
+    const verdict = s.changed.length ? `${s.changed.length} of ${s.changed.length + s.same} series moved` : `${s.same} series identical`;
+    lines.push(`${head}  ${grid}  ${verdict}${loops}${s.onlyA.length ? `  −${s.onlyA.join(",")}` : ""}${s.onlyB.length ? `  +${s.onlyB.join(",")}` : ""}`);
+    for (const c of s.changed.slice(0, 8)) lines.push(`${" ".repeat(head.length)}    ${c.name.padEnd(16)} max |Δ| ${fmt(c.maxAbs)} at t=${fmt(c.at)}  (${fmt(c.a)} → ${fmt(c.b)})`);
+    if (s.changed.length > 8) lines.push(`${" ".repeat(head.length)}    … ${s.changed.length - 8} more`);
+    if (s.loops) {
+      for (const l of s.loops.activeOnlyA) lines.push(`${" ".repeat(head.length)}    live loop gone:  ${l}`);
+      for (const l of s.loops.activeOnlyB) lines.push(`${" ".repeat(head.length)}    live loop new:   ${l}`);
+    }
+    if (s.notes?.a) lines.push(`${" ".repeat(head.length)}    first:  ${s.notes.a}`);
+    if (s.notes?.b) lines.push(`${" ".repeat(head.length)}    second: ${s.notes.b}`);
+  }
+  lines.push(r.identical ? `identical: every series within tolerance and the same live loops${r.structureChanged ? " (structure changed)" : ""}` : "different");
+  return lines.join("\n");
+}
+
+async function cmdDiff(args: Args): Promise<void> {
+  if (!args.file || !args.file2) die("diff needs two model files: flowloom diff before.flow after.flow");
+  const a = loadFile(args.file), b = loadFile(args.file2);
+  let r: DiffResult;
+  try { r = await diffModels(a, b, { ...(args.tol !== undefined ? { tol: args.tol } : {}), scenarios: args.scenarios, loops: !args.noLoops }); } catch (e) { die((e as Error).message); }
+  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderDiff(r, args.file, args.file2));
+  if (!r.identical) process.exit(1);
+}
+
 const HELP = `flowloom ${VERSION} — run text-first systems models from the shell
 
 usage:
@@ -787,6 +873,11 @@ usage:
   flowloom scenarios <model.flow> [--json]   list the model's scenario lines
   flowloom compare  <model.flow> --metric SPEC[,SPEC] [--scenario a,b] [--json]
                                              base vs each scenario, one row per scenario
+  flowloom test     <model.flow> [--scenario a,b] [--json]
+                                             check the model's own 'expect' lines; non-zero exit on a failure
+  flowloom diff     <before.flow> <after.flow> [--scenario a,b] [--tol T] [--no-loops] [--json]
+                                             did the edit change the numbers? every series under base + every
+                                             shared scenario, plus the live-loop census; non-zero exit if so
   flowloom leverage <model.flow> --metric SPEC [--json]
                                              the model's levers on Meadows' ladder (params, switches,
                                              scenarios tagged '# @rung N'), each measured on the metric
@@ -830,6 +921,8 @@ examples:
   flowloom compare budget.flow --metric final:Cash,min:Cash
   flowloom policies budget.flow --metric min:Cash --target 0 --cost separate=2
   flowloom leverage budget.flow --metric min:Cash
+  flowloom test budget.flow
+  flowloom diff budget-before.flow budget.flow
   cat model.flow | flowloom loops -`;
 
 async function main(): Promise<void> {
@@ -856,6 +949,8 @@ async function main(): Promise<void> {
     case "compare": await cmdCompare(args); break;
     case "policies": await cmdPolicies(args); break;
     case "leverage": await cmdLeverage(args); break;
+    case "test": await cmdTest(args); break;
+    case "diff": await cmdDiff(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");
     default: die(`unknown command "${args.cmd}" — try `+"`flowloom --help`");

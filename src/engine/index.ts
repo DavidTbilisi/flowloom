@@ -55,5 +55,7 @@ export { globalSensitivity, type GsaResult, type GsaRow, type GsaOptions } from 
 export { applyOverride, applyScenario, BASE_SCENARIO } from "./overrides.js";
 export { compareScenarios, type CompareResult, type CompareRow } from "./compare.js";
 export { searchPolicies, type PolicyOptions, type PolicyResult, type PolicyCombo } from "./policies.js";
+export { runExpects, judge, loopMetric, formatExpect, type ExpectReport, type ExpectResult } from "./expect.js";
+export { diffModels, type DiffOptions, type DiffResult, type ScenarioDiff, type SeriesDiff, type StructureDiff, type LoopCensus } from "./diff.js";
 export { timeGrainParams, knobParams } from "./grain.js";
 export { leverageLadder, MEADOWS_RUNGS, type LeverageResult, type LadderRung, type Lever } from "./leverage.js";

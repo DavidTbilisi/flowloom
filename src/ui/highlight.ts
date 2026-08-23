@@ -44,6 +44,7 @@ export const KEYWORDS = new Set([
   "table",
   "scenario",
   "link",
+  "expect",
   "sim",
   "plot",
 ]);

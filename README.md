@@ -41,7 +41,10 @@ dynamics, and check the numbers. Validate, don't vibe.
   and **`policies`** — every combination of the switches still off, with the best
   set, the cheapest reaching a target, and a Shapley share per switch. Tag levers
   with `# @rung N` and **`leverage`** lays them out on Meadows' twelve leverage
-  points, each measured.
+  points, each measured. **`expect`** lines are the model's own tests — a claim
+  (`expect recovery final:netWorth == 493370 ± 1%`, `expect loops:active == 9`)
+  kept in the text and checked by **`test`**; **`diff`** compares two versions of
+  a model series by series and loop by loop, so a refactor has a verdict.
 - **A proper engine** — Euler and classical **RK4** integration, plus **`map`**
   for difference equations; `step`/`pulse`/
   `ramp` test inputs; graphical **lookup tables**; first- and third-order
@@ -109,6 +112,8 @@ flowloom check   model.flow                  # validate; non-zero exit + line/co
 flowloom compare model.flow --metric final:Cash,min:Cash   # base vs every `scenario` line
 flowloom policies model.flow --metric min:Cash --target 0   # which moves, together, are worth it
 flowloom leverage model.flow --metric min:Cash              # the levers on Meadows' ladder (# @rung N tags)
+flowloom test    model.flow                  # the model's own `expect` lines; non-zero exit on a failure
+flowloom diff    before.flow after.flow      # did the edit change the numbers or the live loops?
 flowloom run     model.flow --scenario recovery            # run one scenario (then --set on top)
 flowloom reference --json                     # the language + builtins catalog
 ```
@@ -118,7 +123,7 @@ flowloom reference --json                     # the language + builtins catalog
   canonical catalog (`npm run gen:llms`), so it never drifts.
 - **MCP server:** `flowloom-mcp` exposes the engine to Claude Code / Claude Desktop
   as tools — `flow_run`, `flow_check`, `flow_loops`, `flow_describe`, `flow_explain`,
-  `flow_compare`, `flow_policies`, `flow_leverage`, `flow_examples`, … — plus a `flow://reference` resource carrying the
+  `flow_compare`, `flow_policies`, `flow_leverage`, `flow_test`, `flow_diff`, `flow_examples`, … — plus a `flow://reference` resource carrying the
   guide. Each tool takes the model as text (plus optional `set` / `scenario` what-ifs). Register it as a stdio MCP server pointing at
   `dist-cli/mcp.js` (build with `npm run build:cli`).
 

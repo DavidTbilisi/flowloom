@@ -129,6 +129,23 @@ export interface LinkDecl {
   loc: Loc;
 }
 
+/** `expect [SCENARIO] METRIC OP VALUE [± TOL[%]]` — a claim the model must keep
+ *  satisfying: its own regression test, kept in the text like a scenario so a
+ *  number cited elsewhere (a page, a report) has a guard in the model it came
+ *  from. METRIC is a metric spec (final:Cash, min:Cash, at:12:Cash, …) or a
+ *  loop census (loops:active, loops:total, loops:reinforcing, loops:balancing). */
+export interface ExpectDecl {
+  /** Scenario to apply first; undefined = the base model. */
+  scenario?: string;
+  metric: string;
+  op: "<" | "<=" | ">" | ">=" | "==";
+  value: number;
+  /** Tolerance for `==`: an absolute amount, or a fraction of |value| when pct. */
+  tol?: { value: number; pct: boolean };
+  doc?: string;
+  loc: Loc;
+}
+
 /** A graphical / lookup function: piecewise-linear over (x,y) breakpoints. */
 export interface TableDecl {
   name: string;
@@ -160,6 +177,8 @@ export interface Model {
   scenarios: Map<string, ScenarioDecl>;
   /** Declared signed influences (`link` lines) — a causal-loop sketch, with or without equations. */
   links: LinkDecl[];
+  /** Claims the model must keep satisfying (`expect` lines), in source order. */
+  expects: ExpectDecl[];
   settings: SimSettings;
   /** Series chosen to be visible by default (the `plot` line). */
   plot: string[];

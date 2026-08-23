@@ -32,6 +32,7 @@ stock Population [people] = 5      # the starting headcount
 | `table NAME = (x,y) (x,y) …` | A piecewise-linear **graphical/lookup function**. Call it as `NAME(x)`. |
 | `scenario NAME key=value …` | A **named set of overrides** kept in the text. See [Scenarios](#scenarios). |
 | `link A -> B +` / `link A -> B -` | A **declared signed influence** — the causal-loop sketch you draw before equations. See [Sketching first](#sketching-first-link). |
+| `expect [SCENARIO] METRIC OP VALUE [± TOL]` | A **claim the model must keep satisfying** — its own test. See [Expectations](#expectations). |
 | `sim dt=… to=… start=… method=…` | Simulation settings. The toolbar edits this line. |
 | `plot A B C` | Which series are visible by default. |
 
@@ -166,6 +167,40 @@ written. Scenarios are applied on top of the base text when chosen:
   **▤ Scenarios table** runs base and every scenario and tabulates final / min /
   max of the visible series with the change against base (the studio's
   `compare`).
+
+### Expectations
+
+```flow
+expect final:Cash > 0                          # the family ends above water
+expect min:Cash == -2490.35 ± 0.01             # the floor the page cites
+expect loops:active == 9                       # nine loops engage in the base run
+expect recovery final:netWorth == 493370 ± 1%  # vs the source model's 487k
+expect rung10_separate min:Cash >= 0           # Profit First keeps the card unused
+```
+
+An `expect` line is a claim about the model kept **in the model** — its own
+regression test. A number that leaves the model (cited on a page, in a report,
+in a decision) is a claim about the model *as it was*; the next edit can move it
+silently. Written next to the scenarios it is about, the claim fails where the
+edit happened, not where the number was quoted.
+
+- The optional first token names a **scenario** (`base` = the model itself). It
+  is unambiguous without lookahead: a metric always carries a colon, a scenario
+  name never does.
+- **METRIC** is a [metric spec](#simulation-settings) — `final:`/`max:`/`min:`/
+  `mean:`/`time-to-peak:`/`settle-time:` of a series, `at:<t>:<series>` — or a
+  loop census: `loops:active`, `loops:total`, `loops:reinforcing`,
+  `loops:balancing`, `loops:inactive`.
+- **OP** is `<`, `<=`, `>`, `>=` or `==`. `==` is **exact** unless given a
+  tolerance — `± 0.01` (absolute) or `± 1%` (of the value). An exact `==` that
+  fails says how far off it was, which is the tolerance to write if that is
+  acceptable.
+- The parser checks the scenario, the metric and the series name (a `param` is
+  not a series — expectations read outputs), so a typo is a located error.
+
+Run them: `flowloom test model.flow` (one simulation per scenario, a line per
+claim, non-zero exit on any failure — so a model can sit in CI); `flow_test` over
+MCP; `describe`/`explain` list them.
 
 ### Tables (graphical functions)
 
@@ -386,6 +421,26 @@ equation-level names adds an edge the equations don't carry yet (lint flags a
 link that merely duplicates an equation dependency), and a param named in a link
 becomes a node. Declared links can't be cut by `loops --metric` (there is no
 equation to freeze), so they are listed as skipped there.
+
+## Checking an edit (`diff`)
+
+```
+flowloom diff before.flow after.flow [--scenario a,b] [--tol 1e-9] [--no-loops]
+```
+
+"Did this edit change what the model computes?" is the most common question
+about a living model and the easiest to answer wrong by eye. `diff` compares two
+model texts in three layers: **structure** (stocks, variables and scenarios
+added or removed; param values and sim settings that differ), **numbers** (every
+series, under base and every scenario both sides declare, on the shared time
+grid — the largest |Δ| per series and where it occurs), and the **loop census**
+(total and live loops per side, and any live loop that appeared or vanished).
+The verdict `identical` means numbers and live loops — a refactor that renames
+an aux, removes `× dt` bookkeeping or moves a term should pass it; structure
+changes are listed but do not fail it. Exit status is non-zero when different,
+like `diff(1)`. The loop layer is what catches an edit that keeps every number
+and still changes the analysis — a phantom self-loop reappearing, a loop going
+dead — which no numeric comparison sees.
 
 ## Feedback loops
 

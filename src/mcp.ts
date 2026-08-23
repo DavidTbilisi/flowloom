@@ -24,6 +24,8 @@ import {
   searchPolicies,
   loopDominance,
   leverageLadder,
+  runExpects,
+  diffModels,
   describeModel,
   explainModel,
   summarizeRun,
@@ -228,6 +230,25 @@ export const handlers = {
     return text({ ...r, rungs: r.rungs.filter((g) => g.levers.length) });
   },
 
+  async flow_test({ model, scenarios, set }: { model: string; scenarios?: string[]; set?: string[] }): Promise<ToolResult> {
+    const m = loadModel(model, set);
+    if (!m.expects.length) throw new Error("the model declares no `expect` lines — add e.g. `expect final:Cash > 0` or `expect recovery final:netWorth == 493370 ± 1%`");
+    const r = await runExpects(m, scenarios);
+    return text({
+      passed: r.passed, failed: r.failed, scenarios: r.scenarios,
+      results: r.results.map((x) => ({
+        line: x.expect.loc.line, scenario: x.scenario, metric: x.expect.metric, op: x.expect.op, value: x.expect.value,
+        ...(x.expect.tol ? { tol: x.expect.tol } : {}), actual: x.actual, pass: x.pass,
+        ...(x.off !== undefined ? { off: x.off, allowed: x.allowed } : {}), ...(x.error ? { error: x.error } : {}), ...(x.note ? { note: x.note } : {}), ...(x.expect.doc ? { doc: x.expect.doc } : {}),
+      })),
+    });
+  },
+
+  async flow_diff({ model, other, scenarios, tol, loops }: { model: string; other: string; scenarios?: string[]; tol?: number; loops?: boolean }): Promise<ToolResult> {
+    const a = loadModel(model), b = loadModel(other);
+    return text(await diffModels(a, b, { ...(tol !== undefined ? { tol } : {}), scenarios, loops: loops !== false }));
+  },
+
   flow_examples({ name }: { name?: string }): ToolResult {
     if (!name) return text(EXAMPLES.map((e) => ({ name: e.name, blurb: e.blurb })));
     const ex = EXAMPLES.find((e) => e.name.toLowerCase() === name.toLowerCase());
@@ -297,7 +318,7 @@ The authoring loop:
 2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
 3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops read along the run; with a metric, ranked by knockout) — to understand an existing model before changing it.
 
-Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
+Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
 
 Discrete-period models (monthly, yearly): use 'sim method=map dt=1' (stock(t+dt) = stock(t) + change(t); change() is a per-step increment in the stock's own units, so no x dt bookkeeping), previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
@@ -530,6 +551,36 @@ export function buildServer(): McpServer {
       },
     },
     guard(handlers.flow_leverage),
+  );
+
+  server.registerTool(
+    "flow_test",
+    {
+      title: "Run the model's expect lines",
+      description: "Check every `expect [scenario] <metric> <op> <value> [± tol]` line in the model — its own regression tests — one run per scenario. Returns pass/fail per claim with the measured value and, for ==, how far off it was. Use after an edit to see whether the numbers the model is known for still hold.",
+      inputSchema: {
+        model: modelArg,
+        scenarios: z.array(z.string()).optional().describe("Only the claims under these scenarios (\"base\" for the model itself). Default: all."),
+        set: setArg,
+      },
+    },
+    guard(handlers.flow_test),
+  );
+
+  server.registerTool(
+    "flow_diff",
+    {
+      title: "Diff two models",
+      description: "Did an edit change what the model computes? Compares two model texts: declarations (stocks/vars/scenarios added or removed, param values and sim settings that differ), every series under base and every scenario both declare (max |Δ| per series on the shared time grid), and the loop census (total/live loops, live loops that appeared or vanished). `identical` is the refactor verdict — numbers and live loops — while structure changes are informational.",
+      inputSchema: {
+        model: modelArg.describe("The model before the edit (the canonical text)."),
+        other: z.string().describe("The model after the edit."),
+        scenarios: z.array(z.string()).optional().describe("Scenarios to compare (default: base + every scenario both models declare)."),
+        tol: z.number().optional().describe("|a − b| ≤ tol × max(1, |a|, |b|) counts as equal (default 1e-9)."),
+        loops: z.boolean().optional().describe("Compare the loop census too (default true)."),
+      },
+    },
+    guard(handlers.flow_diff),
   );
 
   server.registerTool(
