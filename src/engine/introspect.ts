@@ -14,7 +14,7 @@ import { analyzeLoops } from "./loops.js";
 export interface ModelDescription {
   stocks: Array<{ name: string; init: string; unit?: string; doc?: string }>;
   rates: Array<{ stock: string; expr: string }>;
-  vars: Array<{ name: string; kind: VarKind; expr: string; unit?: string; doc?: string; switch?: true; deps: string[] }>;
+  vars: Array<{ name: string; kind: VarKind; expr: string; unit?: string; doc?: string; switch?: true; constant?: true; deps: string[] }>;
   tables: Array<{ name: string; points: Array<[number, number]> }>;
   /** Named override sets declared in the text (`scenario` lines). */
   scenarios: Array<{ name: string; sets: Array<{ key: string; value: string }>; doc?: string }>;
@@ -62,6 +62,7 @@ export function describeModel(model: Model): ModelDescription {
       ...(v.unit ? { unit: v.unit } : {}),
       ...(v.doc ? { doc: v.doc } : {}),
       ...(v.boolean ? { switch: true as const } : {}),
+      ...(v.constant ? { constant: true as const } : {}),
       deps: allDeps(v.expr, v.elemExprs),
     })),
     tables: [...model.tables.values()].map((t) => ({ name: t.name, points: t.points })),
@@ -107,10 +108,16 @@ export function explainModel(model: Model): string {
     }
   }
 
-  const params = d.vars.filter((v) => v.kind === "param" && !v.switch);
+  const params = d.vars.filter((v) => v.kind === "param" && !v.switch && !v.constant);
   if (params.length) {
     lines.push("", "Knobs (params):");
     for (const p of params) lines.push(`  • ${p.name} = ${p.expr}${p.doc ? ` — ${p.doc}` : ""}`);
+  }
+
+  const consts = d.vars.filter((v) => v.constant);
+  if (consts.length) {
+    lines.push("", "Constants (structural, not knobs):");
+    for (const c of consts) lines.push(`  • ${c.name} = ${c.expr}${c.doc ? ` — ${c.doc}` : ""}`);
   }
 
   const switches = d.vars.filter((v) => v.switch);

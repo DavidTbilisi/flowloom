@@ -9,7 +9,8 @@ export function renderHelp(): string {
     <tr><td>d(NAME) = EXPR</td><td>the net rate of change of a stock — <i>literally</i> dNAME/dt. This is the engine.</td></tr>
     <tr><td>flow NAME [unit] = EXPR</td><td>a named rate; same as aux but drawn as a flow on the diagram.</td></tr>
     <tr><td>aux NAME [unit] = EXPR</td><td>an instantaneous computed value (a converter/variable).</td></tr>
-    <tr><td>param NAME [unit] = EXPR</td><td>a constant knob (<code>const</code> is an alias).</td></tr>
+    <tr><td>param NAME [unit] = EXPR</td><td>a constant knob — sliders, sensitivity and calibration vary it.</td></tr>
+    <tr><td>const NAME [unit] = EXPR</td><td>a structural constant (a calendar length, a conversion) — same maths, but no slider and skipped by sensitivity.</td></tr>
     <tr><td>switch NAME = on|off</td><td>a two-state policy toggle; use it as <code>if(NAME, a, b)</code>. Sensitivity tests it off→on; Tune shows a toggle.</td></tr>
     <tr><td>table NAME = (x,y) (x,y) …</td><td>a graphical lookup function; call it as <code>NAME(x)</code> (piecewise-linear).</td></tr>
     <tr><td>scenario NAME key=value …</td><td>a named set of overrides kept in the text (params, switches, stock inits, dt/to). Pick it in the plot controls; base stays dashed.</td></tr>

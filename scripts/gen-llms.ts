@@ -28,7 +28,8 @@ animation are all derived from it. Read and edit a model entirely as text.
   change(NAME) = EXPR                   the net rate dNAME/dt — what gets integrated (alias: d(NAME))
   flow  NAME [unit] = EXPR              a named rate (same maths as aux, drawn as a flow)
   aux   NAME [unit] = EXPR              an instantaneous computed value, recomputed each step
-  param NAME [unit] = EXPR              a constant knob, evaluated once (alias: const)
+  param NAME [unit] = EXPR              a constant knob, evaluated once
+  const NAME [unit] = EXPR              a structural constant (a calendar length, a conversion) — not a knob: no slider, skipped by sensitivity unless named
   switch NAME = on|off                  a two-state policy toggle (a param that is only 0 or 1); use as if(NAME, a, b)
   table NAME = (x,y) (x,y) ...          piecewise-linear lookup; call it as NAME(x)
   scenario NAME key=value key=value …   a named override set kept in the text: params, switches (on/off), stock inits, dt/to/start/seed/method
@@ -87,7 +88,16 @@ ${group("stateful", "Stateful builtins — carry state across steps")}
 - A switch is a param that is only ever 0 or 1. It is what sensitivity needs to
   test a policy off→on (a ±10% bump of 0 lands on two truthy values and reads as
   Δ=0 — that is why switch exists), what sliders render as a toggle, and what
-  overrides/scenarios accept as on/off.
+  overrides/scenarios accept as on/off. \`policies\` enumerates every combination
+  of the switches still off and reports the best one, the cheapest reaching a
+  --target, and each switch's Shapley contribution (its average marginal effect
+  over all combinations — interactions shared out) next to its effect alone.
+- Knobs read on the time grid — a delay_fixed length, anything compared with t
+  (t >= startAt, t % yearLen) — are bumped by at least one step (dt) in
+  sensitivity, since 2 ± 0.2 rounds to the same step and would read as Δ=0; the
+  row says "(±1)". A knob whose bump changes nothing is marked flat — often a
+  threshold not crossed; sweep it over a wider range. Declare calendar lengths
+  and conversions with \`const\` so they are not ranked as knobs at all.
 - A scenario is a named set of overrides *in the text*: \`scenario recovery
   raise=on income=9000 Cash=5000\`. Run it with --scenario NAME (CLI/MCP) or the
   studio's Scenario picker; \`compare\` runs base + every scenario and tabulates
@@ -121,6 +131,7 @@ ${example!.source.replace(/\s*$/, "")}
   flowloom calibrate model.flow --param a,b --data obs.csv   fit params to observed data
   flowloom scenarios model.flow                     list the model's scenario lines
   flowloom compare model.flow --metric a,b [--scenario x,y]   base vs each scenario: one row per scenario, with deltas
+  flowloom policies model.flow --metric SPEC [--switch a,b] [--target N] [--cost a=2]   every combination of the switches still off: best, cheapest-to-target, Shapley share per switch
   flowloom reference --json                         this catalog as JSON
   (any command takes --scenario NAME to run a scenario line, and --set k=v on top)
 
@@ -150,7 +161,7 @@ rate, and non-positive smooth/delay time constants — none of which stop a run.
 
 MCP: the \`flowloom-mcp\` server exposes the same engine as tools — flow_run,
 flow_summary, flow_sweep, flow_sensitivity, flow_solve, flow_montecarlo,
-flow_calibrate, flow_compare, flow_check, flow_lint, flow_loops, flow_describe,
+flow_calibrate, flow_compare, flow_policies, flow_check, flow_lint, flow_loops, flow_describe,
 flow_explain, flow_examples — plus a flow://reference resource carrying this
 guide. Each tool takes the model as text, plus optional set/scenario what-ifs.
 `;

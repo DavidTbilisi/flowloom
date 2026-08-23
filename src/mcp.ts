@@ -21,6 +21,7 @@ import {
   applyOverride,
   applyScenario,
   compareScenarios,
+  searchPolicies,
   describeModel,
   explainModel,
   summarizeRun,
@@ -197,6 +198,18 @@ export const handlers = {
     return text(await compareScenarios(m, metrics, scenarios));
   },
 
+  async flow_policies(
+    { model, metric, switches, goal, target, cost, set, scenario }:
+      { model: string; metric: string; switches?: string[]; goal?: "max" | "min"; target?: number; cost?: Record<string, number>; set?: string[]; scenario?: string },
+  ): Promise<ToolResult> {
+    const r = await searchPolicies(loadModel(model, set, scenario), {
+      metric, switches, ...(goal ? { goal } : {}), ...(target !== undefined ? { target } : {}), ...(cost ? { cost } : {}),
+    });
+    // Keep the payload small: the full combination table only when it is short.
+    const { combos, ...rest } = r;
+    return text(combos.length <= 64 ? r : { ...rest, top: combos.slice(0, 10), combosOmitted: combos.length - 10 });
+  },
+
   flow_examples({ name }: { name?: string }): ToolResult {
     if (!name) return text(EXAMPLES.map((e) => ({ name: e.name, blurb: e.blurb })));
     const ex = EXAMPLES.find((e) => e.name.toLowerCase() === name.toLowerCase());
@@ -266,7 +279,7 @@ The authoring loop:
 2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
 3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops) — to understand an existing model before changing it.
 
-Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data), flow_compare (base vs each 'scenario' line, one row per scenario). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
+Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
 
 Discrete-period models (monthly, yearly): use 'sim method=euler dt=1', previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
@@ -454,6 +467,25 @@ export function buildServer(): McpServer {
       },
     },
     guard(handlers.flow_compare),
+  );
+
+  server.registerTool(
+    "flow_policies",
+    {
+      title: "Policy search over switches",
+      description: "Enumerate every on/off combination of the model's switches (≤ 12 ⇒ ≤ 4096 runs), reduce each run to one metric, and report the best combination, the cheapest one reaching a target, and each switch's Shapley contribution (average marginal effect across all combinations) next to its effect alone. The answer to \"which moves are worth it together?\".",
+      inputSchema: {
+        model: modelArg,
+        metric: metricArg,
+        switches: z.array(z.string()).optional().describe("Switches to search over (default: every switch that is off as written — the moves still available; switches on as written are facts of the world and stay as written unless named)."),
+        goal: z.enum(["max", "min"]).optional().describe("Whether a bigger metric is better (default max)."),
+        target: z.number().optional().describe("A level the metric should reach — enables the cheapest-combination answer."),
+        cost: z.record(z.string(), z.number()).optional().describe("Cost of turning each switch on (default 1 each)."),
+        set: setArg,
+        scenario: scenarioArg,
+      },
+    },
+    guard(handlers.flow_policies),
   );
 
   server.registerTool(

@@ -26,7 +26,8 @@ stock Population [people] = 5      # the starting headcount
 | `d(NAME) = EXPR` | The **net rate of change** of a stock — literally `dNAME/dt`. This is what gets integrated. |
 | `flow NAME [unit] = EXPR` | A named rate. Identical to `aux` but drawn as a flow on the diagram. |
 | `aux NAME [unit] = EXPR` | An instantaneous computed value (a "converter"/variable). |
-| `param NAME [unit] = EXPR` | A constant. `const` is an accepted alias. |
+| `param NAME [unit] = EXPR` | A constant **knob** — what sliders, sensitivity and calibration vary. |
+| `const NAME [unit] = EXPR` | A **structural constant** (a calendar length, a conversion factor). Same maths as `param`, but not a knob: no slider, and sensitivity/calibration skip it unless it is named. |
 | `switch NAME = on\|off` | A **two-state policy toggle** — a param that is only ever 0 or 1. See [Switches](#switches). |
 | `table NAME = (x,y) (x,y) …` | A piecewise-linear **graphical/lookup function**. Call it as `NAME(x)`. |
 | `scenario NAME key=value …` | A **named set of overrides** kept in the text. See [Scenarios](#scenarios). |
@@ -68,7 +69,10 @@ change(Water) = inflow - draining     # net rate: in minus out
 All three are computed each time the derivative is sampled. They differ only in
 role and diagram appearance:
 
-- `param` / `const` — a constant knob, evaluated once.
+- `param` — a constant knob, evaluated once. `const` is the same value with a
+  different role: a structural constant that tools leave alone (see the table
+  above) — declare the length of a year or a unit conversion with it, so
+  `sensitivity` does not rank "months per year" as your most powerful lever.
 - `aux` — an intermediate calculation.
 - `flow` — an `aux` that represents a rate; drawn as a flow valve.
 
@@ -97,6 +101,24 @@ two-state knob needs different treatment everywhere a number gets bumped:
 - The studio's Tune panel renders it as a toggle, and writes `on`/`off` back.
 - `--set separate=on`, MCP `set`, and scenario bindings accept `on`/`off`; any
   other value is an error, so a switch can never silently hold `0.5`.
+- `flowloom policies model.flow --metric min:Cash [--target 0] [--cost separate=2]`
+  enumerates **every combination** of the switches that are still off (the moves
+  available; a switch that is on as written is a fact of the world and stays so
+  unless named with `--switch`) and reports the best combination, the cheapest
+  one reaching the target, and each switch's **Shapley contribution** — its
+  average marginal effect over all combinations, so interactions between moves
+  are shared out fairly — beside its effect *alone* and its effect *last* (given
+  every other move). Up to 12 switches (4,096 runs); MCP: `flow_policies`.
+
+#### Knobs on the time grid
+
+A knob whose value is read on the time grid — the length of a `delay_fixed`,
+anything compared with the clock (`t >= sideStart`, `t % yearLen`), a `step`/
+`pulse`/`ramp` time — only changes the run when it crosses a step. `sensitivity`
+detects these statically (closing backwards from every such context to the
+params that feed it) and bumps them by at least one `dt`; the row is labelled
+`(±1)`. A knob whose bump leaves the metric exactly unchanged is marked *flat* —
+usually a threshold not crossed at ±10 %; `sweep` it over a wider range.
 
 ### Scenarios
 

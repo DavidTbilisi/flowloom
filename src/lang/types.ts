@@ -86,6 +86,10 @@ export interface VarDecl {
    *  test off→on instead of ±frac, sliders render a toggle, and overrides accept
    *  on/off. */
   boolean?: true;
+  /** Declared with `const` — a structural constant (a calendar length, a unit
+   *  conversion), not a knob. Still `kind: "param"`, but sensitivity, sliders
+   *  and calibration leave it alone unless it is named explicitly. */
+  constant?: true;
   doc?: string;
   loc: Loc;
 }

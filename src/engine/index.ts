@@ -53,3 +53,5 @@ export { calibrate, type CalibrateOptions, type CalibrateResult } from "./calibr
 export { globalSensitivity, type GsaResult, type GsaRow, type GsaOptions } from "./global-sensitivity.js";
 export { applyOverride, applyScenario, BASE_SCENARIO } from "./overrides.js";
 export { compareScenarios, type CompareResult, type CompareRow } from "./compare.js";
+export { searchPolicies, type PolicyOptions, type PolicyResult, type PolicyCombo } from "./policies.js";
+export { timeGrainParams, knobParams } from "./grain.js";

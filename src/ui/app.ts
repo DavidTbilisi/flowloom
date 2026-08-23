@@ -368,7 +368,8 @@ export function mountApp(root: HTMLElement): Store {
   function modelParams(): string[] {
     // Subscripted params (per-element value lists) are excluded — fitting one
     // scalar back over a `= a, b` list would collapse it and corrupt the text.
-    return store.run.model ? store.run.model.vars.filter((v) => v.kind === "param" && !v.dims).map((v) => v.name) : [];
+    // …and structural constants: a `const` is not a knob to fit.
+    return store.run.model ? store.run.model.vars.filter((v) => v.kind === "param" && !v.dims && !v.constant).map((v) => v.name) : [];
   }
 
   // Checkboxes to pick which params Calibrate fits (state lives in calExcluded,
@@ -557,7 +558,8 @@ export function mountApp(root: HTMLElement): Store {
     return vars
       // Skip subscripted params: v.expr is only the first element, and the slider
       // writes back via setParamValue, which would flatten the per-element list.
-      .filter((v) => v.kind === "param" && !v.dims && v.expr.kind === "num")
+      // A `const` is a structural constant, not a knob — no slider.
+      .filter((v) => v.kind === "param" && !v.dims && !v.constant && v.expr.kind === "num")
       .map((v) => ({ name: v.name, value: (v.expr as Extract<Expr, { kind: "num" }>).value, sw: !!v.boolean }));
   }
 

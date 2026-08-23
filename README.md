@@ -33,9 +33,11 @@ dynamics, and check the numbers. Validate, don't vibe.
 
 - **A real language** — `stock`, `change()`, `flow`, `aux`, `param`, `table`, with a
   safe AST interpreter (no `eval`). See [`docs/language.md`](docs/language.md).
-  Plus **`switch`** (a two-state policy toggle that sensitivity tests off→on) and
+  Plus **`switch`** (a two-state policy toggle that sensitivity tests off→on),
   **`scenario`** (a named set of overrides kept *in the text* — `compare` tabulates
-  base vs every scenario).
+  base vs every scenario), **`const`** for structural constants that aren't knobs,
+  and **`policies`** — every combination of the switches still off, with the best
+  set, the cheapest reaching a target, and a Shapley share per switch.
 - **A proper engine** — Euler and classical **RK4** integration; `step`/`pulse`/
   `ramp` test inputs; graphical **lookup tables**; first- and third-order
   **delays and smoothing** (`smooth`, `delay1`, `delay3`, …), and **fixed pipeline
@@ -96,6 +98,7 @@ flowloom describe model.flow --json          # full structure (stocks/rates/vars
 flowloom loops   model.flow --json           # feedback loops with R/B polarity
 flowloom check   model.flow                  # validate; non-zero exit + line/col diagnostics
 flowloom compare model.flow --metric final:Cash,min:Cash   # base vs every `scenario` line
+flowloom policies model.flow --metric min:Cash --target 0   # which moves, together, are worth it
 flowloom run     model.flow --scenario recovery            # run one scenario (then --set on top)
 flowloom reference --json                     # the language + builtins catalog
 ```
@@ -105,7 +108,7 @@ flowloom reference --json                     # the language + builtins catalog
   canonical catalog (`npm run gen:llms`), so it never drifts.
 - **MCP server:** `flowloom-mcp` exposes the engine to Claude Code / Claude Desktop
   as tools — `flow_run`, `flow_check`, `flow_loops`, `flow_describe`, `flow_explain`,
-  `flow_compare`, `flow_examples`, … — plus a `flow://reference` resource carrying the
+  `flow_compare`, `flow_policies`, `flow_examples`, … — plus a `flow://reference` resource carrying the
   guide. Each tool takes the model as text (plus optional `set` / `scenario` what-ifs). Register it as a stdio MCP server pointing at
   `dist-cli/mcp.js` (build with `npm run build:cli`).
 

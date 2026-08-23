@@ -26,6 +26,7 @@ import {
   applyOverride,
   applyScenario,
   compareScenarios,
+  searchPolicies,
   describeModel,
   explainModel,
   summarizeRun,
@@ -42,6 +43,7 @@ import {
   type RunSummary,
   type SweepResult,
   type SensitivityResult,
+  type SensitivityRow,
   type GsaResult,
   type SolveResult,
   type SolveOptions,
@@ -49,6 +51,7 @@ import {
   type CalibrateResult,
   type LoopReport,
   type CompareResult,
+  type PolicyResult,
 } from "./engine/index.js";
 
 const VERSION = "0.1.0";
@@ -62,6 +65,9 @@ interface Args {
   sets: string[]; // raw "key=value" overrides, applied in order
   scenario?: string; // --scenario NAME: a `scenario` line to apply before --set
   scenarios: string[]; // --scenario a,b for compare (a list)
+  switches: string[]; // --switch a,b for policies
+  goal?: "max" | "min"; // --goal for policies
+  cost: string[]; // --cost a=2,b=1 for policies
   rows: number; // sampled rows for the table view
   chart: boolean; // render sparklines after the table
   params: string[]; // --param: a knob (sweep/solve) or a list (sensitivity)
@@ -80,7 +86,7 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", format: "table", plot: [], sets: [], scenarios: [], rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], rows: 21, chart: false, params: [], frac: 0.1, against: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -93,6 +99,9 @@ function parseArgs(argv: string[]): Args {
       case "-s":
       case "--set": a.sets.push(need(argv, ++i, arg)); break;
       case "--scenario": a.scenarios.push(...splitList(need(argv, ++i, arg))); break;
+      case "--switch": a.switches.push(...splitList(need(argv, ++i, arg))); break;
+      case "--goal": { const g = need(argv, ++i, arg); if (g !== "max" && g !== "min") die(`--goal must be max or min, got "${g}"`); a.goal = g; break; }
+      case "--cost": a.cost.push(...splitList(need(argv, ++i, arg))); break;
       case "--rows": a.rows = Math.max(2, Math.floor(Number(need(argv, ++i, arg)))); break;
       case "--param": a.params.push(...splitList(need(argv, ++i, arg))); break;
       case "--range": a.range = need(argv, ++i, arg); break;
@@ -111,6 +120,9 @@ function parseArgs(argv: string[]): Args {
         if (arg.startsWith("--plot=")) a.plot.push(...splitList(arg.slice(7)));
         else if (arg.startsWith("--set=")) a.sets.push(arg.slice(6));
         else if (arg.startsWith("--scenario=")) a.scenarios.push(...splitList(arg.slice(11)));
+        else if (arg.startsWith("--switch=")) a.switches.push(...splitList(arg.slice(9)));
+        else if (arg.startsWith("--goal=")) { const g = arg.slice(7); if (g !== "max" && g !== "min") die(`--goal must be max or min, got "${g}"`); a.goal = g; }
+        else if (arg.startsWith("--cost=")) a.cost.push(...splitList(arg.slice(7)));
         else if (arg.startsWith("--rows=")) a.rows = Math.max(2, Math.floor(Number(arg.slice(7))));
         else if (arg.startsWith("--param=")) a.params.push(...splitList(arg.slice(8)));
         else if (arg.startsWith("--range=")) a.range = arg.slice(8);
@@ -384,14 +396,67 @@ function renderSensitivity(r: SensitivityResult): string {
   const anySwitch = r.rows.some((x) => x.switch);
   const head = `sensitivity of ${r.metric} to ±${fmt(r.frac * 100)}% (one factor at a time, by |Δ|${anySwitch ? "; switches: off → on" : ""})`;
   if (!r.rows.length) return `${head}\n  (no numeric params to vary)`;
-  const wp = Math.max(...r.rows.map((x) => x.param.length + (x.switch ? 9 : 0)));
+  const label = (x: SensitivityRow) => (x.switch ? `${x.param} (switch)` : x.step !== undefined ? `${x.param} (±${fmt(x.step)})` : x.param);
+  const wp = Math.max(...r.rows.map((x) => label(x).length));
   const maxAbs = Math.max(...r.rows.map((x) => Math.abs(x.delta))) || 1;
   const lines = r.rows.map((x) => {
     const bar = "█".repeat(Math.round((Math.abs(x.delta) / maxAbs) * 24)) || "·";
-    const name = x.switch ? `${x.param} (switch)` : x.param;
-    return `  ${name.padEnd(wp)}  ${fmt(x.low)} → ${fmt(x.high)}   Δ=${fmt(x.delta).padStart(10)}  ${bar}`;
+    return `  ${label(x).padEnd(wp)}  ${fmt(x.low)} → ${fmt(x.high)}   Δ=${fmt(x.delta).padStart(10)}  ${bar}${x.flat ? "  (flat here — try sweep)" : ""}`;
   });
   return [head, ...lines].join("\n");
+}
+
+function renderPolicies(r: PolicyResult): string {
+  const on = (c: { on: string[] }) => (c.on.length ? c.on.join(" ") : "(all off)");
+  const lines = [
+    `policy search over ${r.switches.length} switch${r.switches.length === 1 ? "" : "es"} (${r.runs} runs) — ${r.goal === "max" ? "maximize" : "minimize"} ${r.metric}`,
+    `  moves: ${r.switches.join(" ")}`,
+    `  base          ${fmt(r.base.value).padStart(14)}   ${r.asWritten.on.length ? "(searched switches off)" : "(as written)"}`,
+    ...(r.asWritten.on.length ? [`  as written    ${fmt(r.asWritten.value).padStart(14)}   ${on(r.asWritten)}`] : []),
+    `  best          ${fmt(r.best.value).padStart(14)}   ${on(r.best)}   (cost ${fmt(r.best.cost)})${r.best.note ? `  [${r.best.note}]` : ""}`,
+  ];
+  if (r.target !== undefined) {
+    lines.push(
+      r.cheapest
+        ? `  cheapest ${r.goal === "max" ? "≥" : "≤"} ${fmt(r.target)}  ${fmt(r.cheapest.value).padStart(14)}   ${on(r.cheapest)}   (cost ${fmt(r.cheapest.cost)})`
+        : `  no combination reaches ${r.goal === "max" ? "≥" : "≤"} ${fmt(r.target)}`,
+    );
+  }
+  lines.push("", "  contribution — Shapley: average marginal effect over every combination · alone: from base · last: given all others on");
+  const w = Math.max(...r.shapley.map((s) => s.switch.length));
+  const maxAbs = Math.max(...r.shapley.map((s) => Math.abs(s.shapley))) || 1;
+  for (const s of r.shapley) {
+    const bar = "█".repeat(Math.round((Math.abs(s.shapley) / maxAbs) * 20)) || "·";
+    lines.push(`    ${s.switch.padEnd(w)}  ${fmt(s.shapley).padStart(12)}  ${bar.padEnd(20)}  alone ${fmt(s.alone).padStart(12)}   last ${fmt(s.last).padStart(12)}`);
+  }
+  const top = r.combos.slice(0, 5);
+  lines.push("", `  top ${top.length} of ${r.combos.length} combinations:`);
+  for (const c of top) lines.push(`    ${fmt(c.value).padStart(14)}   ${on(c)}   (cost ${fmt(c.cost)})`);
+  return lines.join("\n");
+}
+
+async function cmdPolicies(args: Args): Promise<void> {
+  const model = load(args);
+  if (!args.metric) die("policies needs --metric SPEC (e.g. min:Cash)");
+  const cost: Record<string, number> = {};
+  for (const spec of args.cost) {
+    const [k, v] = spec.split("=");
+    if (!k || v === undefined || !Number.isFinite(Number(v))) die(`--cost expects switch=number, got "${spec}"`);
+    cost[k] = Number(v);
+  }
+  let r: PolicyResult;
+  try {
+    r = await searchPolicies(model, {
+      metric: args.metric,
+      switches: args.switches,
+      ...(args.goal ? { goal: args.goal } : {}),
+      ...(args.target !== undefined ? { target: args.target } : {}),
+      ...(Object.keys(cost).length ? { cost } : {}),
+    });
+  } catch (e) {
+    die((e as Error).message);
+  }
+  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderPolicies(r));
 }
 
 function renderCompare(r: CompareResult): string {
@@ -630,6 +695,9 @@ usage:
   flowloom scenarios <model.flow> [--json]   list the model's scenario lines
   flowloom compare  <model.flow> --metric SPEC[,SPEC] [--scenario a,b] [--json]
                                              base vs each scenario, one row per scenario
+  flowloom policies <model.flow> --metric SPEC [--switch a,b] [--goal max|min] [--target N] [--cost a=2,b=1] [--json]
+                                             every combination of the switches still off (the available moves):
+                                             best, cheapest-to-target, Shapley share per switch
   flowloom reference [--json]                the .flow language + builtins catalog
   flowloom <model.flow>                       shorthand for: run
 
@@ -664,6 +732,7 @@ examples:
   flowloom run model.flow --set yield=0.03 --set to=240 --csv > out.csv
   flowloom run budget.flow --scenario recovery --plot Cash
   flowloom compare budget.flow --metric final:Cash,min:Cash
+  flowloom policies budget.flow --metric min:Cash --target 0 --cost separate=2
   cat model.flow | flowloom loops -`;
 
 async function main(): Promise<void> {
@@ -686,6 +755,7 @@ async function main(): Promise<void> {
     case "calibrate": await cmdCalibrate(args); break;
     case "scenarios": cmdScenarios(args); break;
     case "compare": await cmdCompare(args); break;
+    case "policies": await cmdPolicies(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");
     default: die(`unknown command "${args.cmd}" — try `+"`flowloom --help`");

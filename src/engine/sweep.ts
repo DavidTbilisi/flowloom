@@ -18,6 +18,7 @@ import { simulateAsync } from "./simulator.js";
 import { applyOverride } from "./overrides.js";
 import { resolveMetric } from "./summarize.js";
 import { operatingPoint } from "./loops.js";
+import { timeGrainParams, knobParams } from "./grain.js";
 
 export interface SweepPoint {
   value: number;
@@ -44,6 +45,12 @@ export interface SensitivityRow {
   delta: number;
   /** Set for a `switch`: the row compares off vs on rather than a ±frac bump. */
   switch?: true;
+  /** The ± bump actually used when it isn't |base|·frac — a time-grain knob is
+   *  bumped by at least one step (dt), since a smaller bump can't cross a step. */
+  step?: number;
+  /** low === high === the unbumped metric: the knob does nothing at this bump.
+   *  Often real (a threshold not crossed) — a `sweep` over a wider range tells. */
+  flat?: true;
 }
 
 export interface SensitivityResult {
@@ -101,7 +108,10 @@ export async function sensitivity(
   frac = 0.1,
 ): Promise<SensitivityResult> {
   const op = operatingPoint(model);
-  const names = params.length ? params : model.vars.filter((v) => v.kind === "param").map((v) => v.name);
+  const names = knobParams(model, params);
+  const grid = timeGrainParams(model);
+  const dt = model.settings.dt;
+  let unbumped: number | undefined; // lazily: the metric with nothing changed
   const rows: SensitivityRow[] = [];
   for (const name of names) {
     const base = op[name];
@@ -112,10 +122,18 @@ export async function sensitivity(
       rows.push({ param: name, base, low, high, delta: high - low, switch: true });
       continue;
     }
-    const d = base !== 0 ? Math.abs(base) * frac : frac;
+    const frac_d = base !== 0 ? Math.abs(base) * frac : frac;
+    const onGrid = grid.has(name);
+    const d = onGrid ? Math.max(frac_d, dt) : frac_d;
     const low = (await metricWith(model, `${name}=${base - d}`, metric)).metric;
     const high = (await metricWith(model, `${name}=${base + d}`, metric)).metric;
-    rows.push({ param: name, base, low, high, delta: high - low });
+    const row: SensitivityRow = { param: name, base, low, high, delta: high - low };
+    if (d !== frac_d) row.step = d;
+    if (low === high) {
+      unbumped ??= (await metricWith(model, `${name}=${base}`, metric)).metric;
+      if (low === unbumped) row.flat = true;
+    }
+    rows.push(row);
   }
   rows.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
   return { metric, frac, rows };

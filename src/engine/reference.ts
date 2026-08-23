@@ -35,7 +35,7 @@ const KEYWORDS: RefEntry[] = [
   { name: "flow", kind: "keyword", signature: "flow NAME [unit] = EXPR", doc: "vars", summary: "A named rate. Same maths as aux, but drawn as a flow on the diagram." },
   { name: "aux", kind: "keyword", signature: "aux NAME [unit] = EXPR", doc: "vars", summary: "An instantaneous computed value (a converter/variable) recomputed every step." },
   { name: "param", kind: "keyword", signature: "param NAME [unit] = EXPR", doc: "vars", summary: "A constant knob — evaluated once. `const` is an alias." },
-  { name: "const", kind: "keyword", signature: "const NAME [unit] = EXPR", doc: "vars", summary: "A constant knob (alias of param)." },
+  { name: "const", kind: "keyword", signature: "const NAME [unit] = EXPR", doc: "vars", summary: "A structural constant — a calendar length, a conversion factor — not a knob: no slider, and sensitivity/calibration skip it unless it is named explicitly. Same maths as param." },
   { name: "switch", kind: "keyword", signature: "switch NAME = on|off", doc: "switches", summary: "A two-state policy toggle (a param that is only ever 0 or 1). Use it in if(NAME, a, b). Sensitivity tests it off→on, sliders show a toggle, and overrides/scenarios accept on/off." },
   { name: "scenario", kind: "keyword", signature: "scenario NAME key=value key=value …", doc: "scenarios", summary: "A named set of overrides kept in the text: params, switches (on/off), stock initial values, or dt/to/start/seed/method. Run it with --scenario NAME / the scenario picker; `compare` tabulates base vs every scenario." },
   { name: "table", kind: "keyword", signature: "table NAME = (x,y) (x,y) …", doc: "tables", summary: "A graphical lookup function; call it as NAME(x). Piecewise-linear, clamped past the ends." },

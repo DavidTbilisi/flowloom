@@ -26,6 +26,7 @@ import { suggestName, suggestSuffix } from "./suggest.js";
 //   flow  NAME [unit] = EXPR        # a named rate (drawn as a flow)
 //   aux   NAME [unit] = EXPR        # an instantaneous computed value
 //   param NAME [unit] = EXPR        # a constant knob
+//   const NAME [unit] = EXPR        # a structural constant — not a knob (no slider, no sensitivity)
 //   switch NAME = on|off            # a 0/1 policy toggle (a boolean param)
 //   table NAME = (x,y) (x,y) ...    # a piecewise-linear graphical function
 //   scenario NAME key=value …       # a named set of overrides, applied on request
@@ -233,6 +234,7 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
       const kind: VarKind = kw === "const" ? "param" : (kw as VarKind);
       const exprs = splitTopLevel(expr!).map((p) => parseExpr(p, lineNo));
       const v: VarDecl = { name: name!, kind, expr: exprs[0]!, unit: unit?.trim(), doc, loc };
+      if (kw === "const") v.constant = true;
       if (exprs.length > 1) v.elemExprs = exprs;
       m.vars.push(v);
       m.varIndex.set(name!, v);

@@ -17,6 +17,7 @@ import { simulateAsync } from "./simulator.js";
 import { applyOverride } from "./overrides.js";
 import { resolveMetric } from "./summarize.js";
 import { operatingPoint } from "./loops.js";
+import { timeGrainParams, knobParams } from "./grain.js";
 import { u01 } from "./rng.js";
 
 export interface GsaRow {
@@ -54,18 +55,22 @@ export interface GsaOptions {
   seed?: number;
 }
 
-interface Range { name: string; base: number; lo: number; hi: number; boolean?: true }
+interface Range { name: string; base: number; lo: number; hi: number; boolean?: true; /** snap samples to multiples of this (time-grain knobs: dt) */ grain?: number }
 
 /** Build [base-d, base+d] ranges for the chosen (numeric) params. A `switch`
  *  spans its two states, {0, 1}, and is sampled as such (see mapPoint). */
 function ranges(model: Model, params: string[], frac: number): Range[] {
   const op = operatingPoint(model);
+  const grid = timeGrainParams(model);
+  const dt = model.settings.dt;
   const out: Range[] = [];
   for (const name of params) {
     const base = op[name];
     if (base === undefined || !Number.isFinite(base)) continue;
     if (model.varIndex.get(name)?.boolean) { out.push({ name, base, lo: 0, hi: 1, boolean: true }); continue; }
-    const d = base !== 0 ? Math.abs(base) * frac : frac;
+    let d = base !== 0 ? Math.abs(base) * frac : frac;
+    // a time-grain knob spans at least one step either way, and samples snap to steps
+    if (grid.has(name)) { d = Math.max(d, dt); out.push({ name, base, lo: base - d, hi: base + d, grain: dt }); continue; }
     out.push({ name, base, lo: base - d, hi: base + d });
   }
   return out;
@@ -82,12 +87,16 @@ async function evalAt(model: Model, rs: Range[], point: number[], metric: string
 // A unit-cube sample maps linearly into each param's range; a switch is snapped
 // to off/on at the midpoint so the model only ever sees its two real states.
 const mapPoint = (rs: Range[], unit: number[]): number[] =>
-  rs.map((r, i) => (r.boolean ? (unit[i]! < 0.5 ? 0 : 1) : r.lo + unit[i]! * (r.hi - r.lo)));
+  rs.map((r, i) => {
+    if (r.boolean) return unit[i]! < 0.5 ? 0 : 1;
+    const x = r.lo + unit[i]! * (r.hi - r.lo);
+    return r.grain ? Math.round(x / r.grain) * r.grain : x;
+  });
 
 export async function globalSensitivity(model: Model, opts: GsaOptions): Promise<GsaResult> {
   const frac = opts.frac ?? 0.1;
   const seed = opts.seed ?? 1;
-  const names = opts.params?.length ? opts.params : model.vars.filter((v) => v.kind === "param").map((v) => v.name);
+  const names = knobParams(model, opts.params ?? []);
   const rs = ranges(model, names, frac);
   if (!rs.length) return { method: opts.method, metric: opts.metric, runs: 0, rows: [] };
 
@@ -111,8 +120,12 @@ async function morris(model: Model, rs: Range[], metric: string, traj: number, s
     let yPrev = await evalAt(model, rs, mapPoint(rs, prev), metric); runs++;
     for (const i of order) {
       // A switch has no "a little more": its elementary effect is the flip, so
-      // the step goes to the other state (a full unit in [0,1] space).
-      const step = rs[i]!.boolean ? (prev[i]! < 0.5 ? 1 : -1) : prev[i]! + delta <= 1 ? delta : -delta; // stay inside [0,1]
+      // the step goes to the other state (a full unit in [0,1] space). A
+      // time-grain knob likewise steps by one whole grain, else the sample
+      // snaps back to where it was and the effect reads as zero.
+      const r = rs[i]!;
+      const du = r.grain ? Math.min(1, r.grain / (r.hi - r.lo)) : delta;
+      const step = r.boolean ? (prev[i]! < 0.5 ? 1 : -1) : prev[i]! + du <= 1 ? du : -du; // stay inside [0,1]
       const next = prev.slice();
       next[i] = rs[i]!.boolean ? (step > 0 ? 1 : 0) : prev[i]! + step;
       const yNext = await evalAt(model, rs, mapPoint(rs, next), metric); runs++;
