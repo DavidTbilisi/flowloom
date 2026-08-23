@@ -33,6 +33,7 @@ animation are all derived from it. Read and edit a model entirely as text.
   switch NAME = on|off                  a two-state policy toggle (a param that is only 0 or 1); use as if(NAME, a, b)
   table NAME = (x,y) (x,y) ...          piecewise-linear lookup; call it as NAME(x)
   scenario NAME key=value key=value …   a named override set kept in the text: params, switches (on/off), stock inits, dt/to/start/seed/method
+  link A -> B +|-                       a declared signed influence (+ with, - against): a causal-loop sketch before equations; links alone draw and have R/B loops but do not run
   dim NAME = A, B, C                     a subscript dimension (array index) of named elements
   stock NAME[dim] = EXPR                 an array: one stock per element; refer to NAME[dim] / NAME[A]; sum(NAME) collapses it
   sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4); add timeunit=month for units, seed=N for random*()
@@ -114,9 +115,13 @@ ${group("stateful", "Stateful builtins — carry state across steps")}
   scenario to bring it alive). \`loops --metric SPEC\` ranks the active loops by
   knockout — cut one link, re-run, measure — so "which loop runs this system"
   has a number.
-- Every referenced name must be defined, and a model needs at least one stock.
-  Algebraic loops among aux/flow/param (a cycle with no stock to break it) are an
-  error; put a stock or a delay in the loop.
+- Every referenced name must be defined, and a model needs at least one stock —
+  unless it is a causal-loop sketch made of \`link\` lines, which parses, draws
+  and has loops (polarity from the declared signs) but returns a note instead
+  of a run. Start a new system that way, then add a stock + change() and replace
+  links with equations as you learn them; lint flags a link that duplicates an
+  equation dependency. Algebraic loops among aux/flow/param (a cycle with no
+  stock to break it) are an error; put a stock or a delay in the loop.
 - Overrides (CLI --set, MCP set) are constant-folded AST edits applied before the
   run — they rebind a param, a switch (on/off), a stock's initial value, or a sim
   setting. A --scenario is applied first, then any --set on top.

@@ -301,6 +301,10 @@ function renderSummary(sum: RunSummary): string {
 // ── commands ───────────────────────────────────────────────────────────────────
 async function cmdRun(args: Args): Promise<void> {
   const model = load(args);
+  if (model.stocks.length === 0) {
+    out(`causal-loop sketch: ${new Set(model.links.flatMap((l) => [l.from, l.to])).size} nodes, ${model.links.length} links — nothing to simulate yet. \`loops\` and \`explain\` work; add a stock and its change() to run it.`);
+    return;
+  }
   const res = await simulateAsync(model);
   const cols = columns(args, res, model);
   if (args.format === "csv") out(renderDelimited(res, cols, ","));
@@ -349,7 +353,7 @@ async function cmdLoops(args: Args): Promise<void> {
   const n = rep.loops.length;
   out(`${n} feedback loop${n === 1 ? "" : "s"}  (${R} reinforcing, ${B} balancing` +
     `${rep.inactive ? `; ${rep.inactive} never engage in this run` : ""}${rep.flipping ? `; ${rep.flipping} flip polarity along the run` : ""})` +
-    `${rep.capped ? "  [capped]" : ""}  — signs read at ${rep.sampleTimes.length} points of the trajectory`);
+    `${rep.capped ? "  [capped]" : ""}  — ${model.stocks.length === 0 ? "signs as declared" : `signs read at ${rep.sampleTimes.length} point${rep.sampleTimes.length === 1 ? "" : "s"} of the trajectory`}`);
   rep.loops.forEach((l, i) => {
     if (!l.active && !args.all) return;
     out(`  ${String(i + 1).padStart(2)}. ${loopTag(l)} ${l.nodes.join(" → ")}`);
@@ -386,7 +390,8 @@ function cmdCheck(args: Args): void {
     process.exit(1);
   }
   const loops = analyzeLoops(model).loops.length;
-  out(`ok: ${model.stocks.length} stock${plural(model.stocks.length)}, ${model.vars.length} variable${plural(model.vars.length)}, ${loops} loop${plural(loops)}`);
+  const sketch = model.links.length ? ` (${model.stocks.length ? "" : "causal-loop sketch: "}${new Set(model.links.flatMap((l) => [l.from, l.to])).size} nodes, ${model.links.length} declared link${plural(model.links.length)})` : "";
+  out(`ok: ${model.stocks.length} stock${plural(model.stocks.length)}, ${model.vars.length} variable${plural(model.vars.length)}, ${loops} loop${plural(loops)}${sketch}`);
   for (const d of diagnostics) warn(`line ${d.loc.line}: ${d.message}`);
 }
 

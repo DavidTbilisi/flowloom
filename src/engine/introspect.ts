@@ -18,6 +18,10 @@ export interface ModelDescription {
   tables: Array<{ name: string; points: Array<[number, number]> }>;
   /** Named override sets declared in the text (`scenario` lines). */
   scenarios: Array<{ name: string; sets: Array<{ key: string; value: string }>; doc?: string; rung?: number }>;
+  /** Declared signed influences (`link` lines). */
+  links: Array<{ from: string; to: string; sign: 1 | -1; doc?: string }>;
+  /** True when the model is a causal-loop sketch: links, no stock to integrate. */
+  qualitative: boolean;
   settings: Model["settings"];
   plot: string[];
   loops: {
@@ -76,6 +80,8 @@ export function describeModel(model: Model): ModelDescription {
       ...(s.doc ? { doc: s.doc } : {}),
       ...(s.rung !== undefined ? { rung: s.rung } : {}),
     })),
+    links: model.links.map((l) => ({ from: l.from, to: l.to, sign: l.sign, ...(l.doc ? { doc: l.doc } : {}) })),
+    qualitative: model.stocks.length === 0 && model.links.length > 0,
     settings: model.settings,
     plot: model.plot,
     loops: {
@@ -99,6 +105,7 @@ export function explainModel(model: Model): string {
   const nLoop = d.loops.items.length;
   const { R, B } = d.loops.counts;
   const amb = d.loops.counts["?"];
+  if (d.qualitative) lines.push(`Causal-loop sketch: ${new Set(d.links.flatMap((l) => [l.from, l.to])).size} nodes, ${d.links.length} declared links, nothing to simulate yet.`);
   lines.push(
     `${nStock} stock${plural(nStock)}, ${nVar} variable${plural(nVar)}, ` +
       `${nLoop} feedback loop${plural(nLoop)} (${R} reinforcing, ${B} balancing` +
@@ -137,6 +144,11 @@ export function explainModel(model: Model): string {
   if (dynamic.length) {
     lines.push("", "Flows & auxiliaries:");
     for (const v of dynamic) lines.push(`  • ${v.kind} ${v.name} = ${v.expr}${v.doc ? ` — ${v.doc}` : ""}`);
+  }
+
+  if (d.links.length) {
+    lines.push("", "Declared links (a causal-loop sketch; + same direction, − opposite):");
+    for (const l of d.links) lines.push(`  • ${l.from} ${l.sign > 0 ? "—(+)→" : "—(−)→"} ${l.to}${l.doc ? ` — ${l.doc}` : ""}`);
   }
 
   if (d.tables.length) {

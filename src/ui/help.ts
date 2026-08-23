@@ -13,6 +13,7 @@ export function renderHelp(): string {
     <tr><td>const NAME [unit] = EXPR</td><td>a structural constant (a calendar length, a conversion) — same maths, but no slider and skipped by sensitivity.</td></tr>
     <tr><td>switch NAME = on|off</td><td>a two-state policy toggle; use it as <code>if(NAME, a, b)</code>. Sensitivity tests it off→on; Tune shows a toggle.</td></tr>
     <tr><td>table NAME = (x,y) (x,y) …</td><td>a graphical lookup function; call it as <code>NAME(x)</code> (piecewise-linear).</td></tr>
+    <tr><td>link A -&gt; B +|-</td><td>a declared signed influence — the causal-loop sketch before equations. Links alone draw and have R/B loops but don't run.</td></tr>
     <tr><td>scenario NAME key=value …</td><td>a named set of overrides kept in the text (params, switches, stock inits, dt/to). Pick it in the plot controls; base stays dashed.</td></tr>
     <tr><td>sim dt=.1 to=50 start=0 method=rk4</td><td>simulation settings (the toolbar edits this line). Add <code>timeunit=month</code> for units checking.</td></tr>
     <tr><td>plot A B C</td><td>which series start visible.</td></tr>

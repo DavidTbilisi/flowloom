@@ -1,4 +1,4 @@
-import type { Expr, Model, TableDecl, VarDecl, Loc } from "../lang/types.js";
+import type { Expr, Model, TableDecl, VarDecl, Loc, LinkDecl } from "../lang/types.js";
 import { freeVars } from "../lang/expr.js";
 import { ModelError } from "../lang/parser.js";
 import { scalarize } from "../lang/scalarize.js";
@@ -63,6 +63,8 @@ export interface Compiled {
   order: CompiledVar[];
   /** Sample-and-hold delays, in creation order (see FixedDelay). */
   fixed: FixedDelay[];
+  /** Declared signed influences (`link` lines) — carried for the loop analyzer. */
+  links: LinkDecl[];
   tables: Map<string, TableDecl>;
   /** Names of the user-authored stocks (for default plotting / labelling). */
   userStocks: string[];
@@ -111,6 +113,7 @@ export function compile(inModel: Model): Compiled {
     state: [...userState, ...internal],
     order: [...order, ...samplers],
     fixed,
+    links: model.links,
     tables: model.tables,
     userStocks: model.stocks.map((s) => s.name),
   };

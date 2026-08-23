@@ -7,6 +7,7 @@ import {
   type DimDecl,
   type ScenarioDecl,
   type ScenarioSet,
+  type LinkDecl,
   type VarKind,
   type SimSettings,
   type Diagnostic,
@@ -30,6 +31,7 @@ import { suggestName, suggestSuffix } from "./suggest.js";
 //   switch NAME = on|off            # a 0/1 policy toggle (a boolean param)
 //   table NAME = (x,y) (x,y) ...    # a piecewise-linear graphical function
 //   scenario NAME key=value …       # a named set of overrides, applied on request
+//   link A -> B +                   # a declared signed influence (a causal-loop sketch; + or -)
 //   sim dt=0.1 to=50 start=0 method=rk4
 //   plot A B C
 //
@@ -52,6 +54,7 @@ interface Raw {
   tables: Map<string, TableDecl>;
   dims: Map<string, DimDecl>;
   scenarios: Map<string, ScenarioDecl>;
+  links: LinkDecl[];
   settings: SimSettings;
   plot: string[];
   names: Set<string>;
@@ -71,6 +74,7 @@ const RE = {
   var: /^(flow|aux|param|const|switch)\s+([A-Za-z_]\w*)\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$/,
   table: /^table\s+([A-Za-z_]\w*)\s*=\s*(.+)$/,
   scenario: /^scenario\s+([A-Za-z_]\w*)\s*:?\s*(.*)$/,
+  link: /^link\s+([A-Za-z_]\w*)\s*(?:->|→)\s*([A-Za-z_]\w*)\s*([+-]|\+|−)?\s*$/,
   sim: /^sim\s+(.+)$/,
   plot: /^plot\s+(.+)$/,
 };
@@ -85,6 +89,7 @@ export function parseModel(text: string): Model {
     tables: new Map(),
     dims: new Map(),
     scenarios: new Map(),
+    links: [],
     settings: { ...DEFAULT_SETTINGS },
     plot: [],
     names: new Set(),
@@ -99,8 +104,10 @@ export function parseModel(text: string): Model {
 
   const errors = m.diagnostics.filter((d) => d.severity === "error");
 
-  if (m.stocks.length === 0 && errors.length === 0) {
-    push(m, "error", { line: 1, col: 0 }, "no stocks defined — a model needs at least one `stock NAME = value`");
+  // A model needs something to integrate — unless it is a qualitative sketch
+  // (links only), which draws and has loops but does not run.
+  if (m.stocks.length === 0 && m.links.length === 0 && errors.length === 0) {
+    push(m, "error", { line: 1, col: 0 }, "no stocks defined — a model needs at least one `stock NAME = value` (or, for a causal-loop sketch, `link A -> B +` lines)");
   }
 
   // Every d(NAME) must target a real stock.
@@ -147,6 +154,7 @@ export function parseModel(text: string): Model {
     tables: m.tables,
     dims: m.dims,
     scenarios: m.scenarios,
+    links: m.links,
     settings: m.settings,
     plot: m.plot,
     order,
@@ -276,6 +284,13 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
       const sc: ScenarioDecl = { name: name!, sets, doc: tag.doc, loc };
       if (tag.rung !== undefined) sc.rung = tag.rung;
       m.scenarios.set(name!, sc);
+    } else if ((mt = line.match(RE.link))) {
+      const [, from, to, sg] = mt;
+      if (!sg) { push(m, "error", loc, `link ${from} -> ${to} needs a sign: + (same direction) or - (opposite)`); return; }
+      const sign: 1 | -1 = sg === "+" ? 1 : -1;
+      if (m.links.some((l) => l.from === from && l.to === to)) push(m, "error", loc, `link ${from} -> ${to} is declared twice`);
+      if (RESERVED.has(from!) || RESERVED.has(to!)) push(m, "error", loc, `a link can't use the reserved name '${RESERVED.has(from!) ? from : to}'`);
+      m.links.push({ from: from!, to: to!, sign, doc, loc });
     } else if ((mt = line.match(RE.table))) {
       const [, name, body] = mt;
       claim(m, name!, loc);

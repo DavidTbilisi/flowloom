@@ -192,6 +192,7 @@ export function scalarize(model: Model): Model {
     tables: model.tables,
     dims: new Map(), // consumed
     scenarios: model.scenarios,
+    links: model.links,
     settings: model.settings,
     plot,
     order,

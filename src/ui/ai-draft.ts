@@ -31,6 +31,7 @@ Grammar (one statement per line; # starts a comment):
   switch NAME = on|off            a 0/1 policy toggle; use as if(NAME, a, b)
   table NAME = (x,y) (x,y) ...    a piecewise-linear lookup; call as NAME(x)
   scenario NAME key=value ...     a named override set (params, switches on/off, stock inits, dt/to)
+  link A -> B +|-                 a declared signed influence; a sketch of links alone is valid (draws, has loops, doesn't run)
   sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4)
   plot A B C                      which series are visible by default
 

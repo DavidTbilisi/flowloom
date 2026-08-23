@@ -95,3 +95,19 @@ sim dt=1 to=10 method=euler`);
   await expect(page.locator("#loopsWrap .deadloops summary")).toContainText("never engages in this run");
   await expect(page.locator("#loopsWrap .loopcount")).toContainText("1 inactive");
 });
+
+test("a links-only sketch draws, has loops, and shows a note instead of a run", async ({ page }) => {
+  await page.locator("#src").fill(`link population -> births +
+link births -> population +
+link population -> deaths +
+link deaths -> population -`);
+  await page.locator("#run").click();
+  await page.waitForFunction(() => (window as any).flowloom.run.ok === true && (window as any).flowloom.run.loops?.loops.length === 2);
+  await expect(page.locator("#err")).toContainText("qualitative sketch"); // a note, not an error
+  await page.locator('.tabs [data-tab="loops"]').click();
+  await expect(page.locator("#loopsWrap .loopcount")).toContainText("signs as declared");
+  await expect(page.locator("#loopsWrap .loop .badge")).toHaveText(["R", "B"]);
+  await page.locator('.tabs [data-tab="diagram"]').click();
+  await expect(page.locator('#diagram [data-name="population"]')).toBeVisible();
+  await expect(page.locator('#diagram [data-name="deaths"]')).toBeVisible();
+});

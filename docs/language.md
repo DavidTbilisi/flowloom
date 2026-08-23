@@ -31,6 +31,7 @@ stock Population [people] = 5      # the starting headcount
 | `switch NAME = on\|off` | A **two-state policy toggle** — a param that is only ever 0 or 1. See [Switches](#switches). |
 | `table NAME = (x,y) (x,y) …` | A piecewise-linear **graphical/lookup function**. Call it as `NAME(x)`. |
 | `scenario NAME key=value …` | A **named set of overrides** kept in the text. See [Scenarios](#scenarios). |
+| `link A -> B +` / `link A -> B -` | A **declared signed influence** — the causal-loop sketch you draw before equations. See [Sketching first](#sketching-first-link). |
 | `sim dt=… to=… start=… method=…` | Simulation settings. The toolbar edits this line. |
 | `plot A B C` | Which series are visible by default. |
 
@@ -351,6 +352,32 @@ sim dt=0.1 to=50 start=0 method=rk4
 
 The toolbar's dt / to / method controls rewrite this exact line, so the text
 always reflects what ran.
+
+## Sketching first (`link`)
+
+The first hour of a new system is a causal-loop diagram, not equations. Write it
+as links — `+` means B moves with A, `-` against:
+
+```flow
+link population -> births +
+link births -> population +
+link population -> deaths +
+link deaths -> population -
+link population -> crowding +
+link crowding -> attractiveness -
+link attractiveness -> migration +
+link migration -> population +
+```
+
+A model of links alone is valid: it draws, `loops` finds its loops with polarity
+from the declared signs (`R` births, `B` deaths, `B` crowding), `explain`
+describes it — and `run` returns a note instead of a result, because nothing
+integrates. To make it run, add a stock and its `change()` and replace links with
+equations as you learn them. Links and equations coexist: a link between two
+equation-level names adds an edge the equations don't carry yet (lint flags a
+link that merely duplicates an equation dependency), and a param named in a link
+becomes a node. Declared links can't be cut by `loops --metric` (there is no
+equation to freeze), so they are listed as skipped there.
 
 ## Feedback loops
 

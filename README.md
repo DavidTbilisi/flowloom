@@ -33,6 +33,8 @@ dynamics, and check the numbers. Validate, don't vibe.
 
 - **A real language** — `stock`, `change()`, `flow`, `aux`, `param`, `table`, with a
   safe AST interpreter (no `eval`). See [`docs/language.md`](docs/language.md).
+  Start with a **causal-loop sketch** (`link A -> B +` lines, no equations) — it
+  draws and has R/B loops — then quantify it line by line.
   Plus **`switch`** (a two-state policy toggle that sensitivity tests off→on),
   **`scenario`** (a named set of overrides kept *in the text* — `compare` tabulates
   base vs every scenario), **`const`** for structural constants that aren't knobs,

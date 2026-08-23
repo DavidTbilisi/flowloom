@@ -33,6 +33,8 @@ export interface Edge {
   from: string;
   to: string;
   sign: -1 | 0 | 1;
+  /** The sign was declared by a `link` line, not read from an equation. */
+  declared?: true;
 }
 
 export interface InfluenceGraph {
@@ -90,7 +92,9 @@ export function analyzeLoops(model: Model, opts: LoopOptions = {}): LoopReport {
   const c = compile(model);
   const { dt, to, start } = model.settings;
   const steps = Math.max(1, Math.round((to - start) / dt));
-  const samples = Math.max(1, Math.floor(opts.samples ?? Math.min(steps + 1, 64)));
+  // Nothing integrates in a links-only sketch: every sign is declared, so one
+  // operating point is all there is to read.
+  const samples = c.state.length === 0 ? 1 : Math.max(1, Math.floor(opts.samples ?? Math.min(steps + 1, 64)));
   const points = samples > 1 ? trajectoryScopes(model, c, samples) : [{ t: model.settings.start, scope: operatingPoint(model) }];
 
   // Structure is the same at every point (it comes from the free variables);
@@ -99,7 +103,7 @@ export function analyzeLoops(model: Model, opts: LoopOptions = {}): LoopReport {
   const signsAt = points.map((pt) => readSigns(c, links, pt.scope));
   const graph: InfluenceGraph = {
     nodes: links.nodes,
-    edges: links.edges.map((e, k) => ({ from: e.from, to: e.to, sign: signsAt[0]![k]! })),
+    edges: links.edges.map((e, k) => ({ from: e.from, to: e.to, sign: signsAt[0]![k]!, ...(e.declared ? { declared: true as const } : {}) })),
   };
 
   const { loops: found, capped } = findLoops(graph);
@@ -144,13 +148,14 @@ export function influenceGraph(model: Model): InfluenceGraph {
   const c = compile(model);
   const links = structure(c);
   const signs = readSigns(c, links, operatingPoint(model));
-  return { nodes: links.nodes, edges: links.edges.map((e, k) => ({ from: e.from, to: e.to, sign: signs[k]! })) };
+  return { nodes: links.nodes, edges: links.edges.map((e, k) => ({ from: e.from, to: e.to, sign: signs[k]!, ...(e.declared ? { declared: true as const } : {}) })) };
 }
 
 interface Structure {
   nodes: string[];
-  /** Unsigned links, with the expression each one is read from. */
-  edges: Array<{ from: string; to: string; expr: Parameters<typeof freeVars>[0] }>;
+  /** Unsigned links, with the expression each one is read from — or, for a
+   *  `link` line, the declared sign and no expression. */
+  edges: Array<{ from: string; to: string; expr?: Parameters<typeof freeVars>[0]; declared?: 1 | -1 }>;
 }
 
 /** Nodes and links — who reads whom — independent of any operating point. */
@@ -161,6 +166,10 @@ function structure(c: Compiled): Structure {
     ...c.state.map((s) => s.name),
     ...c.fixed.map((f) => f.name),
     ...c.order.filter((v) => v.kind !== "param" && !v.isInternal).map((v) => v.name),
+    // Declared-link endpoints are nodes even when no equation defines them — and
+    // a param named in a link becomes a node, so the equations that read it link
+    // from it (the sketch is saying the param is not constant after all).
+    ...c.links.flatMap((l) => [l.from, l.to]),
   ]);
   const edges: Structure["edges"] = [];
   const linkFrom = (target: string, expr: Parameters<typeof freeVars>[0], skipSelf = false) => {
@@ -173,6 +182,9 @@ function structure(c: Compiled): Structure {
   // genuine self-dependence (X inside `next`'s own expression) is kept.
   for (const s of c.state) if (s.rateExpr) linkFrom(s.name, s.rateExpr, isMapAssignment(s.rateExpr, s.name));
   for (const f of c.fixed) linkFrom(f.name, f.inputExpr);
+  // Declared links: a causal-loop sketch, or a dependency the equations don't
+  // carry yet.
+  for (const l of c.links) edges.push({ from: l.from, to: l.to, declared: l.sign });
   return { nodes: [...nodes], edges };
 }
 
@@ -188,8 +200,10 @@ function isMapAssignment(rate: Expr, stock: string): boolean {
 /** Sign of every link at one operating point, by central-difference perturbation. */
 function readSigns(c: Compiled, links: Structure, scope: Record<string, number>): Array<-1 | 0 | 1> {
   const ctx: EvalCtx = { scope, tables: c.tables };
-  return links.edges.map(({ from: u, expr }) => {
-    const x0 = scope[u]!;
+  return links.edges.map(({ from: u, expr, declared }) => {
+    if (declared) return declared;
+    if (!expr) return 0;
+    const x0 = scope[u] ?? 0;
     const h = 1e-6 * Math.max(1, Math.abs(x0));
     scope[u] = x0 + h;
     const up = evalExpr(expr, ctx);

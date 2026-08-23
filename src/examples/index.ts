@@ -396,6 +396,26 @@ scenario recovery  income=4485 growth=0 cash0=10800 capFill=1 creepRate=0.05 cre
 sim dt=1 to=36 method=euler timeunit=month
 plot Cash wantsFinal needs pay`,
   },
+  {
+    name: "Causal-loop sketch (no equations)",
+    blurb: "A city drawn as signed links only — the first hour of any new model. It draws and has R/B loops; it does not run until a stock gets a change().",
+    source: `# A causal-loop sketch of a growing city — links only, no equations yet.
+# link A -> B +  means B moves with A;  -  means against. This is the picture
+# you draw before you know the numbers: flowloom finds the loops and labels them
+# R/B from the declared signs. To make it run, give it a stock and a change():
+#   stock population = 10000
+#   change(population) = births - deaths + migration
+# and replace links with equations as you learn them (a link that duplicates an
+# equation dependency is flagged by lint).
+link population -> births +
+link births -> population +
+link population -> deaths +
+link deaths -> population -
+link population -> crowding +
+link crowding -> attractiveness -
+link attractiveness -> migration +
+link migration -> population +`,
+  },
 ];
 
 export const DEFAULT_EXAMPLE = EXAMPLES[0]!;

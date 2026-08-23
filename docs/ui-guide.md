@@ -74,6 +74,12 @@ exactly like the diagram and plots:
 - `editor.ts` — the highlight overlay and token hit-testing.
 - `tour.ts` / `tutorials.ts` — the guided-learning engine and its content.
 
+## Sketch first
+
+A model made only of `link A -> B +` lines is a causal-loop sketch: the Diagram
+draws it, Loops labels its loops from the declared signs, the Plot stays empty
+with a note. Add a stock and its `change()` when the numbers arrive.
+
 ## Scenarios, switches, and the ladder
 
 - **▣ Scenario** (plot controls) runs one of the model's `scenario` lines; the

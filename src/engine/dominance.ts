@@ -98,11 +98,11 @@ export async function loopDominance(model: Model, metric: string, report?: LoopR
     const l: Loop = rep.loops[i]!;
     if (!l.active) { inactive++; continue; }
     const candidates = l.edges
-      .filter((e) => cuttable(model, e.from, e.to))
+      .filter((e) => !e.declared && cuttable(model, e.from, e.to))
       .map((e) => ({ e, shared: linkCount.get(`${e.from}|${e.to}`)! }))
       .sort((a, b) => a.shared - b.shared);
     const pick = candidates[0];
-    if (!pick) { skipped.push({ loop: i + 1, nodes: l.nodes, reason: "every link touches an internal delay node" }); continue; }
+    if (!pick) { skipped.push({ loop: i + 1, nodes: l.nodes, reason: l.edges.every((e) => e.declared) ? "declared links only — no equation to cut" : "every link touches an internal delay node or is declared" }); continue; }
     const value0 = op[pick.e.from];
     if (value0 === undefined || !Number.isFinite(value0)) { skipped.push({ loop: i + 1, nodes: l.nodes, reason: `no start value for ${pick.e.from}` }); continue; }
     const res = await simulateAsync(cutLink(model, pick.e.from, pick.e.to, value0));

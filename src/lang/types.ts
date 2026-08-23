@@ -117,6 +117,18 @@ export interface ScenarioDecl {
   loc: Loc;
 }
 
+/** A declared signed influence — `link A -> B +` — the qualitative unit of a
+ *  causal-loop diagram. Endpoints may be equation-level names or bare
+ *  qualitative nodes; a model made only of links draws and has loops but does
+ *  not simulate. */
+export interface LinkDecl {
+  from: string;
+  to: string;
+  sign: 1 | -1;
+  doc?: string;
+  loc: Loc;
+}
+
 /** A graphical / lookup function: piecewise-linear over (x,y) breakpoints. */
 export interface TableDecl {
   name: string;
@@ -146,6 +158,8 @@ export interface Model {
   dims: Map<string, DimDecl>;
   /** Named override sets (`scenario` lines), by name. The base model is the text itself. */
   scenarios: Map<string, ScenarioDecl>;
+  /** Declared signed influences (`link` lines) — a causal-loop sketch, with or without equations. */
+  links: LinkDecl[];
   settings: SimSettings;
   /** Series chosen to be visible by default (the `plot` line). */
   plot: string[];

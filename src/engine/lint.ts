@@ -43,9 +43,17 @@ export function lintModel(model: Model): Diagnostic[] {
     else out.push(warn(v.loc, `${v.kind} '${v.name}' is computed but never used (not referenced and not plotted)`));
   }
 
-  // A stock with no change() rate can never change — almost always an oversight.
+  // A stock with no change() rate can never change — almost always an oversight,
+  // except in a causal-loop sketch where stocks are drawn, not yet integrated.
+  const sketch = model.links.length > 0 && model.rates.size === 0;
   for (const s of model.stocks) {
-    if (!model.rates.has(s.name)) out.push(warn(s.loc, `stock '${s.name}' has no change(${s.name}) rate — it never changes`));
+    if (!model.rates.has(s.name) && !sketch) out.push(warn(s.loc, `stock '${s.name}' has no change(${s.name}) rate — it never changes`));
+  }
+  // A link between two equation-level names is redundant with the equation
+  // (the sign is read from it) unless the equation doesn't mention the source.
+  for (const l of model.links) {
+    const target = model.varIndex.get(l.to) ?? model.rates.get(l.to);
+    if (target && freeVars(target.expr).has(l.from)) out.push(warn(l.loc, `link ${l.from} -> ${l.to} is also an equation dependency — the declared sign overrides the one read from the equation`));
   }
 
   checkTimeConstants(model, out);

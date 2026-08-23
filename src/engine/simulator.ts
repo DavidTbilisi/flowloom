@@ -84,9 +84,10 @@ export function runPlan(
   backend.mem[plan.dtSlot] = dt;
   const settled = initStateInto(plan, backend.mem, model.settings.start);
   const out = runIntegration(plan, backend, model.settings, onStep);
-  const note = settled
-    ? out.note
-    : `initial state did not settle — a previous()/delay_fixed() without an init value sits in a loop with its own input; give it an explicit init (e.g. previous(X, 0))${out.note ? `; ${out.note}` : ""}`;
+  const qualitative = plan.stateSlots.length === 0 ? "qualitative sketch — links only, nothing to simulate; add a stock and its change() to run it" : undefined;
+  const note = !settled
+    ? `initial state did not settle — a previous()/delay_fixed() without an init value sits in a loop with its own input; give it an explicit init (e.g. previous(X, 0))${out.note ? `; ${out.note}` : ""}`
+    : qualitative ?? out.note;
   return {
     t: out.t,
     series: out.series,

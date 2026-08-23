@@ -803,7 +803,7 @@ export function mountApp(root: HTMLElement): Store {
     let html = `<p class="loopcount"><span class="badge R">${counts.R} R</span><span class="badge B">${counts.B} B</span>` +
       (inactive ? `<span class="badge Q" title="never engage in this run">${inactive} inactive</span>` : "") +
       ` &nbsp;${loops.length} loop${loops.length > 1 ? "s" : ""}` + (capped ? ` (capped)` : "") +
-      `<span class="loopnote"> · signs read at ${sampleTimes.length} points of the run${flipping ? ` · ${flipping} flip polarity` : ""}</span></p>`;
+      `<span class="loopnote"> · ${run.model?.stocks.length === 0 ? "signs as declared" : `signs read at ${sampleTimes.length} point${sampleTimes.length === 1 ? "" : "s"} of the run`}${flipping ? ` · ${flipping} flip polarity` : ""}</span></p>`;
     const sorted = [...loops].sort((a, b) => Number(b.active) - Number(a.active) || rank(a.polarity) - rank(b.polarity) || a.edges.length - b.edges.length);
     const row = (lp: typeof loops[number]) => {
       let path = `<span class="node">${escapeHtml(lp.nodes[0]!)}</span>`;
