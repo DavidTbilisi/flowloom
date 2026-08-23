@@ -2,7 +2,7 @@ import { Store, type Tab } from "./store.js";
 import { drawPlot, colorFor, fmt } from "./plot.js";
 import { Diagram } from "./diagram.js";
 import { EXAMPLES, DEFAULT_EXAMPLE } from "../examples/index.js";
-import { setSimSetting, setParamValue } from "./model-edit.js";
+import { setSimSetting, setParamValue, setScenarioValue } from "./model-edit.js";
 import {
   addStock, addVar, connectFlowToStock, pipeBetweenStocks, setEquation, setInit,
   renameSymbol, deleteSymbol, uniqueName, referencesTo, readLayout, setLayoutPos,
@@ -366,7 +366,9 @@ export function mountApp(root: HTMLElement): Store {
   const calExcluded = new Set<string>(); // params the user unchecked for calibration
 
   function modelParams(): string[] {
-    return store.run.model ? store.run.model.vars.filter((v) => v.kind === "param").map((v) => v.name) : [];
+    // Subscripted params (per-element value lists) are excluded — fitting one
+    // scalar back over a `= a, b` list would collapse it and corrupt the text.
+    return store.run.model ? store.run.model.vars.filter((v) => v.kind === "param" && !v.dims).map((v) => v.name) : [];
   }
 
   // Checkboxes to pick which params Calibrate fits (state lives in calExcluded,
@@ -391,10 +393,27 @@ export function mountApp(root: HTMLElement): Store {
     const bits: string[] = [];
     if (ov.bands) bits.push(`${ov.bands.runs} runs${flat ? " · flat (no random())" : ""}`);
     if (ov.data) bits.push(`data: ${[...ov.data.columns.keys()].join(", ")}`);
-    if (ov.compare) bits.push("comparing");
+    if (ov.compare) bits.push(ov.compare.label === "base" ? `dashed: base (scenario ${store.scenario})` : "comparing");
     ovMsg.textContent = bits.join(" · ");
     renderCalParams();
+    renderScenarioPick();
   }
+
+  // ── scenario picker: the model's `scenario` lines + base ──────────────────
+  const scenarioWrap = $<HTMLLabelElement>("#scenarioWrap");
+  const scenarioSel = $<HTMLSelectElement>("#scenarioSel");
+  let scenarioSig = "";
+  function renderScenarioPick() {
+    const names = store.run.model ? [...store.run.model.scenarios.keys()] : [];
+    const sig = names.join(",");
+    if (sig !== scenarioSig) {
+      scenarioSig = sig;
+      scenarioSel.innerHTML = ["base", ...names].map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+    }
+    scenarioWrap.hidden = !names.length;
+    scenarioSel.value = store.scenario;
+  }
+  scenarioSel.onchange = () => { store.setScenario(scenarioSel.value); store.setFrame(store.frameCount - 1); };
 
   mcBtn.onclick = async () => {
     if (!store.run.ok || !store.run.model) return;
@@ -533,11 +552,24 @@ export function mountApp(root: HTMLElement): Store {
   let tuneDragging = false; // don't rebuild slider DOM mid-drag (would drop the grab)
   let tuneStart: string | null = null; // text snapshot at drag start, for one undo step
 
-  function numParams(): Array<{ name: string; value: number }> {
+  function numParams(): Array<{ name: string; value: number; sw: boolean }> {
     const vars = store.run.ok ? store.run.model?.vars ?? [] : [];
     return vars
-      .filter((v) => v.kind === "param" && v.expr.kind === "num")
-      .map((v) => ({ name: v.name, value: (v.expr as Extract<Expr, { kind: "num" }>).value }));
+      // Skip subscripted params: v.expr is only the first element, and the slider
+      // writes back via setParamValue, which would flatten the per-element list.
+      .filter((v) => v.kind === "param" && !v.dims && v.expr.kind === "num")
+      .map((v) => ({ name: v.name, value: (v.expr as Extract<Expr, { kind: "num" }>).value, sw: !!v.boolean }));
+  }
+
+  /** Where a knob edit lands: the active scenario's binding when it has one for
+   *  this key (so tuning under a scenario edits the scenario, not the base), else
+   *  the param/switch line itself. Either way the canonical text changes. */
+  function writeKnob(text: string, name: string, value: number, sw: boolean): string {
+    const sc = store.scenario !== "base" ? store.run.model?.scenarios.get(store.scenario) : undefined;
+    if (sc && sc.sets.some((s) => s.key === name)) {
+      return setScenarioValue(text, store.scenario, name, sw ? (value ? "on" : "off") : String(Number(value.toPrecision(6))));
+    }
+    return setParamValue(text, name, value);
   }
 
   function renderTune() {
@@ -549,9 +581,12 @@ export function mountApp(root: HTMLElement): Store {
       if (!tuneDragging) for (const p of params) {
         const s = tuneWrap.querySelector<HTMLInputElement>(`input[data-tune="${p.name}"]`);
         const l = tuneWrap.querySelector<HTMLElement>(`[data-tuneval="${p.name}"]`);
-        if (s) s.value = String(p.value);
-        if (l) l.textContent = fmt(p.value);
+        if (s && p.sw) s.checked = p.value !== 0;
+        else if (s) s.value = String(p.value);
+        if (l) l.textContent = p.sw ? (p.value ? "on" : "off") : fmt(p.value);
       }
+      const hint = tuneWrap.querySelector<HTMLElement>(".tune-hint");
+      if (hint) hint.textContent = tuneHint();
       return;
     }
     tuneSig = sig;
@@ -559,8 +594,17 @@ export function mountApp(root: HTMLElement): Store {
     tuneWrap.hidden = false;
     tuneWrap.innerHTML =
       `<div class="tune-head"><span class="tune-title">Tune</span>` +
-      `<span class="tune-hint">drag a knob — the whole model re-simulates live</span></div>` +
+      `<span class="tune-hint">${escapeHtml(tuneHint())}</span></div>` +
       params.map((p) => {
+        if (p.sw) {
+          return (
+            `<label class="tune-row tune-switch">` +
+            `<span class="tune-name">${escapeHtml(p.name)}</span>` +
+            `<span class="tune-toggle"><input type="checkbox" data-tune="${escapeHtml(p.name)}" data-sw="1"${p.value ? " checked" : ""} /></span>` +
+            `<span class="tune-val" data-tuneval="${escapeHtml(p.name)}">${p.value ? "on" : "off"}</span>` +
+            `</label>`
+          );
+        }
         const mag = Math.abs(p.value) || 1;
         const lo = p.value >= 0 ? 0 : p.value - mag;
         const hi = p.value >= 0 ? p.value + mag : 0;
@@ -575,18 +619,27 @@ export function mountApp(root: HTMLElement): Store {
       }).join("");
   }
 
+  function tuneHint(): string {
+    return store.scenario !== "base"
+      ? `scenario ${store.scenario} is active — a knob it binds edits the scenario line; the rest edit the base`
+      : "drag a knob — the whole model re-simulates live";
+  }
+
   // delegated, wired once — the slider DOM is rebuilt only when the param set changes
   tuneWrap.addEventListener("pointerdown", (e) => {
-    if ((e.target as HTMLElement).matches("input[data-tune]")) { tuneDragging = true; tuneStart = src.value; }
+    if ((e.target as HTMLElement).matches("input[data-tune]:not([data-sw])")) { tuneDragging = true; tuneStart = src.value; }
   });
   tuneWrap.addEventListener("input", (e) => {
     const el = e.target as HTMLInputElement;
     if (!el.matches("input[data-tune]")) return;
-    const name = el.dataset.tune!, val = Number(el.value);
+    const name = el.dataset.tune!;
+    const sw = el.dataset.sw === "1";
+    const val = sw ? (el.checked ? 1 : 0) : Number(el.value);
     const lbl = tuneWrap.querySelector<HTMLElement>(`[data-tuneval="${name}"]`);
-    if (lbl) lbl.textContent = fmt(val);
+    if (lbl) lbl.textContent = sw ? (val ? "on" : "off") : fmt(val);
+    if (sw) { commit(writeKnob(src.value, name, val, true)); return; } // a flip is one undoable edit
     // live, non-undoable: rewrite the canonical text + re-simulate this frame
-    editor.setValue(setParamValue(src.value, name, val));
+    editor.setValue(writeKnob(src.value, name, val, false));
     rebuild();
   });
   const endTune = () => {
@@ -1003,6 +1056,9 @@ const SHELL = `
         <button id="dataBtn" class="ghost" title="overlay an observed CSV/TSV series" data-help="ui:data">📊 Load&nbsp;data</button>
         <button id="calBtn" class="ghost" title="fit params to the loaded data and write them back" data-help="ui:calibrate" disabled>◎ Calibrate</button>
         <button id="cmpBtn" class="ghost" title="overlay another .flow model's run (dashed)" data-help="ui:compare">⇄ Compare</button>
+        <label class="scenario-pick" id="scenarioWrap" data-help="ui:scenario" hidden>▣ Scenario
+          <select id="scenarioSel" title="run a scenario line from the model; base is overlaid dashed"></select>
+        </label>
         <button id="clearOvBtn" class="ghost" title="remove all overlays" data-help="ui:clear-overlays" hidden>✕ overlays</button>
         <span id="calParams" class="cal-params" data-help="ui:calibrate" hidden></span>
         <span id="ovMsg" class="ov-msg"></span>

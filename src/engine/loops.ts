@@ -56,7 +56,13 @@ export function influenceGraph(model: Model): InfluenceGraph {
   const scope = operatingPoint(model);
   const ctx: EvalCtx = { scope, tables: c.tables };
 
-  const nodes = new Set<string>([...c.state.map((s) => s.name), ...c.order.filter((v) => v.kind !== "param").map((v) => v.name)]);
+  // Fixed-delay outputs are nodes (like delay stocks); their samplers are not —
+  // the input expression links straight to the output node instead.
+  const nodes = new Set<string>([
+    ...c.state.map((s) => s.name),
+    ...c.fixed.map((f) => f.name),
+    ...c.order.filter((v) => v.kind !== "param" && !v.isInternal).map((v) => v.name),
+  ]);
   const edges: Edge[] = [];
 
   const linkFrom = (target: string, expr: Parameters<typeof freeVars>[0]) => {
@@ -80,8 +86,9 @@ export function influenceGraph(model: Model): InfluenceGraph {
     }
   };
 
-  for (const v of c.order) if (v.kind !== "param") linkFrom(v.name, v.expr);
+  for (const v of c.order) if (v.kind !== "param" && !v.isInternal) linkFrom(v.name, v.expr);
   for (const s of c.state) if (s.rateExpr) linkFrom(s.name, s.rateExpr);
+  for (const f of c.fixed) linkFrom(f.name, f.inputExpr);
 
   return { nodes: [...nodes], edges };
 }
@@ -91,16 +98,18 @@ export function operatingPoint(model: Model): Record<string, number> {
   const c = compile(model);
   const scope: Record<string, number> = { t: model.settings.start, time: model.settings.start };
   for (const s of c.state) scope[s.name] = 0;
+  for (const f of c.fixed) scope[f.name] = 0;
   for (const v of c.order) scope[v.name] = 0;
   const ctx: EvalCtx = { scope, tables: c.tables };
   // Converge the fixed point rather than always running O(N) passes (see the
   // matching note in codegen.initStateInto) — keeps this ~O(N) on large models,
   // so loop analysis stays responsive on the main thread.
-  const maxPasses = c.state.length + c.order.length + 2;
+  const maxPasses = c.state.length + c.order.length + c.fixed.length + 2;
   for (let p = 0; p < maxPasses; p++) {
     let changed = 0;
     for (const v of c.order) { const nv = evalExpr(v.expr, ctx); if (nv !== scope[v.name]) { scope[v.name] = nv; changed++; } }
     for (const s of c.state) { const nv = evalExpr(s.initExpr, ctx); if (nv !== scope[s.name]) { scope[s.name] = nv; changed++; } }
+    for (const f of c.fixed) { const nv = evalExpr(f.initExpr, ctx); if (nv !== scope[f.name]) { scope[f.name] = nv; changed++; } }
     if (changed === 0) break;
   }
   return scope;

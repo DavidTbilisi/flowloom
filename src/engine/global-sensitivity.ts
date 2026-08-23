@@ -54,15 +54,17 @@ export interface GsaOptions {
   seed?: number;
 }
 
-interface Range { name: string; base: number; lo: number; hi: number }
+interface Range { name: string; base: number; lo: number; hi: number; boolean?: true }
 
-/** Build [base-d, base+d] ranges for the chosen (numeric) params. */
+/** Build [base-d, base+d] ranges for the chosen (numeric) params. A `switch`
+ *  spans its two states, {0, 1}, and is sampled as such (see mapPoint). */
 function ranges(model: Model, params: string[], frac: number): Range[] {
   const op = operatingPoint(model);
   const out: Range[] = [];
   for (const name of params) {
     const base = op[name];
     if (base === undefined || !Number.isFinite(base)) continue;
+    if (model.varIndex.get(name)?.boolean) { out.push({ name, base, lo: 0, hi: 1, boolean: true }); continue; }
     const d = base !== 0 ? Math.abs(base) * frac : frac;
     out.push({ name, base, lo: base - d, hi: base + d });
   }
@@ -77,7 +79,10 @@ async function evalAt(model: Model, rs: Range[], point: number[], metric: string
   return resolveMetric(res, metric);
 }
 
-const mapPoint = (rs: Range[], unit: number[]): number[] => rs.map((r, i) => r.lo + unit[i]! * (r.hi - r.lo));
+// A unit-cube sample maps linearly into each param's range; a switch is snapped
+// to off/on at the midpoint so the model only ever sees its two real states.
+const mapPoint = (rs: Range[], unit: number[]): number[] =>
+  rs.map((r, i) => (r.boolean ? (unit[i]! < 0.5 ? 0 : 1) : r.lo + unit[i]! * (r.hi - r.lo)));
 
 export async function globalSensitivity(model: Model, opts: GsaOptions): Promise<GsaResult> {
   const frac = opts.frac ?? 0.1;
@@ -105,9 +110,11 @@ async function morris(model: Model, rs: Range[], metric: string, traj: number, s
     let prev = base.slice();
     let yPrev = await evalAt(model, rs, mapPoint(rs, prev), metric); runs++;
     for (const i of order) {
-      const step = prev[i]! + delta <= 1 ? delta : -delta; // stay inside [0,1]
+      // A switch has no "a little more": its elementary effect is the flip, so
+      // the step goes to the other state (a full unit in [0,1] space).
+      const step = rs[i]!.boolean ? (prev[i]! < 0.5 ? 1 : -1) : prev[i]! + delta <= 1 ? delta : -delta; // stay inside [0,1]
       const next = prev.slice();
-      next[i] = prev[i]! + step;
+      next[i] = rs[i]!.boolean ? (step > 0 ? 1 : 0) : prev[i]! + step;
       const yNext = await evalAt(model, rs, mapPoint(rs, next), metric); runs++;
       if (Number.isFinite(yNext) && Number.isFinite(yPrev)) effects[i]!.push((yNext - yPrev) / step);
       prev = next; yPrev = yNext;

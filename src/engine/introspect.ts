@@ -7,15 +7,17 @@
 // Both are built from the same primitives the studio uses — printExpr, freeVars,
 // analyzeLoops — so what an agent reads here is exactly what ran.
 
-import type { Model, VarKind } from "../lang/index.js";
-import { printExpr, freeVars } from "../lang/index.js";
+import type { Expr, Model, VarKind } from "../lang/index.js";
+import { printExpr, freeVars, declExprs } from "../lang/index.js";
 import { analyzeLoops } from "./loops.js";
 
 export interface ModelDescription {
   stocks: Array<{ name: string; init: string; unit?: string; doc?: string }>;
   rates: Array<{ stock: string; expr: string }>;
-  vars: Array<{ name: string; kind: VarKind; expr: string; unit?: string; doc?: string; deps: string[] }>;
+  vars: Array<{ name: string; kind: VarKind; expr: string; unit?: string; doc?: string; switch?: true; deps: string[] }>;
   tables: Array<{ name: string; points: Array<[number, number]> }>;
+  /** Named override sets declared in the text (`scenario` lines). */
+  scenarios: Array<{ name: string; sets: Array<{ key: string; value: string }>; doc?: string }>;
   settings: Model["settings"];
   plot: string[];
   loops: {
@@ -38,10 +40,17 @@ function ownNames(model: Model): Set<string> {
 export function describeModel(model: Model): ModelDescription {
   const own = ownNames(model);
   const rep = analyzeLoops(model);
+  // A per-element decl prints its full `a, b, …` list; otherwise the single expr.
+  const rhs = (single: Expr, list?: Expr[]) => declExprs(single, list).map(printExpr).join(", ");
+  const allDeps = (single: Expr, list?: Expr[]) => {
+    const fv = new Set<string>();
+    for (const e of declExprs(single, list)) freeVars(e, fv);
+    return [...fv].filter((n) => own.has(n));
+  };
   return {
     stocks: model.stocks.map((s) => ({
       name: s.name,
-      init: printExpr(s.initExpr),
+      init: rhs(s.initExpr, s.elemExprs),
       ...(s.unit ? { unit: s.unit } : {}),
       ...(s.doc ? { doc: s.doc } : {}),
     })),
@@ -49,12 +58,18 @@ export function describeModel(model: Model): ModelDescription {
     vars: model.vars.map((v) => ({
       name: v.name,
       kind: v.kind,
-      expr: printExpr(v.expr),
+      expr: rhs(v.expr, v.elemExprs),
       ...(v.unit ? { unit: v.unit } : {}),
       ...(v.doc ? { doc: v.doc } : {}),
-      deps: [...freeVars(v.expr)].filter((n) => own.has(n)),
+      ...(v.boolean ? { switch: true as const } : {}),
+      deps: allDeps(v.expr, v.elemExprs),
     })),
     tables: [...model.tables.values()].map((t) => ({ name: t.name, points: t.points })),
+    scenarios: [...model.scenarios.values()].map((s) => ({
+      name: s.name,
+      sets: s.sets.map(({ key, value }) => ({ key, value })),
+      ...(s.doc ? { doc: s.doc } : {}),
+    })),
     settings: model.settings,
     plot: model.plot,
     loops: {
@@ -92,10 +107,16 @@ export function explainModel(model: Model): string {
     }
   }
 
-  const params = d.vars.filter((v) => v.kind === "param");
+  const params = d.vars.filter((v) => v.kind === "param" && !v.switch);
   if (params.length) {
     lines.push("", "Knobs (params):");
     for (const p of params) lines.push(`  • ${p.name} = ${p.expr}${p.doc ? ` — ${p.doc}` : ""}`);
+  }
+
+  const switches = d.vars.filter((v) => v.switch);
+  if (switches.length) {
+    lines.push("", "Switches (on/off policies):");
+    for (const s of switches) lines.push(`  • ${s.name} = ${s.expr === "1" ? "on" : "off"}${s.doc ? ` — ${s.doc}` : ""}`);
   }
 
   const dynamic = d.vars.filter((v) => v.kind !== "param");
@@ -107,6 +128,11 @@ export function explainModel(model: Model): string {
   if (d.tables.length) {
     lines.push("", "Graphical lookups:");
     for (const t of d.tables) lines.push(`  • ${t.name}(x) — ${t.points.length} breakpoints`);
+  }
+
+  if (d.scenarios.length) {
+    lines.push("", "Scenarios (named override sets; base = the model as written):");
+    for (const s of d.scenarios) lines.push(`  • ${s.name}: ${s.sets.map((x) => `${x.key}=${x.value}`).join(" ")}${s.doc ? ` — ${s.doc}` : ""}`);
   }
 
   if (d.loops.items.length) {

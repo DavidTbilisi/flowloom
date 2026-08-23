@@ -9,18 +9,23 @@
 //   flowloom run    model.flow [--csv|--tsv|--json] [--plot a,b] [--set k=v] [--chart]
 //   flowloom loops  model.flow [--json]
 //   flowloom check  model.flow
+//   flowloom compare model.flow --metric final:Cash,min:Cash
 //
 // `--set k=v` overrides a param, a stock's initial value, or a sim setting
 // (dt/to/start/method) before the run — which turns a model into a function you
-// can sweep from a shell loop. Pass `-` as the path to read the model on stdin.
+// can sweep from a shell loop. `--scenario NAME` applies a `scenario` line from
+// the text the same way (then any --set on top). Pass `-` as the path to read
+// the model on stdin.
 
 import { readFileSync } from "node:fs";
 import process from "node:process";
-import { parseModel, ModelError, type Model } from "./lang/index.js";
+import { parseModel, scalarize, ModelError, type Model } from "./lang/index.js";
 import {
   simulateAsync,
   analyzeLoops,
   applyOverride,
+  applyScenario,
+  compareScenarios,
   describeModel,
   explainModel,
   summarizeRun,
@@ -43,6 +48,7 @@ import {
   type EnsembleResult,
   type CalibrateResult,
   type LoopReport,
+  type CompareResult,
 } from "./engine/index.js";
 
 const VERSION = "0.1.0";
@@ -54,6 +60,8 @@ interface Args {
   format: "table" | "csv" | "tsv" | "json";
   plot: string[]; // explicit column selection; empty = use model defaults
   sets: string[]; // raw "key=value" overrides, applied in order
+  scenario?: string; // --scenario NAME: a `scenario` line to apply before --set
+  scenarios: string[]; // --scenario a,b for compare (a list)
   rows: number; // sampled rows for the table view
   chart: boolean; // render sparklines after the table
   params: string[]; // --param: a knob (sweep/solve) or a list (sensitivity)
@@ -72,7 +80,7 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", format: "table", plot: [], sets: [], rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", format: "table", plot: [], sets: [], scenarios: [], rows: 21, chart: false, params: [], frac: 0.1, against: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -84,6 +92,7 @@ function parseArgs(argv: string[]): Args {
       case "--plot": a.plot.push(...splitList(need(argv, ++i, arg))); break;
       case "-s":
       case "--set": a.sets.push(need(argv, ++i, arg)); break;
+      case "--scenario": a.scenarios.push(...splitList(need(argv, ++i, arg))); break;
       case "--rows": a.rows = Math.max(2, Math.floor(Number(need(argv, ++i, arg)))); break;
       case "--param": a.params.push(...splitList(need(argv, ++i, arg))); break;
       case "--range": a.range = need(argv, ++i, arg); break;
@@ -101,6 +110,7 @@ function parseArgs(argv: string[]): Args {
       default:
         if (arg.startsWith("--plot=")) a.plot.push(...splitList(arg.slice(7)));
         else if (arg.startsWith("--set=")) a.sets.push(arg.slice(6));
+        else if (arg.startsWith("--scenario=")) a.scenarios.push(...splitList(arg.slice(11)));
         else if (arg.startsWith("--rows=")) a.rows = Math.max(2, Math.floor(Number(arg.slice(7))));
         else if (arg.startsWith("--param=")) a.params.push(...splitList(arg.slice(8)));
         else if (arg.startsWith("--range=")) a.range = arg.slice(8);
@@ -123,6 +133,11 @@ function parseArgs(argv: string[]): Args {
   if (rest.length && (rest[0] === "-" || rest[0]!.endsWith(".flow"))) rest.unshift("run");
   a.cmd = rest[0] ?? "";
   a.file = rest[1];
+  // Every command but `compare` takes one scenario; compare takes the list.
+  if (a.cmd !== "compare") {
+    if (a.scenarios.length > 1) die(`--scenario takes one name here (compare takes a list), got ${a.scenarios.join(", ")}`);
+    a.scenario = a.scenarios[0];
+  }
   return a;
 }
 
@@ -153,6 +168,13 @@ function load(args: Args): Model {
     throw e;
   }
   for (const d of model.diagnostics) if (d.severity === "warning") warn(`line ${d.loc.line}: ${d.message}`);
+  if (args.scenario) {
+    try {
+      for (const w of applyScenario(model, args.scenario)) warn(w);
+    } catch (e) {
+      die(`--scenario ${(e as Error).message}`);
+    }
+  }
   for (const s of args.sets) {
     try {
       for (const w of applyOverride(model, s)) warn(w);
@@ -164,12 +186,16 @@ function load(args: Args): Model {
 }
 
 /** Which series to show: explicit --plot, else the model's `plot` line, else stocks. */
-function columns(args: Args, res: SimResult): string[] {
-  const want = args.plot.length ? args.plot : [];
-  if (want.length) {
-    for (const c of want) if (!res.series.has(c)) die(`no series named "${c}" (have: ${res.names.join(", ")})`);
-    return want;
+function columns(args: Args, res: SimResult, model: Model): string[] {
+  if (args.plot.length) {
+    for (const c of args.plot) if (!res.series.has(c)) die(`no series named "${c}" (have: ${res.names.join(", ")})`);
+    return args.plot;
   }
+  // Honor the model's `plot` line, expanded to scalar series (a subscripted
+  // `plot Trade` becomes Trade.A.X, …). Shown in full — it's an explicit choice.
+  const plotted = scalarize(model).plot.filter((n) => res.series.has(n));
+  if (plotted.length) return plotted;
+  // No plot line: fall back to stocks + a few vars, capped so big models don't flood.
   return res.stockNames.length ? [...res.stockNames, ...res.varNames].slice(0, 8) : res.names;
 }
 
@@ -257,7 +283,7 @@ function renderSummary(sum: RunSummary): string {
 async function cmdRun(args: Args): Promise<void> {
   const model = load(args);
   const res = await simulateAsync(model);
-  const cols = columns(args, res);
+  const cols = columns(args, res, model);
   if (args.format === "csv") out(renderDelimited(res, cols, ","));
   else if (args.format === "tsv") out(renderDelimited(res, cols, "\t"));
   else if (args.format === "json") out(renderJson(res, cols));
@@ -324,7 +350,7 @@ function cmdExplain(args: Args): void {
 async function cmdSummary(args: Args): Promise<void> {
   const model = load(args);
   const res = await simulateAsync(model);
-  const cols = columns(args, res);
+  const cols = columns(args, res, model);
   const sum = summarizeRun(res, cols);
   out(args.format === "json" ? JSON.stringify(sum, null, 2) : renderSummary(sum));
 }
@@ -355,15 +381,54 @@ function renderSweep(r: SweepResult): string {
 }
 
 function renderSensitivity(r: SensitivityResult): string {
-  const head = `sensitivity of ${r.metric} to ±${fmt(r.frac * 100)}% (one factor at a time, by |Δ|)`;
+  const anySwitch = r.rows.some((x) => x.switch);
+  const head = `sensitivity of ${r.metric} to ±${fmt(r.frac * 100)}% (one factor at a time, by |Δ|${anySwitch ? "; switches: off → on" : ""})`;
   if (!r.rows.length) return `${head}\n  (no numeric params to vary)`;
-  const wp = Math.max(...r.rows.map((x) => x.param.length));
+  const wp = Math.max(...r.rows.map((x) => x.param.length + (x.switch ? 9 : 0)));
   const maxAbs = Math.max(...r.rows.map((x) => Math.abs(x.delta))) || 1;
   const lines = r.rows.map((x) => {
     const bar = "█".repeat(Math.round((Math.abs(x.delta) / maxAbs) * 24)) || "·";
-    return `  ${x.param.padEnd(wp)}  ${fmt(x.low)} → ${fmt(x.high)}   Δ=${fmt(x.delta).padStart(10)}  ${bar}`;
+    const name = x.switch ? `${x.param} (switch)` : x.param;
+    return `  ${name.padEnd(wp)}  ${fmt(x.low)} → ${fmt(x.high)}   Δ=${fmt(x.delta).padStart(10)}  ${bar}`;
   });
   return [head, ...lines].join("\n");
+}
+
+function renderCompare(r: CompareResult): string {
+  const names = r.rows.map((x) => x.scenario);
+  const wn = Math.max(8, ...names.map((n) => n.length));
+  const cells = r.rows.map((x) => x.values.map(fmt));
+  const ws = r.metrics.map((m, i) => Math.max(m.length, ...cells.map((c) => c[i]!.length)));
+  const head = `  ${"scenario".padEnd(wn)}  ${r.metrics.map((m, i) => m.padStart(ws[i]!)).join("  ")}`;
+  const lines = r.rows.map((x, k) => {
+    const vals = cells[k]!.map((c, i) => c.padStart(ws[i]!)).join("  ");
+    const delta = x.delta ? `   Δ ${x.delta.map((d) => (d >= 0 ? "+" : "") + fmt(d)).join("  ")}` : "";
+    const sets = x.sets.length ? `   (${x.sets.join(" ")})` : "";
+    return `  ${x.scenario.padEnd(wn)}  ${vals}${delta}${sets}${x.note ? `  [${x.note}]` : ""}`;
+  });
+  return [head, ...lines].join("\n");
+}
+
+async function cmdCompare(args: Args): Promise<void> {
+  const model = load(args);
+  if (!args.metric) die("compare needs --metric SPEC[,SPEC…] (e.g. final:Cash,min:Cash)");
+  if (!model.scenarios.size && !args.scenarios.length) die("the model declares no `scenario` lines — add e.g. `scenario safe separate=on`");
+  let r: CompareResult;
+  try {
+    r = await compareScenarios(model, splitList(args.metric), args.scenarios);
+  } catch (e) {
+    die((e as Error).message);
+  }
+  out(args.format === "json" ? JSON.stringify(r, null, 2) : renderCompare(r));
+}
+
+function cmdScenarios(args: Args): void {
+  const model = load(args);
+  const list = [...model.scenarios.values()].map((s) => ({ name: s.name, sets: s.sets.map((x) => `${x.key}=${x.value}`), ...(s.doc ? { doc: s.doc } : {}) }));
+  if (args.format === "json") { out(JSON.stringify(list, null, 2)); return; }
+  if (!list.length) { out("no scenario lines (base only)"); return; }
+  const w = Math.max(...list.map((s) => s.name.length));
+  out(list.map((s) => `  ${s.name.padEnd(w)}  ${s.sets.join(" ")}${s.doc ? `   # ${s.doc}` : ""}`).join("\n"));
 }
 
 async function cmdSweep(args: Args): Promise<void> {
@@ -527,7 +592,7 @@ function cmdReference(args: Args): void {
     ["Line keywords", "keyword"],
     ["Reserved constants", "const"],
     ["Builtins", "builtin"],
-    ["Stateful builtins (compile into stocks)", "stateful"],
+    ["Stateful builtins (delays, smoothing, previous)", "stateful"],
   ];
   const blocks = groups.map(([title, kind]) => {
     const rows = REFERENCE.filter((e) => e.kind === kind);
@@ -562,6 +627,9 @@ usage:
   flowloom solve    <model.flow> --param P --metric SPEC --target N [--bracket A..B] [--json]
   flowloom montecarlo <model.flow> [--runs N] [--seed N] [--plot a,b] [--json]
   flowloom calibrate <model.flow> --param a,b --data obs.csv [--against S=col] [--json]
+  flowloom scenarios <model.flow> [--json]   list the model's scenario lines
+  flowloom compare  <model.flow> --metric SPEC[,SPEC] [--scenario a,b] [--json]
+                                             base vs each scenario, one row per scenario
   flowloom reference [--json]                the .flow language + builtins catalog
   flowloom <model.flow>                       shorthand for: run
 
@@ -572,6 +640,7 @@ run options:
   --rows N                 sampled rows in the table view (default 21)
   --set k=v                override a param, stock init, or dt/to/start/method
                            repeatable; applied before the run
+  --scenario NAME          apply a 'scenario' line from the model first (then --set)
 
 sweep / sensitivity options:
   --param P[,Q]            knob to sweep (sweep), or params to vary (sensitivity; default: all)
@@ -593,6 +662,8 @@ examples:
   flowloom montecarlo model.flow --runs 200 --seed 1 --plot Revenue
   flowloom calibrate model.flow --param a,b --data observed.csv --against Infected=I
   flowloom run model.flow --set yield=0.03 --set to=240 --csv > out.csv
+  flowloom run budget.flow --scenario recovery --plot Cash
+  flowloom compare budget.flow --metric final:Cash,min:Cash
   cat model.flow | flowloom loops -`;
 
 async function main(): Promise<void> {
@@ -613,6 +684,8 @@ async function main(): Promise<void> {
     case "solve": await cmdSolve(args); break;
     case "montecarlo": await cmdMonteCarlo(args); break;
     case "calibrate": await cmdCalibrate(args); break;
+    case "scenarios": cmdScenarios(args); break;
+    case "compare": await cmdCompare(args); break;
     case "reference": cmdReference(args); break;
     case "": die("no command — try `flowloom --help`");
     default: die(`unknown command "${args.cmd}" — try `+"`flowloom --help`");

@@ -28,7 +28,9 @@ Grammar (one statement per line; # starts a comment):
   flow  NAME [unit] = EXPR        a named rate (same maths as aux, drawn as a flow)
   aux   NAME [unit] = EXPR        an instantaneous computed value, recomputed each step
   param NAME [unit] = EXPR        a constant knob (alias: const)
+  switch NAME = on|off            a 0/1 policy toggle; use as if(NAME, a, b)
   table NAME = (x,y) (x,y) ...    a piecewise-linear lookup; call as NAME(x)
+  scenario NAME key=value ...     a named override set (params, switches on/off, stock inits, dt/to)
   sim dt=0.1 to=50 start=0 method=rk4   integration settings (method: euler | rk4)
   plot A B C                      which series are visible by default
 
@@ -36,11 +38,13 @@ Operators: + - * / % ^, comparisons (< <= > >= == !=) and && || ! returning 1/0.
 Builtins: min max abs exp ln log10 sqrt pow sin cos tan floor ceil round sign
   if(cond,a,b) clamp(x,lo,hi) step(h,t0) pulse(t0,w) ramp(slope,t0,t1)
   random() random_uniform(lo,hi) random_normal(mean,sd)
-  smooth(x,tau) smooth3(x,tau) delay1(x,tau) delay3(x,tau)  (stateful)
+  smooth(x,tau) smooth3(x,tau) delay1(x,tau) delay3(x,tau)  (stateful, exponential)
+  previous(x) delay_fixed(x,n)  (exactly one step / n time units ago — a pipeline)
 
 Rules: every referenced name must be defined; a model needs >=1 stock; a stock
 changes ONLY through its change()/d() rate; if(c,a,b) evaluates BOTH branches, so
-guard the operand (x/max(y,1e-9)), not the branch. Prefer a short comment header
+guard the operand (x/max(y,1e-9)), not the branch. A discrete-period model (monthly,
+yearly) should use sim method=euler dt=1. Prefer a short comment header
 explaining the model, sensible param values, and a plot line. Pick dt/to so the
 interesting dynamics are visible.`;
 

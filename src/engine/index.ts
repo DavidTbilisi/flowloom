@@ -9,10 +9,10 @@ export {
   type SimPlan,
   type DerivBackend,
 } from "./codegen.js";
-export { compile, type Compiled, type StateVar, type CompiledVar } from "./compile.js";
+export { compile, type Compiled, type StateVar, type CompiledVar, type FixedDelay } from "./compile.js";
 export { analyzeLoops, influenceGraph, findLoops, type Loop, type LoopReport, type Edge, type InfluenceGraph } from "./loops.js";
 export { evalExpr, EvalError, type EvalCtx } from "./eval.js";
-export { BUILTINS, ARITY, STATEFUL, lookupTable } from "./builtins.js";
+export { BUILTINS, ARITY, STATEFUL, FIXED_DELAY, lookupTable } from "./builtins.js";
 export { validateModel } from "./validate.js";
 export { REFERENCE, REFERENCE_BY_NAME, CALLABLE_NAMES, type RefEntry, type RefKind } from "./reference.js";
 export { describeModel, explainModel, type ModelDescription } from "./introspect.js";
@@ -38,6 +38,7 @@ export {
   powDim,
   isDimensionless,
   UNKNOWN,
+  LITERAL,
   UnitParseError,
   type Dim,
   type DimResult,
@@ -50,4 +51,5 @@ export { parseDataset, type Dataset, type ParseDatasetOptions } from "./dataset.
 export { interpAt, rmse, nrmse } from "./fit.js";
 export { calibrate, type CalibrateOptions, type CalibrateResult } from "./calibrate.js";
 export { globalSensitivity, type GsaResult, type GsaRow, type GsaOptions } from "./global-sensitivity.js";
-export { applyOverride } from "./overrides.js";
+export { applyOverride, applyScenario, BASE_SCENARIO } from "./overrides.js";
+export { compareScenarios, type CompareResult, type CompareRow } from "./compare.js";

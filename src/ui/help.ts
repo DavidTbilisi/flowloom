@@ -10,8 +10,10 @@ export function renderHelp(): string {
     <tr><td>flow NAME [unit] = EXPR</td><td>a named rate; same as aux but drawn as a flow on the diagram.</td></tr>
     <tr><td>aux NAME [unit] = EXPR</td><td>an instantaneous computed value (a converter/variable).</td></tr>
     <tr><td>param NAME [unit] = EXPR</td><td>a constant knob (<code>const</code> is an alias).</td></tr>
+    <tr><td>switch NAME = on|off</td><td>a two-state policy toggle; use it as <code>if(NAME, a, b)</code>. Sensitivity tests it off→on; Tune shows a toggle.</td></tr>
     <tr><td>table NAME = (x,y) (x,y) …</td><td>a graphical lookup function; call it as <code>NAME(x)</code> (piecewise-linear).</td></tr>
-    <tr><td>sim dt=.1 to=50 start=0 method=rk4</td><td>simulation settings (the toolbar edits this line).</td></tr>
+    <tr><td>scenario NAME key=value …</td><td>a named set of overrides kept in the text (params, switches, stock inits, dt/to). Pick it in the plot controls; base stays dashed.</td></tr>
+    <tr><td>sim dt=.1 to=50 start=0 method=rk4</td><td>simulation settings (the toolbar edits this line). Add <code>timeunit=month</code> for units checking.</td></tr>
     <tr><td>plot A B C</td><td>which series start visible.</td></tr>
   </table>
 
@@ -33,6 +35,15 @@ export function renderHelp(): string {
     <code>smooth3(input, τ)</code> — third-order smoothing.<br/>
     <code>delay1(input, τ)</code> / <code>delay3(input, τ)</code> — first/third-order material delays.
     These expand into internal stocks, so they integrate correctly under RK4 and participate in feedback loops.
+  </div></details>
+
+  <details><summary>Discrete periods (months, years)</summary><div class="body">
+    A budget or a census is a map on a grid, not an ODE: write <code>sim method=euler dt=1</code> so
+    <code>stock(t+1) = stock(t) + change(t)</code> exactly, and test the clock with <code>t % 12 == 0</code>.<br/>
+    <code>previous(X, init?)</code> — X one step ago.<br/>
+    <code>delay_fixed(X, n, init?)</code> — X exactly <code>n</code> time units ago (a pipeline; <code>delay1</code>/<code>delay3</code> are exponential lags).
+    Both sample on the grid and hold across RK4 sub-steps; before enough history exists they return <code>init</code> (default: X's initial value).
+    They break instantaneous dependencies, so <code>a = previous(b) + 1</code>, <code>b = a * 2</code> is legal.
   </div></details>
 
   <details><summary>The one idea</summary><div class="body">

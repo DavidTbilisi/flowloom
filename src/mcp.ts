@@ -19,6 +19,8 @@ import {
   simulateAsync,
   analyzeLoops,
   applyOverride,
+  applyScenario,
+  compareScenarios,
   describeModel,
   explainModel,
   summarizeRun,
@@ -50,9 +52,10 @@ const diag = (d: { loc: { line: number; col: number }; message: string; severity
   message: d.message,
 });
 
-/** Parse + apply overrides; throws ModelError (parse) or Error (bad override). */
-function loadModel(src: string, sets?: string[]): Model {
+/** Parse + apply a scenario, then overrides; throws ModelError (parse) or Error (bad override). */
+function loadModel(src: string, sets?: string[], scenario?: string): Model {
   const model = parseModel(src);
+  applyScenario(model, scenario);
   for (const s of sets ?? []) applyOverride(model, s);
   return model;
 }
@@ -84,8 +87,8 @@ export const handlers = {
     return text({ warnings: lintModel(parseModel(model)).map(diag) });
   },
 
-  async flow_run({ model, plot, set, maxPoints }: { model: string; plot?: string[]; set?: string[]; maxPoints?: number }): Promise<ToolResult> {
-    const res = await simulateAsync(loadModel(model, set));
+  async flow_run({ model, plot, set, scenario, maxPoints }: { model: string; plot?: string[]; set?: string[]; scenario?: string; maxPoints?: number }): Promise<ToolResult> {
+    const res = await simulateAsync(loadModel(model, set, scenario));
     const cols = plot?.length ? plot : res.stockNames.length ? [...res.stockNames, ...res.varNames] : res.names;
     // Safe-by-default payload: the model still integrates at full resolution
     // (the numerics are untouched), but a long/fine run can be 100k+ samples —
@@ -116,24 +119,24 @@ export const handlers = {
     });
   },
 
-  async flow_summary({ model, plot, set }: { model: string; plot?: string[]; set?: string[] }): Promise<ToolResult> {
-    const res = await simulateAsync(loadModel(model, set));
+  async flow_summary({ model, plot, set, scenario }: { model: string; plot?: string[]; set?: string[]; scenario?: string }): Promise<ToolResult> {
+    const res = await simulateAsync(loadModel(model, set, scenario));
     return text(summarizeRun(res, plot));
   },
 
   async flow_sweep(
-    { model, param, from, to, steps, metric, set }:
-      { model: string; param: string; from: number; to: number; steps?: number; metric: string; set?: string[] },
+    { model, param, from, to, steps, metric, set, scenario }:
+      { model: string; param: string; from: number; to: number; steps?: number; metric: string; set?: string[]; scenario?: string },
   ): Promise<ToolResult> {
-    const r = await sweepParam(loadModel(model, set), param, { from, to, steps: steps ?? 11 }, metric);
+    const r = await sweepParam(loadModel(model, set, scenario), param, { from, to, steps: steps ?? 11 }, metric);
     return text(r);
   },
 
   async flow_sensitivity(
-    { model, metric, params, frac, method, samples, set }:
-      { model: string; metric: string; params?: string[]; frac?: number; method?: "ofat" | "morris" | "sobol"; samples?: number; set?: string[] },
+    { model, metric, params, frac, method, samples, set, scenario }:
+      { model: string; metric: string; params?: string[]; frac?: number; method?: "ofat" | "morris" | "sobol"; samples?: number; set?: string[]; scenario?: string },
   ): Promise<ToolResult> {
-    const m = loadModel(model, set);
+    const m = loadModel(model, set, scenario);
     if (method === "morris" || method === "sobol") {
       return text(await globalSensitivity(m, { method, metric, params, frac: frac ?? 0.1, ...(samples !== undefined ? { samples } : {}) }));
     }
@@ -141,10 +144,10 @@ export const handlers = {
   },
 
   async flow_solve(
-    { model, param, metric, target, bracket, tol, set }:
-      { model: string; param: string; metric: string; target: number; bracket?: [number, number]; tol?: number; set?: string[] },
+    { model, param, metric, target, bracket, tol, set, scenario }:
+      { model: string; param: string; metric: string; target: number; bracket?: [number, number]; tol?: number; set?: string[]; scenario?: string },
   ): Promise<ToolResult> {
-    const r = await solveParam(loadModel(model, set), param, metric, target, {
+    const r = await solveParam(loadModel(model, set, scenario), param, metric, target, {
       ...(bracket ? { bracket } : {}),
       ...(tol !== undefined ? { tol } : {}),
     });
@@ -152,10 +155,10 @@ export const handlers = {
   },
 
   async flow_montecarlo(
-    { model, runs, seed, series, set }:
-      { model: string; runs?: number; seed?: number; series?: string[]; set?: string[] },
+    { model, runs, seed, series, set, scenario }:
+      { model: string; runs?: number; seed?: number; series?: string[]; set?: string[]; scenario?: string },
   ): Promise<ToolResult> {
-    const r = await monteCarlo(loadModel(model, set), {
+    const r = await monteCarlo(loadModel(model, set, scenario), {
       runs: runs ?? 100,
       ...(seed !== undefined ? { seed } : {}),
       ...(series?.length ? { series } : {}),
@@ -164,11 +167,11 @@ export const handlers = {
   },
 
   async flow_calibrate(
-    { model, params, data, map, set }:
-      { model: string; params: string[]; data: string; map?: Record<string, string>; set?: string[] },
+    { model, params, data, map, set, scenario }:
+      { model: string; params: string[]; data: string; map?: Record<string, string>; set?: string[]; scenario?: string },
   ): Promise<ToolResult> {
     const dataset = parseDataset(data);
-    const r = await calibrate(loadModel(model, set), { params, dataset, ...(map ? { map } : {}) });
+    const r = await calibrate(loadModel(model, set, scenario), { params, dataset, ...(map ? { map } : {}) });
     return text(r);
   },
 
@@ -177,12 +180,21 @@ export const handlers = {
     return text({ counts: rep.counts, capped: rep.capped, loops: rep.loops.map((l) => ({ polarity: l.polarity, nodes: l.nodes })) });
   },
 
-  flow_describe({ model, set }: { model: string; set?: string[] }): ToolResult {
-    return text(describeModel(loadModel(model, set)));
+  flow_describe({ model, set, scenario }: { model: string; set?: string[]; scenario?: string }): ToolResult {
+    return text(describeModel(loadModel(model, set, scenario)));
   },
 
-  flow_explain({ model, set }: { model: string; set?: string[] }): ToolResult {
-    return text(explainModel(loadModel(model, set)));
+  flow_explain({ model, set, scenario }: { model: string; set?: string[]; scenario?: string }): ToolResult {
+    return text(explainModel(loadModel(model, set, scenario)));
+  },
+
+  async flow_compare(
+    { model, metrics, scenarios, set }:
+      { model: string; metrics: string[]; scenarios?: string[]; set?: string[] },
+  ): Promise<ToolResult> {
+    const m = loadModel(model, set);
+    if (!m.scenarios.size && !scenarios?.length) throw new Error("the model declares no `scenario` lines — add e.g. `scenario safe separate=on`");
+    return text(await compareScenarios(m, metrics, scenarios));
   },
 
   flow_examples({ name }: { name?: string }): ToolResult {
@@ -254,13 +266,16 @@ The authoring loop:
 2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
 3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops) — to understand an existing model before changing it.
 
-Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data). Most tools accept "set" overrides ("key=value") to try a what-if WITHOUT rewriting the text.
+Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to data), flow_compare (base vs each 'scenario' line, one row per scenario). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
+
+Discrete-period models (monthly, yearly): use 'sim method=euler dt=1', previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
 Gotchas: every referenced name must be defined and a model needs ≥1 stock; a stock changes ONLY through its change()/d() rate; if(cond,a,b) evaluates BOTH branches (guard the operand, e.g. x/max(y,1e-9), not the branch). Start from flow_examples if you want a known-good template.`;
 
 // ── server wiring ────────────────────────────────────────────────────────────
 const modelArg = z.string().describe("The .flow model as text (the canonical representation).");
-const setArg = z.array(z.string()).optional().describe('Overrides as "key=value": a param, a stock init, or dt/to/start/method. Applied before the run.');
+const setArg = z.array(z.string()).optional().describe('Overrides as "key=value": a param, a switch (on/off), a stock init, or dt/to/start/method. Applied before the run (after any scenario).');
+const scenarioArg = z.string().optional().describe("Name of a `scenario` line in the model to apply before the run (\"base\" or omitted = the model as written).");
 const metricArg = z
   .string()
   .describe('A scalar read from a run: "<op>:<series>" where op is final|max|min|mean|time-to-peak|settle-time, or "at:<t>:<series>". E.g. "final:Cash", "max:Infected", "at:50:Inventory".');
@@ -278,6 +293,7 @@ export function buildServer(): McpServer {
         plot: z.array(z.string()).optional().describe("Series to return (default: stocks then aux/flows)."),
         maxPoints: z.number().optional().describe("Cap on returned samples per series (default 1000). The model still integrates at full resolution; long/fine runs are evenly downsampled (first & last kept) so the payload stays small. Raise it for finer detail, or prefer flow_summary."),
         set: setArg,
+        scenario: scenarioArg,
       },
     },
     guard(handlers.flow_run),
@@ -293,6 +309,7 @@ export function buildServer(): McpServer {
         model: modelArg,
         plot: z.array(z.string()).optional().describe("Series to summarize (default: stocks then aux/flows)."),
         set: setArg,
+        scenario: scenarioArg,
       },
     },
     guard(handlers.flow_summary),
@@ -312,6 +329,7 @@ export function buildServer(): McpServer {
         steps: z.number().optional().describe("Number of samples across [from, to] (default 11)."),
         metric: metricArg,
         set: setArg,
+        scenario: scenarioArg,
       },
     },
     guard(handlers.flow_sweep),
@@ -331,6 +349,7 @@ export function buildServer(): McpServer {
         method: z.enum(["ofat", "morris", "sobol"]).optional().describe("Sensitivity method (default ofat)."),
         samples: z.number().optional().describe("morris: number of trajectories (default 10). sobol: base sample size N (default 128)."),
         set: setArg,
+        scenario: scenarioArg,
       },
     },
     guard(handlers.flow_sensitivity),
@@ -350,6 +369,7 @@ export function buildServer(): McpServer {
         bracket: z.tuple([z.number(), z.number()]).optional().describe("Search interval [lo, hi]; omit to auto-bracket from the base value."),
         tol: z.number().optional().describe("Convergence tolerance on |metric − target| (default 1e-6·max(1,|target|))."),
         set: setArg,
+        scenario: scenarioArg,
       },
     },
     guard(handlers.flow_solve),
@@ -367,6 +387,7 @@ export function buildServer(): McpServer {
         seed: z.number().optional().describe("Base seed; run i uses seed+i (default: the model's sim seed, else 0)."),
         series: z.array(z.string()).optional().describe("Series to band (default: the model's plot line, else every output)."),
         set: setArg,
+        scenario: scenarioArg,
       },
     },
     guard(handlers.flow_montecarlo),
@@ -384,6 +405,7 @@ export function buildServer(): McpServer {
         data: z.string().describe("Observed data as CSV/TSV text: a header row, one time column (t/time or the first), then named series columns."),
         map: z.record(z.string(), z.string()).optional().describe('Model series → dataset column, e.g. {"Infected":"I"}. Defaults to columns whose name matches a series.'),
         set: setArg,
+        scenario: scenarioArg,
       },
     },
     guard(handlers.flow_calibrate),
@@ -409,14 +431,29 @@ export function buildServer(): McpServer {
 
   server.registerTool(
     "flow_describe",
-    { title: "Describe structure", description: "Dump the model's structure as JSON: stocks, rates, vars (with deps), tables, settings, and the loop summary.", inputSchema: { model: modelArg, set: setArg } },
+    { title: "Describe structure", description: "Dump the model's structure as JSON: stocks, rates, vars (with deps), tables, settings, and the loop summary.", inputSchema: { model: modelArg, set: setArg, scenario: scenarioArg } },
     guard(handlers.flow_describe),
   );
 
   server.registerTool(
     "flow_explain",
-    { title: "Explain a model", description: "A plain-language summary of what the model is and does (stocks, knobs, flows, loops).", inputSchema: { model: modelArg, set: setArg } },
+    { title: "Explain a model", description: "A plain-language summary of what the model is and does (stocks, knobs, flows, loops).", inputSchema: { model: modelArg, set: setArg, scenario: scenarioArg } },
     guard(handlers.flow_explain),
+  );
+
+  server.registerTool(
+    "flow_compare",
+    {
+      title: "Compare scenarios",
+      description: "Run the base model and each `scenario` line (default: all), reduce every run to the same metrics, and return one row per scenario with deltas vs base. The tabular answer to \"what does this policy change?\".",
+      inputSchema: {
+        model: modelArg,
+        metrics: z.array(metricArg).describe("Metrics to read from every run, e.g. [\"final:Cash\", \"min:Cash\"]."),
+        scenarios: z.array(z.string()).optional().describe("Scenario names to include (default: every scenario in the model). Base is always first."),
+        set: setArg,
+      },
+    },
+    guard(handlers.flow_compare),
   );
 
   server.registerTool(

@@ -10,6 +10,15 @@ import { validateModel } from "./validate.js";
 // reference to a freshly-created internal stock and register that stock's
 // initial value + derivative. After this pass the model is an ordinary
 // stock-and-flow system that the integrator handles uniformly (incl. RK4).
+//
+// PREVIOUS / DELAY_FIXED are stateful too, but they are *not* differential: the
+// output at step i is the input sampled exactly n steps earlier (a pipeline, not
+// an exponential lag). They can't be written as stocks, so each call site becomes
+// a FixedDelay record: the input becomes an internal aux (evaluated with the
+// other vars), and the output is a plain scope slot that the integrator fills
+// from a per-delay ring buffer before each step (sample-and-hold across RK4
+// sub-stages). The integrator is shared by every backend, so the TS and WASM
+// paths agree by construction — the backends only ever read the output slot.
 
 export interface StateVar {
   name: string;
@@ -26,13 +35,34 @@ export interface CompiledVar {
   kind: VarDecl["kind"];
   expr: Expr;
   unit?: string | undefined;
+  /** Compiler-generated (a fixed delay's sampled input) — hidden from the
+   *  influence graph and outputs, like delay#N stocks. */
+  isInternal?: boolean;
+}
+
+/** One `previous()` / `delay_fixed()` call site after rewriting. */
+export interface FixedDelay {
+  /** Output name (`prev#N` / `fixed#N`), referenced where the call was. */
+  name: string;
+  /** Name of the internal aux that samples the input each step. */
+  inputVar: string;
+  /** The rewritten input expression (for the influence graph). */
+  inputExpr: Expr;
+  /** Delay length in time units; null ⇒ exactly one step (`previous`). Read once at t=start. */
+  delayExpr: Expr | null;
+  /** Output before enough history exists; defaults to the input's initial value. */
+  initExpr: Expr;
 }
 
 export interface Compiled {
   /** Integration state, in order: user stocks first, then internal delay stocks. */
   state: StateVar[];
-  /** Aux/flow/param vars in evaluation (topological) order, exprs rewritten. */
+  /** Aux/flow/param vars in evaluation (topological) order, exprs rewritten.
+   *  Fixed-delay input samplers come last (they depend on everything else and
+   *  nothing instantaneous depends on them). */
   order: CompiledVar[];
+  /** Sample-and-hold delays, in creation order (see FixedDelay). */
+  fixed: FixedDelay[];
   tables: Map<string, TableDecl>;
   /** Names of the user-authored stocks (for default plotting / labelling). */
   userStocks: string[];
@@ -48,10 +78,14 @@ export function compile(inModel: Model): Compiled {
   // whole engine) deals only with scalar names — see scalarize.ts.
   const model = scalarize(inModel);
   const internal: StateVar[] = [];
+  const fixed: FixedDelay[] = [];
   let counter = 0;
   const fresh = (): string => `delay#${counter++}`;
+  let fixedCounter = 0;
+  const freshFixed = (prefix: string): string => `${prefix}#${fixedCounter++}`;
 
-  const rewrite = (e: Expr): Expr => rewriteExpr(e, internal, fresh, rewrite);
+  const ctx: RewriteCtx = { internal, fixed, fresh, freshFixed };
+  const rewrite = (e: Expr): Expr => rewriteExpr(e, ctx, rewrite);
 
   const order: CompiledVar[] = model.order.map((v) => ({
     name: v.name,
@@ -68,12 +102,25 @@ export function compile(inModel: Model): Compiled {
     unit: s.unit,
   }));
 
+  // The samplers go after every user var: a fixed delay's input may depend on
+  // anything, and nothing reads a sampler instantaneously (the integrator does,
+  // at the step boundary). Order among samplers doesn't matter for the same reason.
+  const samplers: CompiledVar[] = fixed.map((f) => ({ name: f.inputVar, kind: "aux", expr: f.inputExpr, isInternal: true }));
+
   return {
     state: [...userState, ...internal],
-    order,
+    order: [...order, ...samplers],
+    fixed,
     tables: model.tables,
     userStocks: model.stocks.map((s) => s.name),
   };
+}
+
+interface RewriteCtx {
+  internal: StateVar[];
+  fixed: FixedDelay[];
+  fresh: () => string;
+  freshFixed: (prefix: string) => string;
 }
 
 // ── AST helpers ─────────────────────────────────────────────────────────────
@@ -88,12 +135,8 @@ const bin = (op: "+" | "-" | "*" | "/", left: Expr, right: Expr): Expr => ({
   loc: L0,
 });
 
-function rewriteExpr(
-  e: Expr,
-  internal: StateVar[],
-  fresh: () => string,
-  recur: (e: Expr) => Expr,
-): Expr {
+function rewriteExpr(e: Expr, ctx: RewriteCtx, recur: (e: Expr) => Expr): Expr {
+  const { internal, fresh } = ctx;
   switch (e.kind) {
     case "num":
     case "ident":
@@ -117,6 +160,10 @@ function rewriteExpr(
           return makeDelayN(args[0]!, args[1]!, 1, internal, fresh);
         case "delay3":
           return makeDelayN(args[0]!, args[1]!, 3, internal, fresh);
+        case "previous":
+          return makeFixed("prev", args[0]!, null, args[1], ctx);
+        case "delay_fixed":
+          return makeFixed("fixed", args[0]!, args[1]!, args[2], ctx);
         default:
           return { ...e, args };
       }
@@ -169,6 +216,25 @@ function makeDelayN(input: Expr, tau: Expr, n: number, internal: StateVar[], fre
     out = outflow;
   }
   return out;
+}
+
+// previous(X, init?) / delay_fixed(X, n, init?): register a sample-and-hold
+// delay and return a reference to its output slot. The input is hoisted into an
+// internal aux so the integrator can read its value each step without
+// re-evaluating an arbitrary expression itself.
+function makeFixed(prefix: string, input: Expr, delay: Expr | null, init: Expr | undefined, ctx: RewriteCtx): Expr {
+  const name = ctx.freshFixed(prefix);
+  const inputVar = `${name}.in`;
+  ctx.fixed.push({
+    name,
+    inputVar,
+    inputExpr: input,
+    delayExpr: delay,
+    // Default init: the input's own value at t=start, so a delay on a steady
+    // input starts in equilibrium (same convention as smooth()).
+    initExpr: init ?? id(inputVar),
+  });
+  return id(name);
 }
 
 /** Free variables actually used after rewriting (for influence-graph building). */

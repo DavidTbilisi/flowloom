@@ -106,15 +106,21 @@ class Parser {
       }
       if (this.peek().type === "lbracket") {
         this.next(); // consume [
-        const sub = this.next();
-        if (sub.type !== "ident") {
-          throw new ExprSyntaxError(`expected a dimension or element name in ${t.value}[…]`, this.loc(sub));
+        const subs: string[] = [];
+        for (;;) {
+          const sub = this.next();
+          if (sub.type !== "ident") {
+            throw new ExprSyntaxError(`expected a dimension or element name in ${t.value}[…]`, this.loc(sub));
+          }
+          subs.push(sub.value);
+          if (this.peek().type === "comma") { this.next(); continue; }
+          break;
         }
         const close = this.next();
         if (close.type !== "rbracket") {
-          throw new ExprSyntaxError(`expected ']' after ${t.value}[${sub.value}`, this.loc(close));
+          throw new ExprSyntaxError(`expected ']' after ${t.value}[${subs.join(", ")}`, this.loc(close));
         }
-        return { kind: "index", name: t.value, sub: sub.value, loc: this.loc(t) };
+        return { kind: "index", name: t.value, subs, loc: this.loc(t) };
       }
       return { kind: "ident", name: t.value, loc: this.loc(t) };
     }
@@ -133,6 +139,13 @@ class Parser {
 /** Parse one expression string into an AST. Throws ExprSyntaxError on failure. */
 export function parseExpr(src: string, line: number): Expr {
   return new Parser(line, src).parse();
+}
+
+/** The expressions of a declaration: its per-element list if present, else the
+ *  single expr. The one accessor every consumer should use so per-element values
+ *  (`name[dim] = a, b`) are never silently reduced to element 0. */
+export function declExprs(single: Expr, list?: Expr[]): Expr[] {
+  return list ?? [single];
 }
 
 /** All identifier names referenced by an expression (variables + function names excluded). */
@@ -155,9 +168,58 @@ export function freeVars(e: Expr, out: Set<string> = new Set()): Set<string> {
       freeVars(e.right, out);
       break;
     case "call":
-      // function name is not a free variable; its args may be
-      for (const a of e.args) freeVars(a, out);
+      // function name is not a free variable; its args may be. sum()'s trailing
+      // arguments are axis (dimension) labels, not value references — skip them.
+      if (e.name.toLowerCase() === "sum") {
+        if (e.args[0]) freeVars(e.args[0], out);
+      } else {
+        for (const a of e.args) freeVars(a, out);
+      }
       break;
+  }
+  return out;
+}
+
+/**
+ * Builtins whose first argument is read *across a time boundary*: the value they
+ * return at step i depends on the argument at earlier steps only, never on its
+ * value at step i. They are therefore legitimate ways to break an algebraic loop
+ * (`a = smooth(b, τ)`, `b = a + 1` is fine — that's what a delay is for), so the
+ * parser's instantaneous-dependency sort must not see through them. Mirrors the
+ * engine's STATEFUL set (compile.ts rewrites these); kept here so src/lang stays
+ * engine-free.
+ */
+export const TIME_CROSSING = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3", "previous", "delay_fixed"]);
+
+/** Names an expression depends on *instantaneously* (this step). Like freeVars,
+ *  but the first argument of a time-crossing builtin is skipped — its other
+ *  arguments (a time constant, an initial value) are still instantaneous. */
+export function instantVars(e: Expr, out: Set<string> = new Set()): Set<string> {
+  switch (e.kind) {
+    case "num":
+      break;
+    case "ident":
+    case "index":
+      out.add(e.name);
+      break;
+    case "unary":
+      instantVars(e.arg, out);
+      break;
+    case "binary":
+      instantVars(e.left, out);
+      instantVars(e.right, out);
+      break;
+    case "call": {
+      const name = e.name.toLowerCase();
+      if (name === "sum") {
+        if (e.args[0]) instantVars(e.args[0], out);
+      } else if (TIME_CROSSING.has(name)) {
+        for (const a of e.args.slice(1)) instantVars(a, out);
+      } else {
+        for (const a of e.args) instantVars(a, out);
+      }
+      break;
+    }
   }
   return out;
 }
@@ -170,7 +232,7 @@ export function printExpr(e: Expr): string {
     case "ident":
       return e.name;
     case "index":
-      return `${e.name}[${e.sub}]`;
+      return `${e.name}[${e.subs.join(", ")}]`;
     case "unary":
       return `${e.op}${wrap(e.arg, e)}`;
     case "binary":

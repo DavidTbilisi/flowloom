@@ -1,5 +1,5 @@
 import { parseModel, ModelError, type Model, type Diagnostic } from "../lang/index.js";
-import { simulate, analyzeLoops, monteCarlo, type SimResult, type LoopReport, type EnsembleResult, type Dataset } from "../engine/index.js";
+import { simulate, analyzeLoops, monteCarlo, applyScenario, BASE_SCENARIO, type SimResult, type LoopReport, type EnsembleResult, type Dataset } from "../engine/index.js";
 
 // ── Application state ────────────────────────────────────────────────────────
 // One observable store. Components subscribe; setters notify. The animation
@@ -24,8 +24,10 @@ export interface Overlay {
   bands?: EnsembleResult;
   /** Observed reference series to fit/compare against (persists across edits). */
   data?: Dataset;
-  /** A second model's run, overlaid for comparison (persists across edits). */
-  compare?: { source: string; result: SimResult };
+  /** A second model's run, overlaid for comparison (persists across edits).
+   *  `label` names it in the plot controls ("base" when it is the active
+   *  scenario's reference run, else the loaded file). */
+  compare?: { source: string; result: SimResult; label?: string };
 }
 
 type Listener = () => void;
@@ -49,6 +51,9 @@ export class Store {
   visible = new Set<string>();
   /** Auxiliary series drawn over the plot (Monte Carlo bands, data, comparison). */
   overlay: Overlay = {};
+  /** The active `scenario` line applied on top of the text ("base" = none). UI
+   *  state, like the overlays: the text stays canonical, the choice is a view. */
+  scenario: string = BASE_SCENARIO;
   /** True while a large model is being simulated in the worker. */
   computing = false;
 
@@ -128,6 +133,15 @@ export class Store {
     this.notify();
   }
 
+  /** Pick a scenario and re-run. Selecting a real scenario also overlays the
+   *  base run (dashed) so the policy's effect is visible at once; going back to
+   *  base drops that overlay (a file comparison is left alone). */
+  setScenario(name: string) {
+    this.scenario = name || BASE_SCENARIO;
+    if (this.overlay.compare?.label === "base") this.overlay.compare = undefined;
+    this.build(this.source);
+  }
+
   /** Run a Monte Carlo ensemble off the main thread (falls back to in-process). */
   runEnsemble(opts: { runs: number; seed?: number; series?: string[] }): Promise<EnsembleResult> {
     const source = this.source;
@@ -162,13 +176,22 @@ export class Store {
     const gen = ++this.gen; // invalidate any in-flight worker result
     try {
       const model = parseModel(source);
+      // The scenario line may have been renamed/removed by the edit — fall back
+      // to base rather than failing the whole build.
+      if (this.scenario !== BASE_SCENARIO && !model.scenarios.has(this.scenario)) this.scenario = BASE_SCENARIO;
+      const scenario = this.scenario !== BASE_SCENARIO ? this.scenario : undefined;
+      applyScenario(model, scenario);
       if (isLarge(model)) {
         // keep the UI responsive: simulate AND analyze loops in the worker
         this.computing = true;
         this.run = { ok: true, model, diagnostics: model.diagnostics };
-        this.simulateInWorker(source, model, gen);
+        this.simulateInWorker(source, model, gen, scenario);
+        if (this.overlay.compare?.label === "base") this.overlay.compare = undefined; // too big to run twice on the main thread
       } else {
         this.applyResult(model, simulate(model), analyzeLoops(model));
+        // Reference run for the active scenario: the same text, un-overridden.
+        if (scenario) this.overlay.compare = { source, result: simulate(parseModel(source)), label: "base" };
+        else if (this.overlay.compare?.label === "base") this.overlay.compare = undefined;
       }
     } catch (e) {
       this.computing = false;
@@ -189,7 +212,7 @@ export class Store {
     this.playing = false;
   }
 
-  private simulateInWorker(source: string, model: Model, gen: number) {
+  private simulateInWorker(source: string, model: Model, gen: number, scenario?: string) {
     try {
       if (!this.worker) {
         this.worker = new Worker(new URL("./sim-worker.ts", import.meta.url), { type: "module" });
@@ -202,7 +225,7 @@ export class Store {
           this.notifyFrame();
         };
       }
-      this.worker.postMessage({ gen, source });
+      this.worker.postMessage({ gen, source, ...(scenario ? { scenario } : {}) });
     } catch {
       // no worker available (or it failed to start) — fall back to a sync run
       this.applyResult(model, simulate(model), analyzeLoops(model));

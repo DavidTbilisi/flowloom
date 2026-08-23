@@ -33,9 +33,14 @@ dynamics, and check the numbers. Validate, don't vibe.
 
 - **A real language** — `stock`, `change()`, `flow`, `aux`, `param`, `table`, with a
   safe AST interpreter (no `eval`). See [`docs/language.md`](docs/language.md).
+  Plus **`switch`** (a two-state policy toggle that sensitivity tests off→on) and
+  **`scenario`** (a named set of overrides kept *in the text* — `compare` tabulates
+  base vs every scenario).
 - **A proper engine** — Euler and classical **RK4** integration; `step`/`pulse`/
   `ramp` test inputs; graphical **lookup tables**; first- and third-order
-  **delays and smoothing** (`smooth`, `delay1`, `delay3`, …). Expressions compile
+  **delays and smoothing** (`smooth`, `delay1`, `delay3`, …), and **fixed pipeline
+  delays** for discrete-period models (`previous`, `delay_fixed` — a monthly budget
+  is a map, not an ODE; `sim method=euler dt=1`). Expressions compile
   to slots in a reused typed array (no `eval`), and **very large models run in a
   Web Worker with a generated WebAssembly backend** so the UI never blocks.
 - **Automatic feedback-loop analysis** — a signed influence graph finds every
@@ -90,6 +95,8 @@ flowloom explain model.flow                  # plain-language summary (stocks, k
 flowloom describe model.flow --json          # full structure (stocks/rates/vars/deps/loops)
 flowloom loops   model.flow --json           # feedback loops with R/B polarity
 flowloom check   model.flow                  # validate; non-zero exit + line/col diagnostics
+flowloom compare model.flow --metric final:Cash,min:Cash   # base vs every `scenario` line
+flowloom run     model.flow --scenario recovery            # run one scenario (then --set on top)
 flowloom reference --json                     # the language + builtins catalog
 ```
 
@@ -98,8 +105,8 @@ flowloom reference --json                     # the language + builtins catalog
   canonical catalog (`npm run gen:llms`), so it never drifts.
 - **MCP server:** `flowloom-mcp` exposes the engine to Claude Code / Claude Desktop
   as tools — `flow_run`, `flow_check`, `flow_loops`, `flow_describe`, `flow_explain`,
-  `flow_examples` — plus a `flow://reference` resource carrying the guide. Each tool
-  takes the model as text. Register it as a stdio MCP server pointing at
+  `flow_compare`, `flow_examples`, … — plus a `flow://reference` resource carrying the
+  guide. Each tool takes the model as text (plus optional `set` / `scenario` what-ifs). Register it as a stdio MCP server pointing at
   `dist-cli/mcp.js` (build with `npm run build:cli`).
 
 ## Tests are the contract
