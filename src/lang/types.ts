@@ -191,6 +191,10 @@ export interface TableDecl {
   /** Step-hold instead of piecewise-linear: the value at x is the last point at
    *  or before x (a sampled series holds between samples). */
   hold?: true;
+  /** Continue the slope of the end segment past the ends instead of clamping.
+   *  Off by default — a curve says nothing outside the range it was fitted over,
+   *  and clamping is the honest answer there. */
+  extrapolate?: true;
   loc: Loc;
 }
 

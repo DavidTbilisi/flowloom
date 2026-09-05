@@ -62,7 +62,8 @@ function varLine(v: VarDecl): string {
 }
 
 function tableLine(t: TableDecl): string {
-  return `table ${t.name} = ${t.points.map(([x, y]) => `(${x}, ${y})`).join(" ")}`;
+  const how = `${t.hold ? " hold" : ""}${t.extrapolate ? " extrapolate" : ""}`;
+  return `table ${t.name} = ${t.points.map(([x, y]) => `(${x}, ${y})`).join(" ")}${how}`;
 }
 
 /**

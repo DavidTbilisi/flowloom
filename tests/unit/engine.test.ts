@@ -213,3 +213,125 @@ describe("non-negative stocks (`>= 0`)", () => {
   });
 });
 
+
+describe("lookup tables — how the curve is read past its ends", () => {
+  // CONTRACT: a table clamps by default, because a curve fitted over an observed
+  // range says nothing outside it. `extrapolate` opts into continuing the slope;
+  // `hold` steps instead of interpolating.
+  const run = (decl: string, x: number) => {
+    const src = `${decl}
+stock S = 0
+change(S) = 0
+aux Y = curve(${x})
+sim dt=1 to=1 method=euler
+plot Y`;
+    return simulate(parseModel(src)).series.get("Y")!.at(-1)!;
+  };
+  const LINEAR = "table curve = (0,0) (10,10) (20,30)";
+
+  it("interpolates between points and clamps outside", () => {
+    expect(run(LINEAR, 5)).toBeCloseTo(5, 9);
+    expect(run(LINEAR, 15)).toBeCloseTo(20, 9);
+    expect(run(LINEAR, -100)).toBe(0);
+    expect(run(LINEAR, 100)).toBe(30);
+  });
+
+  it("continues the end slope when asked", () => {
+    const t = `${LINEAR} extrapolate`;
+    expect(run(t, 5)).toBeCloseTo(5, 9);        // unchanged inside
+    expect(run(t, -5)).toBeCloseTo(-5, 9);      // first segment's slope of 1
+    expect(run(t, 25)).toBeCloseTo(40, 9);      // last segment's slope of 2
+  });
+
+  it("steps rather than interpolating under hold", () => {
+    const t = "table curve = (0,0) (10,5) (20,9) hold";
+    expect(run(t, 4)).toBe(0);
+    expect(run(t, 14)).toBe(5);
+    expect(run(t, 99)).toBe(9);                 // still clamped past the end
+  });
+
+  it("refuses the contradiction, and an unknown modifier", () => {
+    expect(() => parseModel(`${LINEAR} hold extrapolate\nstock S = 0\nchange(S) = 0\nsim dt=1 to=1`))
+      .toThrow(/'hold' and 'extrapolate' contradict each other/);
+    expect(() => parseModel(`${LINEAR} smooth\nstock S = 0\nchange(S) = 0\nsim dt=1 to=1`))
+      .toThrow(/don't understand 'smooth'/);
+  });
+
+  it("round-trips the modifiers through fmt", async () => {
+    const { printModel } = await import("../../src/lang/index.js");
+    for (const how of ["", " hold", " extrapolate"]) {
+      const src = `${LINEAR}${how}\nstock S = 0\nchange(S) = 0\naux Y = curve(5)\nsim dt=1 to=1 method=euler`;
+      const printed = printModel(parseModel(src));
+      expect(printed).toContain(`table curve = (0, 0) (10, 10) (20, 30)${how}`);
+      expect(printModel(parseModel(printed))).toBe(printed);
+    }
+  });
+});
+
+describe("initial() — the value at t = start, held", () => {
+  // CONTRACT: a stock with a zero rate *is* an initial value, which is why this
+  // is a compile-time rewrite like every other stateful builtin rather than a
+  // special case in the integrator.
+  const run = (src: string, name: string) => simulate(parseModel(src)).series.get(name)!;
+
+  const GROWTH = `stock Pop = 100
+param growth = 0.05
+change(Pop) = growth * Pop
+aux Start = initial(Pop)
+aux Ratio = Pop / initial(Pop)
+sim dt=1 to=10 method=euler
+plot Pop Start Ratio`;
+
+  it("holds the starting value for the whole run", () => {
+    const start = run(GROWTH, "Start");
+    expect(new Set(start).size).toBe(1);
+    expect(start[0]).toBe(100);
+  });
+
+  it("expresses growth relative to where it began", () => {
+    const pop = run(GROWTH, "Pop");
+    const ratio = run(GROWTH, "Ratio");
+    for (let i = 0; i < pop.length; i++) expect(ratio[i]).toBeCloseTo(pop[i]! / 100, 9);
+  });
+
+  it("captures an expression, not just a stock", () => {
+    const src = `stock A = 3
+stock B = 4
+change(A) = 1
+change(B) = 1
+aux Diag = initial(sqrt(A * A + B * B))
+sim dt=1 to=5 method=euler
+plot Diag`;
+    expect(new Set(run(src, "Diag"))).toEqual(new Set([5]));
+  });
+
+  it("respects `start`, not t=0", () => {
+    const src = `stock T = 0
+change(T) = 0
+aux Began = initial(t)
+sim dt=1 start=7 to=12 method=euler
+plot Began`;
+    expect(run(src, "Began")[0]).toBe(7);
+  });
+
+  it("breaks an algebraic loop the way a delay does", () => {
+    // `a` depends on `b`'s *starting* value, not its current one, so this is not
+    // instantaneous self-reference.
+    const src = `stock S = 2
+change(S) = 0
+aux a = initial(b)
+aux b = S + 1
+sim dt=1 to=3 method=euler
+plot a b`;
+    expect(run(src, "a")[0]).toBe(3);
+  });
+
+  it("says so when the initial value is genuinely circular", () => {
+    const src = `stock S = 0
+change(S) = 0
+aux a = initial(b)
+aux b = a + 1
+sim dt=1 to=3 method=euler`;
+    expect(simulate(parseModel(src)).note).toMatch(/did not settle/);
+  });
+});

@@ -18,6 +18,7 @@ export function wasmAvailable(): boolean {
 function imports(program: WasmProgram): WebAssembly.Imports {
   const tp = program.tablePoints;
   const th = program.tableHold;
+  const tx = program.tableExtrapolate;
   return {
     e: {
       sin: Math.sin, cos: Math.cos, tan: Math.tan, exp: Math.exp,
@@ -33,7 +34,7 @@ function imports(program: WasmProgram): WebAssembly.Imports {
         if (t <= t0) return 0;
         return slope * (Math.min(t, t1) - t0);
       },
-      lookup: (id: number, x: number) => lookupTable(tp[id]!, x, th[id] === true),
+      lookup: (id: number, x: number) => lookupTable(tp[id]!, x, th[id] === true, tx[id] === true),
       // Same functions the TS backend calls ⇒ bit-identical seeded randomness.
       runif, rnorm, rlnorm, rtri, rexp, rpois, rtnorm,
     },

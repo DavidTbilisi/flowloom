@@ -187,13 +187,16 @@ export function freeVars(e: Expr, out: Set<string> = new Set()): Set<string> {
 /**
  * Builtins whose first argument is read *across a time boundary*: the value they
  * return at step i depends on the argument at earlier steps only, never on its
- * value at step i. They are therefore legitimate ways to break an algebraic loop
+ * value at step i. `initial()` is the extreme case — it reads step 0 and nothing
+ * after — so it breaks an algebraic loop the same way a delay does, and a
+ * genuinely circular *initial* value is caught where every other one is, by
+ * `initStateInto` failing to settle. They are therefore legitimate ways to break an algebraic loop
  * (`a = smooth(b, τ)`, `b = a + 1` is fine — that's what a delay is for), so the
  * parser's instantaneous-dependency sort must not see through them. Mirrors the
  * engine's STATEFUL set (compile.ts rewrites these); kept here so src/lang stays
  * engine-free.
  */
-export const TIME_CROSSING = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3", "previous", "delay_fixed"]);
+export const TIME_CROSSING = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3", "previous", "delay_fixed", "initial"]);
 
 /** Names an expression depends on *instantaneously* (this step). Like freeVars,
  *  but the first argument of a time-crossing builtin is skipped — its other

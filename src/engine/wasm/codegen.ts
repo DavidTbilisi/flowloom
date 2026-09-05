@@ -22,6 +22,7 @@ export interface WasmProgram {
   tablePoints: ReadonlyArray<readonly [number, number]>[];
   /** Per table id: step-hold (a `data` series) rather than interpolate. */
   tableHold: boolean[];
+  tableExtrapolate: boolean[];
   /** f64 slots in the scope vector + rates region (for memory sizing). */
   totalSlots: number;
   scopeSlots: number;
@@ -32,6 +33,7 @@ export function compileWasm(plan: SimPlan): WasmProgram {
   const tableIds = new Map<string, number>();
   const tablePoints: ReadonlyArray<readonly [number, number]>[] = [];
   const tableHold: boolean[] = [];
+  const tableExtrapolate: boolean[] = [];
   const tableId = (name: string): number => {
     let id = tableIds.get(name);
     if (id === undefined) {
@@ -40,6 +42,7 @@ export function compileWasm(plan: SimPlan): WasmProgram {
       const t = plan.compiled.tables.get(name)!;
       tablePoints.push(t.points);
       tableHold.push(t.hold === true);
+      tableExtrapolate.push(t.extrapolate === true);
     }
     return id;
   };
@@ -159,7 +162,7 @@ export function compileWasm(plan: SimPlan): WasmProgram {
 
   const totalSlots = plan.size + plan.rateExprs.length;
   const pages = Math.max(1, Math.ceil((totalSlots * 8) / 65536));
-  return { bytes: buildModule(out, pages), tablePoints, tableHold, totalSlots, scopeSlots: plan.size };
+  return { bytes: buildModule(out, pages), tablePoints, tableHold, tableExtrapolate, totalSlots, scopeSlots: plan.size };
 }
 
 const NATIVE_UNARY: Record<string, number> = {

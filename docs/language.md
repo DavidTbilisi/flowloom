@@ -399,7 +399,23 @@ flow draining = drainCurve(Water)
 ```
 
 `x` values must strictly increase. Lookups interpolate linearly between
-breakpoints and clamp to the end values outside the defined range.
+breakpoints and **clamp** to the end values outside the defined range. Two
+trailing modifiers change that:
+
+```flow
+table demandCurve = (0,100) (10,60) (20,20) extrapolate   # continue the slope past the ends
+table taxBand     = (0,0) (20000,0.2) (50000,0.4) hold    # step, don't interpolate
+```
+
+`hold` makes the value at `x` the last point at or before it — a step function,
+the same rule a [`data`](#data-series) line gets. It was previously reachable
+only by writing a `data` line.
+
+`extrapolate` continues the slope of the end segment beyond the ends rather than
+flattening. Clamping stays the default deliberately: a curve fitted over an
+observed range says nothing outside it, and a silent extrapolation is how a
+lookup produces a confident number nobody measured. The two modifiers are
+mutually exclusive — a step-held table has no slope to continue.
 
 ## Expressions
 
@@ -497,6 +513,21 @@ feedback-loop detection.
 | `smooth3(input, τ)` | Third-order (cascaded) smoothing. |
 | `delay1(input, τ)` | First-order material delay. |
 | `delay3(input, τ)` | Third-order material delay (smoother pipeline). |
+| `initial(x)` | The value of `x` at `t = start`, held for the whole run. |
+
+`initial()` is Vensim's INITIAL. It compiles to a stock with a zero rate — which
+is exactly what an initial value is — so it is computed once by the same pass
+that resolves every other initial value, and then nothing moves it:
+
+```flow
+aux relativeGrowth = Population / initial(Population)   # 1.0 at the start, by construction
+```
+
+Without it, "where this began" had to be duplicated as a `param`, which then
+silently disagreed with the stock the next time the stock's initial value was
+edited. Because it reads `start` and nothing after, it breaks an algebraic loop
+the way a delay does — and an initial value that is genuinely circular is caught
+where every other one is, by the initialisation failing to settle.
 
 ```flow
 flow receiving = delay3(orders, leadTime)   # orders arrive after a delay

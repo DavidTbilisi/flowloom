@@ -25,6 +25,7 @@ const EXTRA_ARITY: Record<string, [number, number]> = {
   delay3: [2, 2],
   previous: [1, 2], // previous(X, init?)
   delay_fixed: [2, 3], // delay_fixed(X, length, init?)
+  initial: [1, 1], // initial(X) — X evaluated at t=start and held
   sum: [1, Infinity], // sum(X) collapses all dims; sum(X, axis, …) collapses named axes
   // `mean` exists only as an array reducer — min/max are already variadic
   // builtins and double as reducers when handed a bare subscripted name.

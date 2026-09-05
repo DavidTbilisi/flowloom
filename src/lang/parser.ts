@@ -359,12 +359,34 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
   }
 }
 
+/**
+ * `table NAME = (x,y) (x,y) … [hold] [extrapolate]`
+ *
+ * The trailing words are modifiers on how the curve is read *between* and
+ * *beyond* its points — the same shape `data … linear` already uses. `hold` was
+ * previously reachable only by writing a `data` line, and clamping past the ends
+ * was the only behaviour on offer.
+ */
 function parseTable(name: string, body: string, loc: Loc): TableDecl {
   const points: Array<[number, number]> = [];
   const re = /\(\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*\)/g;
   let mt: RegExpExecArray | null;
+  let after = 0; // end of the last match — `re.lastIndex` is back to 0 once exec returns null
   while ((mt = re.exec(body))) {
     points.push([Number(mt[1]), Number(mt[2])]);
+    after = re.lastIndex;
+  }
+  const tail = body.slice(after).trim().toLowerCase();
+  const words = tail.split(/[\s,]+/).filter(Boolean);
+  const hold = words.includes("hold");
+  const extrapolate = words.includes("extrapolate");
+  for (const w of words) {
+    if (w !== "hold" && w !== "extrapolate") {
+      throw new ExprSyntaxError(`table ${name}: don't understand '${w}' — after the points only 'hold' and 'extrapolate' are allowed`, loc);
+    }
+  }
+  if (hold && extrapolate) {
+    throw new ExprSyntaxError(`table ${name}: 'hold' and 'extrapolate' contradict each other — a step-held table has no slope to continue`, loc);
   }
   if (points.length < 2) {
     throw new ExprSyntaxError(`table ${name} needs at least two (x,y) points`, loc);
@@ -375,7 +397,7 @@ function parseTable(name: string, body: string, loc: Loc): TableDecl {
       throw new ExprSyntaxError(`table ${name} x-values must strictly increase`, loc);
     }
   }
-  return { name, points, loc };
+  return { name, points, ...(hold ? { hold: true as const } : {}), ...(extrapolate ? { extrapolate: true as const } : {}), loc };
 }
 
 /** `± tol`, `± pct%`, or `in lo..hi` — the clause that says how well a knob is
