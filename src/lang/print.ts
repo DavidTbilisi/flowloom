@@ -132,8 +132,13 @@ export function printModel(model: Model, source?: string): string {
     add(sc.loc.line, `scenario ${sc.name} ${sc.sets.map((b) => `${b.key}=${b.value}`).join(" ")}${comment(sc.doc, sc.rung)}`);
   }
   for (const e of model.expects) {
+    const scope = e.scenario ? `${e.scenario} ` : "";
+    if (e.always) {
+      add(e.loc.line, `expect ${scope}always ${printExpr(e.always)}${comment(e.doc, undefined)}`);
+      continue;
+    }
     const tol = e.tol ? ` ± ${e.tol.pct ? `${clean(e.tol.value * 100)}%` : e.tol.value}` : "";
-    add(e.loc.line, `expect ${e.scenario ? `${e.scenario} ` : ""}${e.metric} ${e.op} ${e.value}${tol}${comment(e.doc, undefined)}`);
+    add(e.loc.line, `expect ${scope}${e.metric} ${e.op} ${e.value}${tol}${comment(e.doc, undefined)}`);
   }
 
   if (source) lines.push(...sourceComments(source, model));

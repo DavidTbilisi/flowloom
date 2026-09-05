@@ -54,6 +54,7 @@ import {
   dataLines,
   datasetFromModel,
   calibrate,
+  optimize,
   REFERENCE,
   type SimResult,
   type RunSummary,
@@ -66,6 +67,7 @@ import {
   type SolveOptions,
   type EnsembleResult,
   type CalibrateResult,
+  type OptimizeResult,
   type LoopReport,
   type CompareResult,
   type PolicyResult,
@@ -115,10 +117,13 @@ interface Args {
   against: string[]; // --against Series=column mappings for calibrate
   depth?: number; // --depth N for causes/uses
   init: boolean; // --init: causes/uses — follow a stock's initial value too
+  bounds: string[]; // --bounds NAME=lo..hi for optimize
+  weights: string[]; // --weight Series=w for calibrate
+  restarts?: number; // --restarts N for optimize
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", noLoops: false, basis: false, numerics: false, write: false, init: false, columns: [], linear: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", noLoops: false, basis: false, numerics: false, write: false, init: false, columns: [], linear: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [], bounds: [], weights: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -159,6 +164,9 @@ function parseArgs(argv: string[]): Args {
       case "--seed": a.seed = Number(need(argv, ++i, arg)); break;
       case "--data": a.data = need(argv, ++i, arg); break;
       case "--against": a.against.push(...splitList(need(argv, ++i, arg))); break;
+      case "--bounds": a.bounds.push(...splitList(need(argv, ++i, arg))); break;
+      case "--weight": a.weights.push(...splitList(need(argv, ++i, arg))); break;
+      case "--restarts": a.restarts = Math.max(0, Math.floor(Number(need(argv, ++i, arg)))); break;
       default:
         if (arg.startsWith("--plot=")) a.plot.push(...splitList(arg.slice(7)));
         else if (arg.startsWith("--set=")) a.sets.push(arg.slice(6));
@@ -181,6 +189,9 @@ function parseArgs(argv: string[]): Args {
         else if (arg.startsWith("--data=")) a.data = arg.slice(7);
         else if (arg.startsWith("--against=")) a.against.push(...splitList(arg.slice(10)));
         else if (arg.startsWith("--depth=")) a.depth = Math.max(1, Math.floor(Number(arg.slice(8))));
+        else if (arg.startsWith("--bounds=")) a.bounds.push(...splitList(arg.slice(9)));
+        else if (arg.startsWith("--weight=")) a.weights.push(...splitList(arg.slice(9)));
+        else if (arg.startsWith("--restarts=")) a.restarts = Math.max(0, Math.floor(Number(arg.slice(11))));
         else if (arg !== "-" && arg.startsWith("-")) die(`unknown flag: ${arg}`);
         else rest.push(arg); // positional, including "-" for stdin
     }
@@ -878,11 +889,67 @@ async function cmdCalibrate(args: Args): Promise<void> {
       if (!Object.keys(map).length) die("calibrating against the model's own data lines needs --against Series=dataName (e.g. --against N=obs)");
       dataset = datasetFromModel(model, Object.values(map));
     }
-    r = await calibrate(model, { params: args.params, dataset, ...(Object.keys(map).length ? { map } : {}) });
+    const weights: Record<string, number> = {};
+    for (const spec of args.weights) {
+      const [series, w] = spec.split("=");
+      if (!series || w === undefined || !Number.isFinite(Number(w))) die(`--weight expects Series=number, got "${spec}"`);
+      weights[series] = Number(w);
+    }
+    r = await calibrate(model, {
+      params: args.params,
+      dataset,
+      ...(Object.keys(map).length ? { map } : {}),
+      ...(Object.keys(weights).length ? { weights } : {}),
+    });
   } catch (e) {
     die((e as Error).message);
   }
   out(args.format === "json" ? JSON.stringify(r, null, 2) : renderCalibrate(r));
+}
+
+/**
+ * `optimize` — search continuous knobs for the settings that maximise (or
+ * minimise) a payoff metric. `solve` goal-seeks one knob to a target and
+ * `calibrate` fits knobs to data; neither answers "what settings do best".
+ */
+async function cmdOptimize(args: Args): Promise<void> {
+  const model = load(args);
+  if (!args.metric) die("optimize needs --metric SPEC (e.g. final:Cash, min:Runway)");
+  const bounds: Record<string, [number, number]> = {};
+  for (const spec of args.bounds) {
+    const m = spec.match(/^([^=]+)=(-?[\d.eE+-]+)\.\.(-?[\d.eE+-]+)$/);
+    if (!m) die(`--bounds expects NAME=lo..hi, got "${spec}"`);
+    bounds[m![1]!.trim()] = [Number(m![2]), Number(m![3])];
+  }
+  let r: OptimizeResult;
+  try {
+    r = await optimize(model, {
+      metric: args.metric,
+      ...(args.params.length ? { params: args.params } : {}),
+      ...(args.goal ? { goal: args.goal } : {}),
+      ...(Object.keys(bounds).length ? { bounds } : {}),
+      ...(args.frac !== 0.1 ? { frac: args.frac } : {}),
+      ...(args.restarts !== undefined ? { restarts: args.restarts } : {}),
+      ...(args.seed !== undefined ? { seed: args.seed } : {}),
+    });
+  } catch (e) {
+    die((e as Error).message);
+  }
+  if (args.format === "json") { out(JSON.stringify(r, null, 2)); return; }
+  out(renderOptimize(r!));
+}
+
+function renderOptimize(r: OptimizeResult): string {
+  const w = Math.max(...r.explored.map((e) => e.param.length));
+  const lines = [`optimize ${r.goal}:${r.metric}   base ${fmt(r.base)} → ${fmt(r.value)}  (${r.gain >= 0 ? "+" : ""}${fmt(r.gain)})`];
+  for (const e of r.explored) {
+    const at = r.atBound?.includes(e.param) ? "  ← at the edge of its range" : "";
+    lines.push(`  ${e.param.padEnd(w)}  ${fmt(r.params[e.param]!)}   in ${fmt(e.lo)}..${fmt(e.hi)}${e.declared ? " (declared)" : ""}${at}`);
+  }
+  lines.push(`  ${r.evals} evaluation${plural(r.evals)}${r.converged ? "" : ", did not converge"}${r.restarts?.length ? `, ${r.restarts.length} restart${plural(r.restarts.length)}` : ""}`);
+  if (r.atBound?.length) lines.push(`  note: ${r.atBound.join(", ")} sits on a bound — widen the range, or accept the corner as the answer`);
+  if (r.note) lines.push(`  note: ${r.note}`);
+  return lines.join("\n");
 }
 
 /**
@@ -1011,6 +1078,16 @@ function renderExpects(r: ExpectReport, file: string): string {
       const pct = x.expect.value !== 0 ? ` (${(100 * x.off / Math.abs(x.expect.value)).toPrecision(2)} %)` : "";
       why = `  off by ${fmt(x.off)}${pct}${x.allowed ? `, allowed ${fmt(x.allowed)}` : " — add ± <tol> if that is acceptable"}`;
     }
+    // An `always` claim reports *where* it broke, which is the whole reason it
+    // exists — a reduction to one number can only say that it did.
+    if (x.expect.always && x.broke) {
+      const held = `held at ${x.broke.of - x.broke.steps}/${x.broke.of} steps`;
+      const at = x.brokeAt
+        ? `; first broke at t=${fmt(x.brokeAt.t)} with ${x.brokeAt.values.map((v) => `${v.name}=${fmt(v.value)}`).join(", ")}`
+        : "";
+      lines.push(`  ${x.pass ? "✓" : "✗"} ${claim}  ${held}${at}${x.note ? `  [${x.note}]` : ""}${x.expect.doc ? `   # ${x.expect.doc}` : ""}`);
+      continue;
+    }
     lines.push(`  ${x.pass ? "✓" : "✗"} ${claim}  ${Number.isFinite(x.actual) ? fmt(x.actual) : "—"}${why}${x.note ? `  [${x.note}]` : ""}${x.expect.doc ? `   # ${x.expect.doc}` : ""}`);
   }
   lines.push(`${file}: ${r.passed} passed, ${r.failed} failed  (${r.scenarios.length} run${r.scenarios.length === 1 ? "" : "s"})`);
@@ -1019,7 +1096,7 @@ function renderExpects(r: ExpectReport, file: string): string {
 
 async function cmdTest(args: Args): Promise<void> {
   const model = load(args);
-  if (!model.expects.length) die("the model declares no `expect` lines — add e.g. `expect final:Cash > 0` or `expect recovery final:netWorth == 493370 ± 1%`");
+  if (!model.expects.length) die("the model declares no `expect` lines — add e.g. `expect final:Cash > 0`, `expect always Inventory >= 0`, or `expect recovery final:netWorth == 493370 ± 1%`");
   let r: ExpectReport;
   try { r = await runExpects(model, args.scenarios); } catch (e) { die((e as Error).message); }
   if (!r.results.length) die(`no expect line is under ${args.scenarios.map((x) => `'${x}'`).join(", ")}`);
@@ -1103,7 +1180,9 @@ usage:
   flowloom sensitivity <model.flow> --metric SPEC [--param a,b] [--frac F] [--method ofat|morris|sobol] [--samples N] [--json]
   flowloom solve    <model.flow> --param P --metric SPEC --target N [--bracket A..B] [--json]
   flowloom montecarlo <model.flow> [--runs N] [--seed N] [--plot a,b] [--json]
-  flowloom calibrate <model.flow> --param a,b --data obs.csv [--against S=col] [--json]
+  flowloom calibrate <model.flow> --param a,b --data obs.csv [--against S=col] [--weight S=2] [--json]
+  flowloom optimize  <model.flow> --metric max:Profit --param a,b   best settings for a payoff
+                                  [--goal max|min] [--bounds a=1..9] [--restarts 3] [--json]
                                              or, with no --data, against the model's own 'data' lines: --against S=dataName
   flowloom data     <obs.csv> [--column a,b] [--time COL] [--unit U] [--linear]
                                              print the CSV as 'data NAME = (t, v) …' lines to paste into a model
@@ -1122,6 +1201,7 @@ usage:
   flowloom diff     <before.flow> <after.flow> [--scenario a,b] [--tol T] [--no-loops] [--json]
                                              did the edit change the numbers? every series under base + every
                                              shared scenario, plus the live-loop census; non-zero exit if so
+  flowloom optimize <model.flow> --metric max:Profit --param a,b  best settings for a payoff [--bounds a=1..9] [--restarts 3]
   flowloom leverage <model.flow> --metric SPEC [--json]
                                              the model's levers on Meadows' ladder (params, switches,
                                              scenarios tagged '# @rung N'), each measured on the metric
@@ -1167,6 +1247,7 @@ examples:
   flowloom compare budget.flow --metric final:Cash,min:Cash
   flowloom policies budget.flow --metric min:Cash --target 0 --cost separate=2
   flowloom leverage budget.flow --metric min:Cash
+  flowloom optimize budget.flow --metric max:final:Cash --param pay,save --restarts 3
   flowloom test budget.flow
   flowloom data observed.csv --column income --unit GEL >> budget.flow
   flowloom diff budget-before.flow budget.flow
@@ -1195,6 +1276,7 @@ async function main(): Promise<void> {
     case "solve": await cmdSolve(args); break;
     case "montecarlo": await cmdMonteCarlo(args); break;
     case "calibrate": await cmdCalibrate(args); break;
+    case "optimize": await cmdOptimize(args); break;
     case "scenarios": cmdScenarios(args); break;
     case "compare": await cmdCompare(args); break;
     case "policies": await cmdPolicies(args); break;

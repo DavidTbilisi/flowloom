@@ -45,6 +45,7 @@ import {
   renderTree,
   documentModel,
   calibrate,
+  optimize,
   REFERENCE,
   type EnsembleResult,
 } from "./engine/index.js";
@@ -194,8 +195,8 @@ export const handlers = {
   },
 
   async flow_calibrate(
-    { model, params, data, map, set, scenario }:
-      { model: string; params: string[]; data?: string; map?: Record<string, string>; set?: string[]; scenario?: string },
+    { model, params, data, map, weights, set, scenario }:
+      { model: string; params: string[]; data?: string; map?: Record<string, string>; weights?: Record<string, number>; set?: string[]; scenario?: string },
   ): Promise<ToolResult> {
     const m = loadModel(model, set, scenario);
     let dataset;
@@ -204,7 +205,7 @@ export const handlers = {
       if (!map || !Object.keys(map).length) throw new Error("without `data` text, calibrate fits against the model's own `data` lines — pass map: { modelSeries: dataName }");
       dataset = datasetFromModel(m, Object.values(map));
     }
-    const r = await calibrate(m, { params, dataset, ...(map ? { map } : {}) });
+    const r = await calibrate(m, { params, dataset, ...(map ? { map } : {}), ...(weights ? { weights } : {}) });
     return text(r);
   },
 
@@ -226,6 +227,19 @@ export const handlers = {
 
   flow_describe({ model, set, scenario }: { model: string; set?: string[]; scenario?: string }): ToolResult {
     return text(describeModel(loadModel(model, set, scenario)));
+  },
+
+  async flow_optimize(
+    { model, metric, params, goal, bounds, restarts, set, scenario }:
+      { model: string; metric: string; params?: string[]; goal?: "max" | "min"; bounds?: Record<string, [number, number]>; restarts?: number; set?: string[]; scenario?: string },
+  ): Promise<ToolResult> {
+    return text(await optimize(loadModel(model, set, scenario), {
+      metric,
+      ...(params?.length ? { params } : {}),
+      ...(goal ? { goal } : {}),
+      ...(bounds && Object.keys(bounds).length ? { bounds } : {}),
+      ...(restarts !== undefined ? { restarts } : {}),
+    }));
   },
 
   flow_causes({ model, name, depth, init }: { model: string; name: string; depth?: number; init?: boolean }): ToolResult {
@@ -417,7 +431,7 @@ The authoring loop:
 3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops read along the run; with a metric, ranked by knockout; basis:true for the shortest independent loop set — the rank-many loops every other loop is built from) — to understand an existing model before changing it.
 4. Before you EDIT a name you did not write: flow_uses tells you everything that reads it (what your change will move), flow_causes tells you what feeds it (why it is where it is), and flow_document does both for every name at once. Signed, so the tree says which direction each edge pushes.
 
-Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (uncertainty bands — samples every 'param … ± tol' / 'in lo..hi' once per run, plus the RNG seed; if no param declares a range the bands on a deterministic model are flat and the result says so), flow_calibrate (fit params to observed data — CSV text, or the model's own 'data' lines), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
+Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (uncertainty bands — samples every 'param … ± tol' / 'in lo..hi' once per run, plus the RNG seed; if no param declares a range the bands on a deterministic model are flat and the result says so), flow_calibrate (fit params to observed data — CSV text, or the model's own 'data' lines; per-series weights when one series has 500 observations and another 5), flow_optimize (the settings that maximise or minimise a payoff metric — a bounded LOCAL search, so pass restarts and read the note), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
 
 Discrete-period models (monthly, yearly): use 'sim method=map dt=1' (stock(t+dt) = stock(t) + change(t); change() is a per-step increment in the stock's own units, so no x dt bookkeeping), previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
@@ -553,12 +567,13 @@ export function buildServer(): McpServer {
     {
       title: "Calibrate to data",
       description:
-        "Fit model params to an observed time series (CSV/TSV text) by minimising normalised RMSE (derivative-free Nelder–Mead). Returns the fitted params, the starting values, and the achieved fit per series.",
+        "Fit model params to an observed time series (CSV/TSV text) by minimising normalised RMSE (bounded, derivative-free Nelder–Mead — a param's declared `± / in` range is a box the fit may not leave). Returns the fitted params, the starting values, the achieved fit per series, and any param sitting on a bound.",
       inputSchema: {
         model: modelArg,
         params: z.array(z.string()).describe("Params (or stock inits) to fit."),
         data: z.string().optional().describe("Observed data as CSV/TSV text: a header row, one time column (t/time or the first), then named series columns. Omit to fit against the model's own `data` lines (then `map` names which: { modelSeries: dataName })."),
         map: z.record(z.string(), z.string()).optional().describe('Model series → dataset column, e.g. {"Infected":"I"}. Defaults to columns whose name matches a series.'),
+        weights: z.record(z.string(), z.number()).optional().describe('Per-series weight in the summed residual (default 1 each). The residual sums NORMALISED RMSEs, so a 5-observation series counts as much as a 500-observation one until you say otherwise, e.g. {"Infected": 3}.'),
         set: setArg,
         scenario: scenarioArg,
       },
@@ -630,6 +645,25 @@ export function buildServer(): McpServer {
     "flow_describe",
     { title: "Describe structure", description: "Dump the model's structure as JSON: stocks, rates, vars (with deps), tables, settings, and the loop summary.", inputSchema: { model: modelArg, set: setArg, scenario: scenarioArg } },
     guard(handlers.flow_describe),
+  );
+
+  server.registerTool(
+    "flow_optimize",
+    {
+      title: "Optimise a payoff",
+      description: "Search continuous knobs for the settings that maximise (or minimise) a metric. flow_solve goal-seeks ONE knob to a target and flow_calibrate fits knobs to data; this is the \"what settings do best\" question neither answers. Bounded Nelder–Mead: a knob's declared `± / in` range is the search box and is never widened, and a knob without one gets ±50% of its base value. It is a LOCAL search — pass restarts and read the note, because a model with competing loops has local optima. Switches are excluded (they are discrete: flow_policies enumerates those exactly).",
+      inputSchema: {
+        model: modelArg,
+        metric: metricArg,
+        params: z.array(z.string()).optional().describe("Knobs to vary (default: every non-const, non-switch param)."),
+        goal: z.enum(["max", "min"]).optional().describe("Whether a bigger metric is better (default max)."),
+        bounds: z.record(z.string(), z.tuple([z.number(), z.number()])).optional().describe('Per-knob [lo, hi], overriding whatever the model declares, e.g. {"price": [1, 40]}.'),
+        restarts: z.number().optional().describe("Extra searches from spread starting points (default 0). The spread of their answers is the evidence about local optima."),
+        set: setArg,
+        scenario: scenarioArg,
+      },
+    },
+    guard(handlers.flow_optimize),
   );
 
   server.registerTool(

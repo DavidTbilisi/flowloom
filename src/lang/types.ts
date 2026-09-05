@@ -166,6 +166,15 @@ export interface LinkDecl {
 export interface ExpectDecl {
   /** Scenario to apply first; undefined = the base model. */
   scenario?: string;
+  /**
+   * `expect always <expr>` — a claim about *every* recorded step rather than a
+   * reduction of the run to one number. `min:Inventory >= 0` can say a stock
+   * never goes negative; nothing could say `Inventory <= Capacity` (two series),
+   * state an implication, or report *where* a claim first broke. When this is
+   * set, `metric` holds the printed expression as a label and `op`/`value` are
+   * the fixed "is true (1)" shape.
+   */
+  always?: Expr;
   metric: string;
   op: "<" | "<=" | ">" | ">=" | "==";
   value: number;

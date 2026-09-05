@@ -242,6 +242,37 @@ params that feed it) and bumps them by at least one `dt`; the row is labelled
 `(±1)`. A knob whose bump leaves the metric exactly unchanged is marked *flat* —
 usually a threshold not crossed at ±10 %; `sweep` it over a wider range.
 
+### Optimising a payoff
+
+`sweep` traces one knob, `solve` goal-seeks one knob to a target, and
+`calibrate` fits knobs to data. `optimize` is the fourth question — *what
+settings make the model do best?*
+
+```console
+$ flowloom optimize model.flow --metric final:Cash --param price,spend --restarts 3
+optimize max:final:Cash   base 9360 → 16800  (+7440)
+  price  24.999969   in 1..40 (declared)
+  spend  30          in 0..30 (declared)  ← at the edge of its range
+  196 evaluations, 2 restarts
+  note: spend sits on a bound — widen the range, or accept the corner as the answer
+```
+
+It is the same bounded Nelder–Mead `calibrate` uses, with a metric for an
+objective instead of a residual. Two things it will not pretend:
+
+- **The search is local.** A model with competing loops has local optima, and
+  the answer is the best point *found*, not the best there is. `--restarts N`
+  runs it again from spread starting points; when they disagree, the result says
+  so rather than presenting one of them as the truth.
+- **A range is not decoration.** A knob's declared `± / in` range is the search
+  box and is never widened — the same rule global sensitivity follows. A knob
+  with no range gets ±50 % of its base value, and a knob whose answer lands on a
+  bound is named, because that is a fact about the range rather than the model.
+
+Switches are excluded: they are discrete, and [`policies`](#switches) already
+enumerates every combination exactly rather than searching over it. MCP:
+`flow_optimize`.
+
 ### Scenarios
 
 ```flow
@@ -303,6 +334,34 @@ Run them: `flowloom test model.flow` (one simulation per scenario, a line per
 claim, non-zero exit on any failure — so a model can sit in CI); `flow_test` over
 MCP; `describe`/`explain` list them.
 
+#### `always` — a claim about every step
+
+A metric reduces a whole run to one number, which is the wrong shape for "this
+must never happen". `min:Inventory >= 0` gets close, but it cannot compare two
+series, cannot state an implication, and — when it fails — cannot tell you
+*where*.
+
+```flow
+expect always Inventory >= 0                       # a bound
+expect always Inventory <= Capacity                # two series
+expect always !(ship < demand) || ship == Inventory  # an implication: a -> b is !a || b
+expect lean always Cash >= 0                       # under a named scenario
+```
+
+The condition is an ordinary model expression, evaluated at **every recorded
+step**; it holds when it is non-zero (true) at all of them. A failure reports the
+step it first broke on and the value of every name in the condition there:
+
+```console
+✗ base always ship == demand   held at 8/13 steps; first broke at t=8 with ship=4, demand=12
+```
+
+Names are checked at parse time, so a typo is a located error rather than a
+run-time surprise, and `Pop[North]` is lowered to the run's own `Pop.North` (a
+bare subscripted name is an error — the condition is checked one series at a
+time). "Recorded" is literal: with `sim savper=`, the save grid is what gets
+checked, which is worth knowing before writing a knife-edge claim.
+
 ### Data series
 
 ```flow
@@ -325,6 +384,12 @@ The file bridge runs both ways without the model ever referencing a file:
   params against the model's **own** data lines; same over MCP.
 - The metric `rmse:<series>:<data>` measures the fit over every step of the run,
   so `expect rmse:N:obs < 5` keeps a calibration honest after later edits.
+- `--weight Series=N` (MCP `weights`) sets each series' share of the residual.
+  The residual sums *normalised* RMSEs, so a 5-observation series counts as much
+  as a 500-observation one until you say otherwise. The weights are explicit
+  rather than derived from the counts, because "trust the long series more" is a
+  judgement about the data, not a fact about it — and the reported per-series
+  fit stays unweighted, since it is a fit rather than a score.
 
 ### Tables (graphical functions)
 

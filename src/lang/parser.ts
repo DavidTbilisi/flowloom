@@ -1,4 +1,5 @@
 import {
+  type Expr,
   type Model,
   type StockDecl,
   type RateDecl,
@@ -16,10 +17,10 @@ import {
   type Loc,
   DEFAULT_SETTINGS,
 } from "./types.js";
-import { parseExpr, freeVars, instantVars, declExprs } from "./expr.js";
+import { parseExpr, printExpr, freeVars, instantVars, declExprs } from "./expr.js";
 import { ExprSyntaxError } from "./tokenizer.js";
 import { suggestName, suggestSuffix } from "./suggest.js";
-import { elemName } from "./scalarize.js";
+import { elemName, elemTuples } from "./scalarize.js";
 
 // ── Model parser ────────────────────────────────────────────────────────────
 // The line grammar. One statement per line; `#` starts a comment. This grammar
@@ -490,6 +491,9 @@ function claim(m: Raw, name: string, loc: Loc): void {
 
 const RESERVED = new Set(["t", "dt", "PI", "E", "time"]);
 
+/** The `expect always <expr>` keyword — one spelling, shared by parser and printer. */
+export const ALWAYS = "always";
+
 function push(m: Raw, severity: Diagnostic["severity"], loc: Loc, message: string): void {
   m.diagnostics.push({ severity, loc, message });
 }
@@ -594,9 +598,30 @@ const EXPECT_OPS = new Set(["<", "<=", ">", ">=", "=="]);
  *  scenario name never does. `base` names the model itself. */
 function parseExpect(m: Raw, body: string, doc: string | undefined, loc: Loc): void {
   const toks = body.split(/\s+/).filter(Boolean);
-  const usage = "expect [scenario] <op>:<series> <|<=|>|>=|== <number> [± <tol>[%]]";
+  const usage = "expect [scenario] <op>:<series> <|<=|>|>=|== <number> [± <tol>[%]]  |  expect [scenario] always <expr>";
   let scenario: string | undefined;
-  if (toks.length && !toks[0]!.includes(":")) scenario = toks.shift();
+  // `always` is a keyword here, never a scenario name — the scenario slot is
+  // "the leading token without a colon", which would otherwise swallow it.
+  if (toks.length && !toks[0]!.includes(":") && toks[0] !== ALWAYS) scenario = toks.shift();
+
+  if (toks[0] === ALWAYS) {
+    toks.shift();
+    const src = toks.join(" ");
+    if (!src) { push(m, "error", loc, `expect always: needs a condition, e.g. \`expect always Inventory >= 0\``); return; }
+    let expr: Expr;
+    try {
+      expr = parseExpr(src, loc.line);
+    } catch (err) {
+      push(m, "error", loc, `expect always: ${err instanceof ExprSyntaxError ? err.message : String(err)}`);
+      return;
+    }
+    const e: ExpectDecl = { always: expr, metric: `${ALWAYS}:${printExpr(expr)}`, op: "==", value: 1, loc };
+    if (scenario && scenario !== "base") e.scenario = scenario;
+    if (doc) e.doc = doc;
+    m.expects.push(e);
+    return;
+  }
+
   const [metric, op, valueTok, pm, tolTok, ...extra] = toks;
   if (!metric || !op || valueTok === undefined) { push(m, "error", loc, `expect: ${usage}`); return; }
   if (!EXPECT_OPS.has(op)) { push(m, "error", loc, `expect: comparison must be one of < <= > >= ==, got '${op}'`); return; }
@@ -625,6 +650,36 @@ function validateExpects(m: Raw): void {
       push(m, "error", e.loc, `expect: no scenario named '${e.scenario}'${hint ? ` — did you mean '${hint}'?` : ""} (or did you mean a metric like final:${e.scenario}?)`);
       continue;
     }
+    if (e.always) {
+      // Every name in the condition must be something the run will produce, or
+      // the clock. Catching it here means an editor squiggle rather than a
+      // run-time "no series named …" halfway through `test`.
+      const dimsOf = (n: string) => m.stocks.find((st) => st.name === n)?.dims ?? m.varIndex.get(n)?.dims;
+      const known = new Set([
+        ...m.stocks.map((st) => st.name),
+        ...m.vars.map((v) => v.name),
+        ...m.tables.keys(),
+        "t", "time", "dt", "PI", "E",
+      ]);
+      // The lowered element names too, so `fmt`'s output — which prints the
+      // condition after lowering — reads back in.
+      for (const d of [...m.stocks, ...m.vars]) {
+        if (!d.dims?.length) continue;
+        for (const tuple of elemTuples(d.dims, m.dims)) known.add(elemName(d.name, tuple));
+      }
+      for (const name of freeVars(e.always)) {
+        if (!known.has(name)) {
+          const hint = suggestName(name, [...known]);
+          push(m, "error", e.loc, `expect always: unknown name '${name}'${hint ? ` — did you mean '${hint}'?` : ""}`);
+        }
+      }
+      // The condition is evaluated against the *run*, whose series are already
+      // lowered, so `Pop[North]` becomes `Pop.North` here — the same
+      // normalisation a metric reference gets, for the same reason.
+      e.always = lowerIndices(m, e.always, e.loc, dimsOf);
+      e.metric = `${ALWAYS}:${printExpr(e.always)}`;
+      continue;
+    }
     const parts = e.metric.split(":");
     const op = parts[0]!;
     if (op === "loops") {
@@ -648,6 +703,53 @@ function validateExpects(m: Raw): void {
       const head = op === "rmse" ? parts.slice(0, 1) : parts.slice(0, parts.length - 1);
       e.metric = [...head, ...resolved].join(":");
     }
+  }
+}
+
+/**
+ * Rewrite `X[elem]` to the lowered scalar `X.elem` inside an `always` condition,
+ * and reject a bare reference to a whole vector.
+ *
+ * The condition is checked series by series against a run whose subscripts have
+ * already been lowered, so this is the same normalisation `resolveExpectSeries`
+ * applies to a metric — just over an expression rather than one name.
+ */
+function lowerIndices(m: Raw, e: Expr, loc: Loc, dimsOf: (n: string) => string[] | undefined): Expr {
+  switch (e.kind) {
+    case "num":
+      return e;
+    case "ident": {
+      const dims = dimsOf(e.name);
+      if (dims?.length) {
+        const first = dims.map((d) => m.dims.get(d)?.elements[0] ?? "…");
+        push(m, "error", loc, `expect always: '${e.name}' is subscripted over [${dims.join(", ")}] — index it (e.g. ${e.name}[${first.join(", ")}]), since the condition is checked one series at a time`);
+      }
+      return e;
+    }
+    case "index": {
+      const dims = dimsOf(e.name);
+      if (!dims?.length) { push(m, "error", loc, `expect always: '${e.name}' is not subscripted, so '${e.name}[${e.subs.join(", ")}]' is invalid`); return e; }
+      if (e.subs.length !== dims.length) {
+        push(m, "error", loc, `expect always: '${e.name}' has ${dims.length} dimension(s) [${dims.join(", ")}] but is indexed with ${e.subs.length}`);
+        return e;
+      }
+      for (const [i, sub] of e.subs.entries()) {
+        const elements = m.dims.get(dims[i]!)?.elements ?? [];
+        if (elements.includes(sub)) continue;
+        const hint = suggestName(sub, elements);
+        push(m, "error", loc, m.dims.has(sub)
+          ? `expect always: '${sub}' is a dimension, not an element — index '${e.name}' with one element of '${dims[i]}' (${elements.join(", ")})`
+          : `expect always: '${sub}' is not an element of dim '${dims[i]}' (${elements.join(", ")})${hint ? ` — did you mean '${hint}'?` : ""}`);
+        return e;
+      }
+      return { kind: "ident", name: elemName(e.name, e.subs), loc: e.loc };
+    }
+    case "unary":
+      return { ...e, arg: lowerIndices(m, e.arg, loc, dimsOf) };
+    case "binary":
+      return { ...e, left: lowerIndices(m, e.left, loc, dimsOf), right: lowerIndices(m, e.right, loc, dimsOf) };
+    case "call":
+      return { ...e, args: e.args.map((a) => lowerIndices(m, a, loc, dimsOf)) };
   }
 }
 

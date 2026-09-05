@@ -43,7 +43,8 @@ dynamics, and check the numbers. Validate, don't vibe.
   with `# @rung N` and **`leverage`** lays them out on Meadows' twelve leverage
   points, each measured. **`expect`** lines are the model's own tests — a claim
   (`expect recovery final:netWorth == 493370 ± 1%`, `expect loops:active == 9`)
-  kept in the text and checked by **`test`**; **`diff`** compares two versions of
+  kept in the text and checked by **`test`**, with `expect always Inventory <=
+  Capacity` for a claim about *every* step that names the step it broke on; **`diff`** compares two versions of
   a model series by series and loop by loop, so a refactor has a verdict.
   **`data`** lines put measured history *in* the model — step-held time series
   you can plot, feed into equations, calibrate against with no CSV at hand
@@ -149,6 +150,7 @@ flowloom check   model.flow --numerics       # …and validate the *run*: does t
 flowloom compare model.flow --metric final:Cash,min:Cash   # base vs every `scenario` line
 flowloom policies model.flow --metric min:Cash --target 0   # which moves, together, are worth it
 flowloom leverage model.flow --metric min:Cash              # the levers on Meadows' ladder (# @rung N tags)
+flowloom optimize model.flow --metric final:Cash --param price,spend  # the settings that do best
 flowloom test    model.flow                  # the model's own `expect` lines; non-zero exit on a failure
 flowloom diff    before.flow after.flow      # did the edit change the numbers or the live loops?
 flowloom run     model.flow --scenario recovery            # run one scenario (then --set on top)

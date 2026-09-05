@@ -53,6 +53,8 @@ export { u01, n01, runif, rnorm, RANDOM_FNS } from "./rng.js";
 export { parseDataset, type Dataset, type ParseDatasetOptions } from "./dataset.js";
 export { interpAt, rmse, nrmse } from "./fit.js";
 export { calibrate, type CalibrateOptions, type CalibrateResult } from "./calibrate.js";
+export { optimize, type OptimizeOptions, type OptimizeResult } from "./optimize.js";
+export { minimize, type SimplexOptions, type SimplexResult } from "./simplex.js";
 export { globalSensitivity, type GsaResult, type GsaRow, type GsaOptions } from "./global-sensitivity.js";
 export { applyOverride, applyScenario, BASE_SCENARIO } from "./overrides.js";
 export { compareScenarios, type CompareResult, type CompareRow } from "./compare.js";
