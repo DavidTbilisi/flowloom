@@ -413,6 +413,45 @@ canonical source so they never drift.)
 - [x] **a canonical printer** — `flowloom fmt`, an **XMILE (`.stmx`) importer**,
       and a generated TextMate grammar so `.flow` highlights outside the studio
 - [x] CI that gates: PR checks running typecheck, unit, the CLI/MCP build and e2e
+- [x] **causal tracing** — `causes` / `uses` / `document`, the dependency index
+      forwards *and* back, signed, so "what breaks if I change this" has an answer
+- [x] **`expect always <condition>`** — a claim about every step rather than a
+      reduction, reporting the step it first broke on and the values there
+- [x] **`optimize`** — the settings that maximise a payoff metric, over the same
+      bounded simplex calibration uses; local, and it says so
+- [x] **a unit vocabulary** — SI bases, prefixes and derived units, the time
+      family, `person` = `people`; a model mixing hours and days is told it needs
+      a conversion constant rather than quietly rescaled
+- [x] **`sim savper=`** — record a sample per period, not per step, so a small
+      `dt` on a long horizon stays affordable to look at
+- [x] subscripts that hold up — checked `change(X[dims])`, `expect final:X[elem]`,
+      per-element overrides, and `mean`/`min`/`max` beside `sum`
+- [x] **`initial(x)`**, table `hold` / `extrapolate`, and a scenario that can swap
+      a lookup table — because the curve is often the policy
+- [x] results that can leave the studio — CSV, PNG, SVG, autosave and recents
+- [x] a studio that reaches — log and phase-space plots, a cancellable run,
+      a stacked layout on a phone, `prefers-reduced-motion` / `prefers-color-scheme`,
+      and a real ARIA tablist
+
+**Not yet**, and deliberately so — the interesting half of a roadmap:
+
+- [ ] **subranges and dimension mapping.** Expansion is multiplicative, so
+      `[20,20,20]` is 8,000 scalar stocks; a real array model wants subranges.
+- [ ] **discrete events and zero-crossing detection**, and with them an adaptive
+      or stiff solver. Today the integrator is fixed-step and `check --numerics`
+      *validates* the answer instead of adapting to get it.
+- [ ] **inline `WITH LOOKUP`** — a table literal inside an expression, rather
+      than a `table` line plus a call.
+- [ ] **pink (1/f) noise.** It carries state, so it belongs in a stock driven by
+      a white-noise source rather than in a stateless builtin.
+- [ ] **dual y-axes.** A log scale answers most of what they get reached for, and
+      a second axis needs per-series assignment plus a legend saying which side
+      each series is on — a bigger design than it looks.
+- [ ] **one undo history.** The split is deliberate: programmatic edits are
+      snapshotted, and a focused textarea keeps its native stack. Unifying them
+      means owning text undo outright.
+- [ ] **an LSP for `.flow`.** The TextMate grammar colours it everywhere; nothing
+      yet offers completion or go-to-definition outside the studio.
 
 The original single-file prototype is preserved at
 [`reference/flowloom-v1.html`](reference/flowloom-v1.html).
