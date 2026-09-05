@@ -443,7 +443,7 @@ Gotchas: every referenced name must be defined and a model needs ≥1 stock; a s
 
 // ── server wiring ────────────────────────────────────────────────────────────
 const modelArg = z.string().describe("The .flow model as text (the canonical representation).");
-const setArg = z.array(z.string()).optional().describe('Overrides as "key=value": a param, a switch (on/off), a stock init, or dt/to/start/method. Applied before the run (after any scenario).');
+const setArg = z.array(z.string()).optional().describe('Overrides as "key=value": a param, a switch (on/off), one element of a subscripted name (Pop[North]=5), a stock init, a lookup table (set to the name of another table), or a sim setting (dt/to/start/seed/method/timeunit/savper). Applied before the run (after any scenario).');
 const scenarioArg = z.string().optional().describe("Name of a `scenario` line in the model to apply before the run (\"base\" or omitted = the model as written).");
 const metricArg = z
   .string()

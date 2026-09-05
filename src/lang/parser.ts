@@ -875,12 +875,22 @@ function validateScenarios(m: Raw): void {
         if (!Number.isFinite(Number(value))) push(m, "error", sc.loc, `scenario ${sc.name}: ${key} must be a number, got '${value}'`);
         continue;
       }
+      // A lookup table is often the policy itself — a response curve, a tax
+      // schedule — so a scenario may swap one for another table by name.
+      if (m.tables.has(key)) {
+        if (!m.tables.has(value)) {
+          const others = [...m.tables.keys()].filter((n) => n !== key && !n.includes("#"));
+          const hint = suggestName(value, others);
+          push(m, "error", sc.loc, `scenario ${sc.name}: '${key}' is a lookup table, so it can only be set to another table, got '${value}'${hint ? ` — did you mean '${hint}'?` : others.length ? ` (have: ${others.join(", ")})` : ""}`);
+        }
+        continue;
+      }
       const decl = m.varIndex.get(key);
       const stock = decl ? undefined : m.stocks.find((s) => s.name === key);
       if (!decl && !stock) {
-        const candidates = [...m.stocks.map((s) => s.name), ...m.vars.map((v) => v.name), ...SETTING_KEYS];
+        const candidates = [...m.stocks.map((s) => s.name), ...m.vars.map((v) => v.name), ...m.tables.keys(), ...SETTING_KEYS];
         const hint = suggestName(key, candidates);
-        push(m, "error", sc.loc, `scenario ${sc.name}: no param, switch, stock, or sim setting named '${key}'${hint ? ` — did you mean '${hint}'?` : ""}`);
+        push(m, "error", sc.loc, `scenario ${sc.name}: no param, switch, stock, table, or sim setting named '${key}'${hint ? ` — did you mean '${hint}'?` : ""}`);
         continue;
       }
       if (decl?.boolean) {

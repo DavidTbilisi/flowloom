@@ -41,6 +41,27 @@ export function applyOverride(model: Model, spec: string): string[] {
     return warnings;
   }
 
+  // `curve=steepCurve` swaps one lookup for another. A graphical function is
+  // often the *policy* — a response curve, a tax schedule, a dose–effect shape —
+  // so "what if the curve were steeper" is a scenario, and the alternative
+  // belongs in the text beside the original rather than in a second file.
+  const table = model.tables.get(key);
+  if (table) {
+    const replacement = model.tables.get(raw);
+    if (!replacement) {
+      const others = [...model.tables.keys()].filter((n) => n !== key && !n.includes("#"));
+      const hint = suggestName(raw, others);
+      throw new Error(
+        `"${key}" is a lookup table, so it can only be set to another table, got "${raw}"`
+          + (hint ? ` — did you mean "${hint}"?` : others.length ? ` (have: ${others.join(", ")})` : " (declare the alternative curve as another `table` line)"),
+      );
+    }
+    if (replacement.name === key) return warnings; // setting a table to itself
+    // Keep the name so every call site still reads `key(x)`; take the shape.
+    model.tables.set(key, { ...replacement, name: key, loc: table.loc });
+    return warnings;
+  }
+
   // `Pop[North]=…` addresses one element of a subscripted declaration. Without
   // it the only thing an override could say about a vector was "every element",
   // which is rarely the experiment anyone wanted to run.

@@ -282,9 +282,10 @@ scenario recovery separate=on pay=9000 Cash=5000    # the plan after the raise
 
 A `scenario` is a named set of overrides that lives **in the model text** — a
 policy experiment is a first-class artefact, not shell history. Each binding may
-target a `param`, a `switch` (`on`/`off`), a stock's initial value, or a sim
-setting (`dt`/`to`/`start`/`seed`/`method`/`timeunit`); the parser checks every
-key and value so a typo is a located error in the editor. `base` is reserved for
+target a `param`, a `switch` (`on`/`off`), a stock's initial value, a `table`
+(set to the name of another table — a graphical function is often the policy
+itself), or a sim setting (`dt`/`to`/`start`/`seed`/`method`/`timeunit`/`savper`);
+the parser checks every key and value so a typo is a located error in the editor. `base` is reserved for
 the model as written. Scenarios are applied on top of the base text when chosen:
 
 - CLI: `flowloom run model.flow --scenario recovery` (then any `--set` on top);
@@ -410,6 +411,10 @@ table taxBand     = (0,0) (20000,0.2) (50000,0.4) hold    # step, don't interpol
 `hold` makes the value at `x` the last point at or before it — a step function,
 the same rule a [`data`](#data-series) line gets. It was previously reachable
 only by writing a `data` line.
+
+A table can be swapped whole by a scenario or `--set`, since the curve is often
+the policy: `scenario aggressive response=steepResponse` keeps every call site
+reading `response(x)` and gives it the other table's shape.
 
 `extrapolate` continues the slope of the end segment beyond the ends rather than
 flattening. Clamping stays the default deliberately: a curve fitted over an

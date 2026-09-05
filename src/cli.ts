@@ -11,9 +11,11 @@
 //   flowloom check  model.flow
 //   flowloom compare model.flow --metric final:Cash,min:Cash
 //
-// `--set k=v` overrides a param, a stock's initial value, or a sim setting
-// (dt/to/start/method) before the run — which turns a model into a function you
-// can sweep from a shell loop. `--scenario NAME` applies a `scenario` line from
+// `--set k=v` overrides a param, a switch, one element of a subscripted name
+// (`Pop[North]=5`), a stock's initial value, a lookup table (set to another
+// table's name), or a sim setting (dt/to/start/seed/method/timeunit/savper)
+// before the run — which turns a model into a function you can sweep from a
+// shell loop. `--scenario NAME` applies a `scenario` line from
 // the text the same way (then any --set on top). Pass `-` as the path to read
 // the model on stdin.
 
@@ -1216,7 +1218,9 @@ run options:
   --plot a,b,c             choose series (default: model's plot line, else stocks)
   --chart                  ascii sparklines under the table
   --rows N                 sampled rows in the table view (default 21)
-  --set k=v                override a param, stock init, or dt/to/start/method
+  --set k=v                override a param, a switch, one element (Pop[North]=5), a stock
+                           init, a table (set to another table), or a sim setting
+                           (dt/to/start/seed/method/timeunit/savper)
                            repeatable; applied before the run
   --scenario NAME          apply a 'scenario' line from the model first (then --set)
 

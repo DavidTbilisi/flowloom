@@ -105,3 +105,45 @@ describe("timeunit is overridable", () => {
     expect(() => applyOverride(parseModel(src), "timeunit=")).toThrow(/timeunit must be a name/);
   });
 });
+
+describe("swapping a lookup table", () => {
+  // A graphical function is often the *policy* — a response curve, a tax
+  // schedule, a dose–effect shape — so "what if the curve were steeper" is a
+  // scenario, and the alternative belongs in the text beside the original.
+  const src = `table response = (0,0) (10,10) (20,20)
+table steep = (0,0) (10,25) (20,60)
+stock Out = 0
+param drive = 10
+change(Out) = response(drive)
+scenario aggressive response=steep
+sim dt=1 to=3 method=euler
+plot Out`;
+
+  const final = (m: ReturnType<typeof parseModel>) => simulate(m).series.get("Out")!.at(-1)!;
+
+  it("takes the other table's shape and keeps the name", () => {
+    const m = parseModel(src);
+    expect(final(m)).toBe(30);          // 3 steps × response(10) = 10
+    expect(applyOverride(m, "response=steep")).toEqual([]);
+    expect(final(m)).toBe(75);          // 3 steps × steep(10) = 25
+    expect(m.tables.get("response")!.name).toBe("response"); // call sites unchanged
+  });
+
+  it("works through a scenario line", () => {
+    const m = parseModel(src);
+    applyScenario(m, "aggressive");
+    expect(final(m)).toBe(75);
+  });
+
+  it("only accepts another table", () => {
+    expect(() => applyOverride(parseModel(src), "response=3"))
+      .toThrow(/"response" is a lookup table, so it can only be set to another table/);
+    expect(() => applyOverride(parseModel(src), "response=steap"))
+      .toThrow(/did you mean "steep"/);
+  });
+
+  it("checks the scenario binding at parse time", () => {
+    expect(() => parseModel(src.replace("response=steep", "response=flat")))
+      .toThrow(/'response' is a lookup table.*have: steep/s);
+  });
+});
