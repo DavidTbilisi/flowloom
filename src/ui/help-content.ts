@@ -63,6 +63,8 @@ export const HELP: Record<string, HelpEntry> = {
   "ui:scenario-table": { title: "Scenarios table", body: "Run base and every `scenario` line and tabulate the final / min / max of the visible series, with the change against base — the studio's `flowloom compare`.", doc: "scenarios" },
   "ui:scenario": { title: "Scenario", body: "Run one of the model's `scenario` lines (a named set of overrides) instead of the base text. The base run stays on the plot as dashed lines so the policy's effect is visible at once.", doc: "scenarios" },
   "ui:clear-overlays": { title: "Clear overlays", body: "Remove the Monte Carlo bands, loaded data, and comparison run from the plot." },
+  "ui:export-csv": { title: "Export CSV", body: "Download the visible series as CSV, time first — the same columns the plot is showing, in the run's own order." },
+  "ui:export-png": { title: "Export PNG", body: "Download the plot exactly as drawn, at the current frame and zoom." },
   "ui:transport": { title: "Playback", body: "Play, pause, or scrub the simulation clock. All views share it." },
   "ui:statusbar": { title: "Help bar", body: "This bar. Hover anything — a keyword, a node, a control — for an explanation." },
   "ui:node-stock": { title: "Stock", body: "A box is a stock; it fills to its current level during playback." },

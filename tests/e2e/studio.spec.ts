@@ -68,7 +68,7 @@ test("reports a clear error for a broken model", async ({ page }) => {
 });
 
 test("diagram tab renders nodes and loop chips", async ({ page }) => {
-  await page.getByRole("button", { name: "Diagram" }).click();
+  await page.getByRole("tab", { name: "Diagram" }).click();
   await expect(page.locator("#diagram rect").first()).toBeVisible();
   // logistic growth has exactly one feedback loop ⇒ one chip
   await expect(page.locator("#loopChips .chip")).toHaveCount(1);
@@ -76,7 +76,7 @@ test("diagram tab renders nodes and loop chips", async ({ page }) => {
 });
 
 test("diagram is a pan/zoom canvas (zoom controls + fit)", async ({ page }) => {
-  await page.getByRole("button", { name: "Diagram" }).click();
+  await page.getByRole("tab", { name: "Diagram" }).click();
   const zoom = page.locator(".zoomlbl");
   await expect(zoom).toHaveText(/%$/);
   const before = await zoom.textContent();
@@ -93,7 +93,7 @@ test("loops tab classifies the cooling model as balancing", async ({ page }) => 
     "stock Temp = 90\nparam room = 20\nparam k = 0.3\nflow cooling = k*(Temp-room)\nd(Temp) = -cooling\nsim to=20",
   );
   await page.locator("#run").click();
-  await page.getByRole("button", { name: "Loops" }).click();
+  await page.getByRole("tab", { name: "Loops" }).click();
   await expect(page.locator("#loopsWrap .loop")).toHaveCount(1);
   await expect(page.locator("#loopsWrap .loop .badge")).toHaveText("B");
 });
@@ -152,7 +152,7 @@ test("editing the model writes it into the URL hash", async ({ page }) => {
 });
 
 test("table tab shows sampled series with the playback cursor", async ({ page }) => {
-  await page.getByRole("button", { name: "Table" }).click();
+  await page.getByRole("tab", { name: "Table" }).click();
   await expect(page.locator("#tableWrap table")).toBeVisible();
   // drive the clock via the store (the transport lives in the hidden Plot view)
   await page.evaluate(() => (window as any).flowloom.setFrame(0));

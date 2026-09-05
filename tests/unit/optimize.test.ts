@@ -91,7 +91,7 @@ describe("optimize", () => {
   });
 
   it("is reproducible across restarts", async () => {
-    const opts = { metric: "final:Cash", params: ["price"], restarts: 2, seed: 7 } as const;
+    const opts = { metric: "final:Cash", params: ["price"], restarts: 2, seed: 7 };
     const a = await optimize(parseModel(TRADEOFF), { ...opts });
     const b = await optimize(parseModel(TRADEOFF), { ...opts });
     expect(a.params).toEqual(b.params);

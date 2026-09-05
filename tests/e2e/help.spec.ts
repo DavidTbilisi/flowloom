@@ -17,7 +17,7 @@ test("the editor renders a syntax-highlight overlay", async ({ page }) => {
 });
 
 test("hovering a diagram node updates the status bar", async ({ page }) => {
-  await page.getByRole("button", { name: "Diagram" }).click();
+  await page.getByRole("tab", { name: "Diagram" }).click();
   const node = page.locator("#diagram g[data-help^='ui:node']").first();
   await expect(node).toBeVisible();
   await node.hover();
@@ -31,14 +31,14 @@ test("hovering a tab explains it in the status bar", async ({ page }) => {
 });
 
 test("hovering an R/B badge explains loop polarity", async ({ page }) => {
-  await page.getByRole("button", { name: "Loops" }).click();
+  await page.getByRole("tab", { name: "Loops" }).click();
   await page.locator("#loopsWrap .loop .badge").first().hover();
   await expect(page.locator("#statusbar .sb-text")).toContainText(/reinforc|balanc|indetermin/i);
 });
 
 test("a Learn more link appears and opens the Format tab", async ({ page }) => {
   // a stock node resolves to identifier help, which carries a doc anchor
-  await page.getByRole("button", { name: "Diagram" }).click();
+  await page.getByRole("tab", { name: "Diagram" }).click();
   const node = page.locator("#diagram g[data-help='ui:node-stock']").first();
   await expect(node).toBeVisible();
   await node.hover();

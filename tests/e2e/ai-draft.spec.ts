@@ -10,12 +10,28 @@ const MODEL_TEXT =
   "flow growth = wordOfMouth * Customers * (1 - Customers / seats)\n" +
   "change(Customers) = growth\nsim dt=0.1 to=40 method=rk4\nplot Customers\n```";
 
+/** The Messages API streams; the client parses SSE. Chunk the text so the test
+ *  exercises the frame reassembly rather than a single tidy delta. */
+function sseBody(text: string, stopReason = "end_turn"): string {
+  const frames = [
+    `event: message_start\ndata: ${JSON.stringify({ type: "message_start" })}`,
+    `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", content_block: { type: "text" } })}`,
+  ];
+  for (let i = 0; i < text.length; i += 40) {
+    frames.push(`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", delta: { type: "text_delta", text: text.slice(i, i + 40) } })}`);
+  }
+  frames.push(`event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop" })}`);
+  frames.push(`event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: stopReason } })}`);
+  frames.push(`event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}`);
+  return `${frames.join("\n\n")}\n\n`;
+}
+
 test("AI draft turns a prompt into a running model", async ({ page }) => {
   await page.route("https://api.anthropic.com/v1/messages", (route) =>
     route.fulfill({
       status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ stop_reason: "end_turn", content: [{ type: "text", text: MODEL_TEXT }] }),
+      contentType: "text/event-stream",
+      body: sseBody(MODEL_TEXT),
     }),
   );
   await page.goto("/");

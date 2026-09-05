@@ -66,6 +66,10 @@ export class Store {
   private frameListeners = new Set<Listener>();
   private worker: Worker | null = null;
   private gen = 0; // generation counter to drop stale worker results
+  /** The generation the worker is currently computing, if any. The generation
+   *  counter drops a stale *result*, but the worker goes on burning a core
+   *  producing it — on a 3000-stock model that is the whole machine. */
+  private inFlight: number | null = null;
   // A separate worker for Monte Carlo ensembles, kept independent of the main-run
   // `gen` staleness logic; requests are matched to replies by reqId.
   private ensembleWorker: Worker | null = null;
@@ -212,12 +216,47 @@ export class Store {
     this.playing = false;
   }
 
+  /** True while a worker run can still be stopped — what a Cancel button needs. */
+  get cancellable(): boolean {
+    return this.inFlight !== null;
+  }
+
+  /**
+   * Stop the run in flight.
+   *
+   * Terminating the worker is the only way: a `postMessage` cannot interrupt a
+   * synchronous integration loop, so a request to stop that arrives as a message
+   * is read after the work it was meant to stop. The worker is dropped rather
+   * than reused, and the next run starts a fresh one.
+   */
+  cancel(reason = "run cancelled — the model is unchanged, press ▶ or edit to run it again") {
+    if (this.inFlight === null) return;
+    this.killWorker();
+    this.gen++; // any result still in the pipe belongs to a run nobody wants
+    this.computing = false;
+    this.run = { ...this.run, note: reason };
+    this.notify();
+    this.notifyFrame();
+  }
+
+  private killWorker() {
+    this.worker?.terminate();
+    this.worker = null;
+    this.inFlight = null;
+  }
+
   private simulateInWorker(source: string, model: Model, gen: number, scenario?: string) {
     try {
+      // A superseded run cannot be called off with a message — the worker is
+      // inside a synchronous loop and would not read it until afterwards. So an
+      // edit that lands mid-run replaces the worker outright rather than racing
+      // the previous model to the finish.
+      if (this.inFlight !== null) this.killWorker();
       if (!this.worker) {
         this.worker = new Worker(new URL("./sim-worker.ts", import.meta.url), { type: "module" });
         this.worker.onmessage = (e: MessageEvent) => {
           const msg = e.data as { gen: number; ok: boolean; result?: SimResult; loops?: LoopReport; error?: string };
+          if (msg.gen === this.inFlight) this.inFlight = null;
           if (msg.gen !== this.gen) return; // a newer build superseded this one
           if (msg.ok && msg.result) this.applyResult(model, msg.result, msg.loops);
           else { this.computing = false; this.run = { ok: false, diagnostics: [], error: msg.error ?? "simulation failed" }; }
@@ -225,9 +264,11 @@ export class Store {
           this.notifyFrame();
         };
       }
+      this.inFlight = gen;
       this.worker.postMessage({ gen, source, ...(scenario ? { scenario } : {}) });
     } catch {
       // no worker available (or it failed to start) — fall back to a sync run
+      this.inFlight = null;
       this.applyResult(model, simulate(model), analyzeLoops(model));
     }
   }
