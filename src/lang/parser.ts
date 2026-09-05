@@ -20,7 +20,7 @@ import {
 import { parseExpr, printExpr, freeVars, instantVars, declExprs } from "./expr.js";
 import { ExprSyntaxError } from "./tokenizer.js";
 import { suggestName, suggestSuffix } from "./suggest.js";
-import { elemName, elemTuples } from "./scalarize.js";
+import { elemName, elemTuples, isArrayReduction } from "./scalarize.js";
 
 // ── Model parser ────────────────────────────────────────────────────────────
 // The line grammar. One statement per line; `#` starts a comment. This grammar
@@ -562,6 +562,12 @@ function validateReferences(m: Raw): void {
 
   const check = (expr: Parameters<typeof freeVars>[0], loc: Loc) => {
     for (const id of freeVars(expr)) {
+      // A declared dim can legitimately appear as a reducer's axis label
+      // (`max(Trade, b)`), which `freeVars` reports as a name because it cannot
+      // tell an axis from a value without knowing the dims. It is a declared
+      // name either way; `validateSubscripts` is what rejects a dim used as a
+      // *value*, where the distinction is actually visible.
+      if (m.dims.has(id)) continue;
       if (!known.has(id) && !tables.has(id) && !BUILTIN_CONSTS.has(id)) {
         const suffix = suggestSuffix(id, [...known, ...tables, ...BUILTIN_CONSTS],
           "define it (stock/param/aux/flow) or check the spelling");
@@ -921,6 +927,11 @@ function validateSubscripts(m: Raw): void {
       case "ident":
         if (dimsOf.has(e.name) && !insideSum) {
           push(m, "error", loc, `'${e.name}' is subscripted — index it (${e.name}[${dimsOf.get(e.name)!.join(", ")}]) or aggregate it (sum(${e.name}))`);
+        } else if (m.dims.has(e.name)) {
+          // Reached here only outside a reducer's axis slot, which the call
+          // branch consumes without walking — so this is a dimension used where
+          // a number belongs.
+          push(m, "error", loc, `'${e.name}' is a dimension, not a value — index a symbol with it (X[${e.name}]) or name one of its elements (${m.dims.get(e.name)!.elements.slice(0, 2).join(", ")})`);
         }
         break;
       case "index": {
@@ -955,16 +966,17 @@ function validateSubscripts(m: Raw): void {
         walk(e.right, loc, insideSum, scope);
         break;
       case "call": {
-        if (e.name.toLowerCase() === "sum") {
+        if (isArrayReduction(e, (n) => dimsOf.get(n))) {
+          const fn = e.name.toLowerCase();
           const a = e.args[0];
           const base = a && (a.kind === "ident" || a.kind === "index") ? a.name : undefined;
           const dims = base ? dimsOf.get(base) : undefined;
-          if (!base || !dims) { push(m, "error", loc, "sum() needs a subscripted argument, e.g. sum(Population)"); break; }
+          if (!base || !dims) { push(m, "error", loc, `${fn}() needs a subscripted argument, e.g. ${fn}(Population)`); break; }
           // The array arg may be written `Trade[from, to]`, but only as the plain
           // dimensions in order — a literal pin or reorder is silently dropped at
           // lowering, so reject it here instead of returning a wrong result.
           if (a!.kind === "index" && (a!.subs.length !== dims.length || a!.subs.some((s, i) => s !== dims[i]))) {
-            push(m, "error", loc, `sum()'s argument '${base}[${a!.subs.join(", ")}]' can't pin or reorder dimensions — use sum(${base}) or sum(${base}, axis)`);
+            push(m, "error", loc, `${fn}()'s argument '${base}[${a!.subs.join(", ")}]' can't pin or reorder dimensions — use ${fn}(${base}) or ${fn}(${base}, axis)`);
             break;
           }
           // Trailing args name the axes to collapse; each must be a distinct dim of `base`.
@@ -972,10 +984,10 @@ function validateSubscripts(m: Raw): void {
           let badAxis = false;
           for (const ax of e.args.slice(1)) {
             if (ax.kind !== "ident" || !dims.includes(ax.name)) {
-              push(m, "error", loc, `sum()'s axis must be a dimension of '${base}' (one of ${dims.join(", ")})`);
+              push(m, "error", loc, `${fn}()'s axis must be a dimension of '${base}' (one of ${dims.join(", ")})`);
               badAxis = true;
             } else if (axes.includes(ax.name)) {
-              push(m, "error", loc, `sum() lists dimension '${ax.name}' more than once`);
+              push(m, "error", loc, `${fn}() lists dimension '${ax.name}' more than once`);
               badAxis = true;
             } else axes.push(ax.name);
           }
@@ -984,7 +996,7 @@ function validateSubscripts(m: Raw): void {
           const collapsed = new Set(axes.length ? axes : dims);
           for (const d of dims) {
             if (!collapsed.has(d) && !scope.has(d)) {
-              push(m, "error", loc, `sum() over ${(axes.length ? axes : dims).join(", ")} leaves dimension '${d}' free — declare the result over '[${d}]'`);
+              push(m, "error", loc, `${fn}() over ${(axes.length ? axes : dims).join(", ")} leaves dimension '${d}' free — declare the result over '[${d}]'`);
             }
           }
         } else {

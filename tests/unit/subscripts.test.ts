@@ -471,3 +471,59 @@ describe("per-element overrides", () => {
     expect(() => applyOverride(m, "Cash[North]=1")).toThrow(/"Cash" is not subscripted.*set Cash instead/s);
   });
 });
+
+describe("array reducers — mean, min, max", () => {
+  // `sum` was the only reducer; docs/language.md listed the others as planned.
+  // They lower through the same element list; only what is built from it differs.
+  const src = (extra: string) => `dim region = North, South, East
+stock Pop [region] = 100, 200, 300
+change(Pop[region]) = 0
+${extra}
+sim dt=1 to=2 method=euler`;
+
+  const value = (extra: string, name: string) => {
+    const r = simulate(scalarize(parseModel(src(extra))));
+    return r.series.get(name)!.at(-1)!;
+  };
+
+  it("reduces an array four ways", () => {
+    expect(value("aux Total = sum(Pop)", "Total")).toBe(600);
+    expect(value("aux Avg = mean(Pop)", "Avg")).toBe(200);
+    expect(value("aux Least = min(Pop)", "Least")).toBe(100);
+    expect(value("aux Most = max(Pop)", "Most")).toBe(300);
+  });
+
+  it("leaves the scalar min/max builtin alone", () => {
+    // The rule is a *bare subscripted name* in the first argument: an indexed
+    // element or a plain expression is the ordinary variadic builtin.
+    expect(value("aux Guard = min(Pop[North], 150)", "Guard")).toBe(100);
+    expect(value("aux Cap = max(Pop[South], 500)", "Cap")).toBe(500);
+    expect(value("aux Plain = min(3, 7, 5)", "Plain")).toBe(3);
+  });
+
+  it("collapses one axis and keeps the rest", () => {
+    const two = `dim a = A1, A2
+dim b = B1, B2
+stock Trade [a, b] = 1, 2, 30, 40
+change(Trade[a, b]) = 0
+aux rowMax [a] = max(Trade, b)
+aux rowAvg [a] = mean(Trade, b)
+sim dt=1 to=2 method=euler`;
+    const r = simulate(scalarize(parseModel(two)));
+    expect(r.series.get("rowMax.A1")!.at(-1)).toBe(2);
+    expect(r.series.get("rowMax.A2")!.at(-1)).toBe(40);
+    expect(r.series.get("rowAvg.A1")!.at(-1)).toBe(1.5);
+    expect(r.series.get("rowAvg.A2")!.at(-1)).toBe(35);
+  });
+
+  it("names the reducer in its own diagnostics", () => {
+    expect(() => parseModel(src("aux X = mean(Pop, nope)")))
+      .toThrow(/mean\(\)'s axis must be a dimension of 'Pop'/);
+    const two = `dim a = A1, A2\ndim b = B1, B2\nstock Trade [a, b] = 1\nchange(Trade[a, b]) = 0\naux X = max(Trade, b)\nsim dt=1 to=2`;
+    expect(() => parseModel(two)).toThrow(/max\(\) over b leaves dimension 'a' free/);
+  });
+
+  it("rejects mean() on something that isn't an array", () => {
+    expect(() => parseModel(src("aux X = mean(3)"))).toThrow(/mean\(\) needs a subscripted argument/);
+  });
+});

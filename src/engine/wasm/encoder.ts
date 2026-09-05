@@ -19,7 +19,10 @@ export const IMPORTS = [
   "step", "pulse",                                             // (f64,f64,f64)->f64
   "ramp",                                                      // (f64,f64,f64,f64)->f64
   "lookup",                                                    // (i32,f64)->f64
-  "runif", "rnorm",                                            // (f64,f64,f64,f64,f64)->f64
+  "runif", "rnorm", "rlnorm",                                  // (f64,f64,f64,f64,f64)->f64
+  "rexp", "rpois",                                             // (f64,f64,f64,f64)->f64
+  "rtri",                                                      // (f64,f64,f64,f64,f64,f64)->f64
+  "rtnorm",                                                    // (f64,f64,f64,f64,f64,f64,f64)->f64
 ] as const;
 
 /** Function index of each import (and of the defined `deriv`). */
@@ -119,14 +122,19 @@ const T_C = 2; // (f64,f64,f64)->f64
 const T_D = 3; // (f64,f64,f64,f64)->f64
 const T_L = 4; // (i32,f64)->f64
 const T_E = 5; // (f64,f64,f64,f64,f64)->f64
-const T_DERIV = 6; // (f64)->()
+const T_F = 6; // (f64×6)->f64
+const T_G = 7; // (f64×7)->f64
+const T_DERIV = 8; // (f64)->()
 
 const importTypeIndex = (name: string): number => {
   if (["pow", "rem"].includes(name)) return T_B;
   if (["step", "pulse"].includes(name)) return T_C;
   if (name === "ramp") return T_D;
   if (name === "lookup") return T_L;
-  if (["runif", "rnorm"].includes(name)) return T_E;
+  if (["runif", "rnorm", "rlnorm"].includes(name)) return T_E;
+  if (["rexp", "rpois"].includes(name)) return T_D;
+  if (name === "rtri") return T_F;
+  if (name === "rtnorm") return T_G;
   return T_A;
 };
 
@@ -143,6 +151,8 @@ export function buildModule(body: number[], pages: number): Uint8Array {
     funcType([F64, F64, F64, F64], [F64]),
     funcType([I32, F64], [F64]),
     funcType([F64, F64, F64, F64, F64], [F64]),
+    funcType([F64, F64, F64, F64, F64, F64], [F64]),
+    funcType([F64, F64, F64, F64, F64, F64, F64], [F64]),
     funcType([F64], []),
   ]);
 

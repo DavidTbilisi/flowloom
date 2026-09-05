@@ -39,6 +39,33 @@ function product(lists: string[][]): string[][] {
   );
 }
 
+/** The array reducers. `sum` is always one; min/max double as scalar builtins. */
+export const REDUCERS = new Set(["sum", "mean", "min", "max"]);
+
+/**
+ * Does this call reduce an array?
+ *
+ * True when the function is a reducer and its first argument is a *bare* name
+ * declared over dimensions. That is the whole disambiguation rule: `min(X)` over
+ * a subscripted X collapses it, `min(X[North], 5)` and `min(a, b)` are the
+ * ordinary variadic builtin. `dimsOf` is supplied by the caller because the
+ * parser and the scalarizer each hold their own copy of it.
+ */
+export function isArrayReduction(
+  e: Expr & { kind: "call" },
+  dimsOf: (name: string) => string[] | undefined,
+): boolean {
+  const fn = e.name.toLowerCase();
+  if (!REDUCERS.has(fn)) return false;
+  // `sum` and `mean` exist only as reducers, so they are always one — and
+  // `mean(3)` gets "needs a subscripted argument" rather than sliding through as
+  // an unknown function. min/max also have a scalar meaning, so they reduce only
+  // when handed a bare name that is actually subscripted.
+  if (fn === "sum" || fn === "mean") return true;
+  const arg = e.args[0];
+  return !!arg && arg.kind === "ident" && !!dimsOf(arg.name)?.length;
+}
+
 class ScalarizeError extends Error {
   loc: Loc;
   constructor(message: string, loc: Loc) {
@@ -94,46 +121,61 @@ export function scalarize(model: Model): Model {
     });
   };
 
-  // sum(X) collapses every dimension of X; sum(X, d, …) collapses only the named
-  // axes and keeps the rest (each pinned to the current elementwise binding). Both
-  // lower to an n-ary `+` over the Cartesian product of the collapsed axes.
-  const lowerSum = (e: Expr & { kind: "call" }, bind: Binding | null): Expr => {
+  // R(X) collapses every dimension of X; R(X, d, …) collapses only the named axes
+  // and keeps the rest (each pinned to the current elementwise binding). All four
+  // reducers lower to the same element list over the Cartesian product of the
+  // collapsed axes; only what they build from it differs.
+  const lowerReduce = (e: Expr & { kind: "call" }, bind: Binding | null): Expr => {
+    const fn = e.name.toLowerCase();
     const arg = e.args[0];
     const base = arg && (arg.kind === "ident" || arg.kind === "index") ? arg.name : undefined;
     const dims = base ? dimsOf.get(base) : undefined;
-    if (!base || !dims) throw new ScalarizeError("sum() needs a subscripted argument, e.g. sum(Population)", e.loc);
+    if (!base || !dims) throw new ScalarizeError(`${fn}() needs a subscripted argument, e.g. ${fn}(Population)`, e.loc);
     // A literal pin / reorder on the array arg is silently discarded below — reject
     // it (parser flags this too; this guards models built without going through it).
     if (arg!.kind === "index" && (arg!.subs.length !== dims.length || arg!.subs.some((s, i) => s !== dims[i])))
-      throw new ScalarizeError(`sum()'s argument '${base}[${arg!.subs.join(", ")}]' can't pin or reorder dimensions — use sum(${base}) or sum(${base}, axis)`, e.loc);
+      throw new ScalarizeError(`${fn}()'s argument '${base}[${arg!.subs.join(", ")}]' can't pin or reorder dimensions — use ${fn}(${base}) or ${fn}(${base}, axis)`, e.loc);
 
     const axes = e.args.length === 1
       ? dims.slice() // no axis given ⇒ collapse all
       : e.args.slice(1).map((a) => {
           if (a.kind !== "ident" || !dims.includes(a.name))
-            throw new ScalarizeError(`sum()'s axis must be a dimension of '${base}' (one of ${dims.join(", ")})`, a.loc);
+            throw new ScalarizeError(`${fn}()'s axis must be a dimension of '${base}' (one of ${dims.join(", ")})`, a.loc);
           return a.name;
         });
-    if (new Set(axes).size !== axes.length) throw new ScalarizeError(`sum() lists a dimension more than once`, e.loc);
+    if (new Set(axes).size !== axes.length) throw new ScalarizeError(`${fn}() lists a dimension more than once`, e.loc);
     const collapsed = new Set(axes);
 
     const axisTuples = product(axes.map(elements));
     if (!axisTuples.length) throw new ScalarizeError(`'${base}' has a dimension with no elements`, e.loc);
-    return axisTuples
-      .map((axisTuple) => {
-        const pick = new Map<string, string>();
-        axes.forEach((d, i) => pick.set(d, axisTuple[i]!));
-        // Reassemble the full positional tuple: collapsed axes iterate, the rest
-        // are held at the binding of the surrounding elementwise context.
-        const tuple = dims.map((d) => {
-          if (collapsed.has(d)) return pick.get(d)!;
-          const held = bind?.get(d);
-          if (held === undefined) throw new ScalarizeError(`sum() over ${axes.join(", ")} leaves dimension '${d}' free — declare the result over '[${d}]'`, e.loc);
-          return held;
-        });
-        return ident(elemName(base, tuple), e.loc);
-      })
-      .reduce((acc, cur) => ({ kind: "binary", op: "+", left: acc, right: cur, loc: e.loc }));
+    const parts = axisTuples.map((axisTuple) => {
+      const pick = new Map<string, string>();
+      axes.forEach((d, i) => pick.set(d, axisTuple[i]!));
+      // Reassemble the full positional tuple: collapsed axes iterate, the rest
+      // are held at the binding of the surrounding elementwise context.
+      const tuple = dims.map((d) => {
+        if (collapsed.has(d)) return pick.get(d)!;
+        const held = bind?.get(d);
+        if (held === undefined) throw new ScalarizeError(`${fn}() over ${axes.join(", ")} leaves dimension '${d}' free — declare the result over '[${d}]'`, e.loc);
+        return held;
+      });
+      return ident(elemName(base, tuple), e.loc);
+    });
+
+    const total = (): Expr => {
+      let acc: Expr = parts[0]!;
+      for (const cur of parts.slice(1)) acc = { kind: "binary", op: "+", left: acc, right: cur, loc: e.loc };
+      return acc;
+    };
+    switch (fn) {
+      case "sum": return total();
+      // The divisor is the element count, folded in here rather than left as a
+      // division by a name — the number of elements is known at lowering time.
+      case "mean": return { kind: "binary", op: "/", left: total(), right: { kind: "num", value: parts.length, loc: e.loc }, loc: e.loc };
+      // min/max are variadic builtins already, so one call over the elements is
+      // both the smallest tree and exactly what a hand-written model would say.
+      default: return { kind: "call", name: fn, args: parts, loc: e.loc };
+    }
   };
 
   // Lower one expression under an optional elementwise binding.
@@ -152,7 +194,11 @@ export function scalarize(model: Model): Model {
       case "binary":
         return { ...e, left: sub(e.left, bind), right: sub(e.right, bind) };
       case "call":
-        if (e.name.toLowerCase() === "sum") return lowerSum(e, bind);
+        // A reduction is signalled by a *bare subscripted name* in the first
+        // argument: `min(Population)` collapses the array, while
+        // `min(Population[North], 5)` is the ordinary scalar builtin. One rule,
+        // and it keeps min/max working as they always have.
+        if (isArrayReduction(e, (n) => dimsOf.get(n))) return lowerReduce(e, bind);
         return { ...e, args: e.args.map((a) => sub(a, bind)) };
     }
   };

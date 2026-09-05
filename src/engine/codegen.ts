@@ -1,7 +1,7 @@
 import type { Expr } from "../lang/types.js";
 import type { Compiled } from "./compile.js";
 import { lookupTable } from "./builtins.js";
-import { runif, rnorm, RANDOM_FNS, drawSlots } from "./rng.js";
+import { runif, rnorm, rlnorm, rtri, rexp, rpois, rtnorm, RANDOM_FNS, drawSlots } from "./rng.js";
 
 // ── Compiled evaluation plan (shared by the TS and WASM backends) ───────────
 // The tree-walking interpreter (eval.ts) re-reads a string-keyed scope object on
@@ -219,10 +219,17 @@ function compileRandom(name: string, e: Expr & { kind: "call" }, slots: Map<stri
   const k = plan.drawIndex.get(e)!;
   const ss = plan.seedSlot, ps = plan.stepSlot;
   if (name === "random") return (m) => runif(m[ss]!, m[ps]!, k, 0, 1);
-  const lo = compileWith(e.args[0]!, slots, plan);
-  const hi = compileWith(e.args[1]!, slots, plan);
-  if (name === "random_uniform") return (m) => runif(m[ss]!, m[ps]!, k, lo(m), hi(m));
-  return (m) => rnorm(m[ss]!, m[ps]!, k, lo(m), hi(m));
+  const A = e.args.map((a) => compileWith(a, slots, plan));
+  const a0 = A[0]!, a1 = A[1]!, a2 = A[2]!, a3 = A[3]!;
+  switch (name) {
+    case "random_uniform": return (m) => runif(m[ss]!, m[ps]!, k, a0(m), a1(m));
+    case "random_lognormal": return (m) => rlnorm(m[ss]!, m[ps]!, k, a0(m), a1(m));
+    case "random_triangular": return (m) => rtri(m[ss]!, m[ps]!, k, a0(m), a1(m), a2(m));
+    case "random_exponential": return (m) => rexp(m[ss]!, m[ps]!, k, a0(m));
+    case "random_poisson": return (m) => rpois(m[ss]!, m[ps]!, k, a0(m));
+    case "random_normal_truncated": return (m) => rtnorm(m[ss]!, m[ps]!, k, a0(m), a1(m), a2(m), a3(m));
+    default: return (m) => rnorm(m[ss]!, m[ps]!, k, a0(m), a1(m));
+  }
 }
 
 /** Closures that replicate builtins.ts exactly, without per-call allocation. */

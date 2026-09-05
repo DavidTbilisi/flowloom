@@ -168,9 +168,13 @@ export function freeVars(e: Expr, out: Set<string> = new Set()): Set<string> {
       freeVars(e.right, out);
       break;
     case "call":
-      // function name is not a free variable; its args may be. sum()'s trailing
-      // arguments are axis (dimension) labels, not value references — skip them.
-      if (e.name.toLowerCase() === "sum") {
+      // The function name is not a free variable; its args may be. sum()/mean()
+      // are only ever array reducers, so their trailing arguments are axis
+      // (dimension) labels rather than value references — skip them. min()/max()
+      // also have a scalar meaning, so their args are always walked; a dim name
+      // that surfaces from one is a declared name, and validateSubscripts is
+      // where a dimension used as a value is caught.
+      if (e.name.toLowerCase() === "sum" || e.name.toLowerCase() === "mean") {
         if (e.args[0]) freeVars(e.args[0], out);
       } else {
         for (const a of e.args) freeVars(a, out);

@@ -444,6 +444,46 @@ Drive a model over time:
 | `pulse(t0, width)` | `1` during `[t0, t0+width)`, else `0`. |
 | `ramp(slope, t0, t1)` | `0` before `t0`; a line of the given slope between `t0` and `t1`; frozen after. |
 
+### Randomness
+
+Every `random*()` is a pure hash of `(seed, step, draw-index)` — a *counter-based*
+PRNG, not a stream with hidden state. So the value is identical across RK4's four
+sub-stages (the integrated vector field stays well-defined), bit-identical across
+all three backends, and reproducible: `sim seed=N` fixes a run, and the default
+seed `0` means an unseeded model is reproducible too.
+
+| Call | Distribution |
+|---|---|
+| `random()` | Uniform on `[0, 1)`. |
+| `random_uniform(lo, hi)` | Uniform on `[lo, hi)`. |
+| `random_normal(mean, sd)` | Gaussian. |
+| `random_lognormal(median, sigma)` | Positive and right-skewed — a delivery time, a project duration, an income. Note the mean is `median · e^{σ²/2}`, above the median. |
+| `random_triangular(lo, mode, hi)` | The three-point estimate (worst / most likely / best) as a distribution — what an expert judgement looks like with no data behind it. |
+| `random_exponential(rate)` | A waiting time at a constant hazard rate; mean `1/rate`. |
+| `random_poisson(mean)` | A non-negative integer count; variance equals the mean, which is the point. |
+| `random_normal_truncated(mean, sd, lo, hi)` | A normal that genuinely lives in `[lo, hi]`. |
+
+That last one is not `clamp(random_normal(…), lo, hi)`. Clamping piles all the
+tail's probability onto the two bounds — a different distribution wearing the
+same name. The inverse CDF is evaluated on the truncated interval instead, so
+the shape *inside* the interval is right.
+
+Every sampler uses a **fixed** number of uniform draws (inverse CDF, never
+rejection sampling). That is a hard requirement rather than a preference: a call
+site is assigned its draw indices once at compile time, so a sampler whose draw
+count depended on the value it happened to produce would collide with the next
+call site's indices and quietly correlate two supposedly independent streams.
+
+Two things to keep in mind when a `random*()` sits inside a rate: the draw is
+resampled once per step and is **not** scaled by `dt`, so `change(X) =
+random_normal(0, sd)` has `Var(X) ∝ dt` — halving the step halves the variance,
+which means the *process* changes with `dt`. `check --numerics` flags exactly
+that. And for parameter uncertainty you almost always want
+[`param x = 0.03 ± 0.01`](#-tol--in-lohi--how-well-a-knob-is-known) instead,
+which samples once per *run* rather than every step. Pink (1/f) noise is not
+provided: it needs state, so build it from a stock driven by a white-noise
+source.
+
 ### Delays and smoothing (stateful)
 
 These carry state across time. flowloom compiles each into internal stocks, so

@@ -8,7 +8,7 @@
 
 import type { SimPlan, DerivBackend } from "../codegen.js";
 import { lookupTable } from "../builtins.js";
-import { runif, rnorm } from "../rng.js";
+import { runif, rnorm, rlnorm, rtri, rexp, rpois, rtnorm } from "../rng.js";
 import { compileWasm, type WasmProgram } from "./codegen.js";
 
 export function wasmAvailable(): boolean {
@@ -35,7 +35,7 @@ function imports(program: WasmProgram): WebAssembly.Imports {
       },
       lookup: (id: number, x: number) => lookupTable(tp[id]!, x, th[id] === true),
       // Same functions the TS backend calls ⇒ bit-identical seeded randomness.
-      runif, rnorm,
+      runif, rnorm, rlnorm, rtri, rexp, rpois, rtnorm,
     },
   };
 }

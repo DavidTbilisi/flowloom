@@ -66,31 +66,37 @@ change() rate; everything else is recomputed every step.
   E     Euler's number e ≈ 2.71828.
 
 ### Builtins (stateless)
-  sum(X, axis?, …)         Total of a subscripted X. sum(X) collapses every dimension to a scalar; sum(X, dim) collapses only that axis and keeps the rest (e.g. row[from] = sum(Trade, to)).
-  min(a, b, …)             Smallest of its arguments.
-  max(a, b, …)             Largest of its arguments.
-  abs(x)                   Absolute value.
-  exp(x)                   e raised to the power x.
-  ln(x)                    Natural logarithm.
-  log(x)                   Natural logarithm (same as ln).
-  log10(x)                 Base-10 logarithm.
-  sqrt(x)                  Square root.
-  pow(x, y)                x raised to the power y (same as x ^ y).
-  sin(x)                   Sine (radians).
-  cos(x)                   Cosine (radians).
-  tan(x)                   Tangent (radians).
-  floor(x)                 Round down to an integer.
-  ceil(x)                  Round up to an integer.
-  round(x)                 Round to the nearest integer.
-  sign(x)                  −1, 0, or +1 by the sign of x.
-  if(cond, a, b)           a when cond is non-zero, otherwise b. Both branches are evaluated.
-  clamp(x, lo, hi)         x held within the range [lo, hi].
-  step(height, t0)         0 before t0, then height — a sudden change.
-  pulse(t0, width)         1 during [t0, t0+width), else 0 — a temporary kick.
-  ramp(slope, t0, t1)      A linear ramp of the given slope between two times.
-  random()                 A uniform random number in [0, 1), resampled each step. Seed with `sim seed=…` (default 0, so runs are reproducible).
-  random_uniform(lo, hi)   A uniform random number in [lo, hi), resampled each step.
-  random_normal(mean, sd)  A normally-distributed random number with the given mean and standard deviation.
+  sum(X, axis?, …)                           Total of a subscripted X. sum(X) collapses every dimension to a scalar; sum(X, dim) collapses only that axis and keeps the rest (e.g. row[from] = sum(Trade, to)).
+  mean(X, axis?, …)                          Average over a subscripted X — sum divided by the element count. Same axis rules as sum(): mean(X) collapses every dimension, mean(X, dim) only that one.
+  min(a, b, …)  |  min(X, axis?, …)          Smallest of its arguments — or, given a bare subscripted name, the smallest element of that array (same axis rules as sum). min(Pop) reduces; min(Pop[North], 5) is the scalar form.
+  max(a, b, …)  |  max(X, axis?, …)          Largest of its arguments — or, given a bare subscripted name, the largest element of that array (same axis rules as sum). max(Pop) reduces; max(Pop[North], 5) is the scalar form.
+  abs(x)                                     Absolute value.
+  exp(x)                                     e raised to the power x.
+  ln(x)                                      Natural logarithm.
+  log(x)                                     Natural logarithm (same as ln).
+  log10(x)                                   Base-10 logarithm.
+  sqrt(x)                                    Square root.
+  pow(x, y)                                  x raised to the power y (same as x ^ y).
+  sin(x)                                     Sine (radians).
+  cos(x)                                     Cosine (radians).
+  tan(x)                                     Tangent (radians).
+  floor(x)                                   Round down to an integer.
+  ceil(x)                                    Round up to an integer.
+  round(x)                                   Round to the nearest integer.
+  sign(x)                                    −1, 0, or +1 by the sign of x.
+  if(cond, a, b)                             a when cond is non-zero, otherwise b. Both branches are evaluated.
+  clamp(x, lo, hi)                           x held within the range [lo, hi].
+  step(height, t0)                           0 before t0, then height — a sudden change.
+  pulse(t0, width)                           1 during [t0, t0+width), else 0 — a temporary kick.
+  ramp(slope, t0, t1)                        A linear ramp of the given slope between two times.
+  random()                                   A uniform random number in [0, 1), resampled each step. Seed with `sim seed=…` (default 0, so runs are reproducible).
+  random_uniform(lo, hi)                     A uniform random number in [lo, hi), resampled each step.
+  random_normal(mean, sd)                    A normally-distributed random number with the given mean and standard deviation.
+  random_lognormal(median, sigma)            A positive, right-skewed draw: exp(ln(median) + sigma·normal). The shape of a delivery time, a project duration, an income — anything bounded below by zero with a long tail.
+  random_triangular(lo, mode, hi)            The three-point estimate — worst case, most likely, best case — as a distribution. What an expert judgement actually looks like when you have no data.
+  random_exponential(rate)                   A waiting time at a constant hazard rate; mean 1/rate. The gap between Poisson arrivals.
+  random_poisson(mean)                       A non-negative integer count with the given mean — arrivals in a period, failures in a month. Variance equals the mean, which is the point.
+  random_normal_truncated(mean, sd, lo, hi)  A normal that genuinely lives in [lo, hi]: the inverse CDF is evaluated on the truncated interval, so the shape inside is right. Clamping a normal instead piles probability on the two bounds — a different distribution with the same name.
 
 ### Stateful builtins — carry state across steps
   smooth(input, τ)               First-order exponential smoothing with time constant τ.

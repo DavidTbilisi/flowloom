@@ -26,6 +26,9 @@ const EXTRA_ARITY: Record<string, [number, number]> = {
   previous: [1, 2], // previous(X, init?)
   delay_fixed: [2, 3], // delay_fixed(X, length, init?)
   sum: [1, Infinity], // sum(X) collapses all dims; sum(X, axis, …) collapses named axes
+  // `mean` exists only as an array reducer — min/max are already variadic
+  // builtins and double as reducers when handed a bare subscripted name.
+  mean: [1, Infinity],
 };
 
 const err = (loc: Loc, message: string): Diagnostic => ({ severity: "error", loc, message });
@@ -36,8 +39,8 @@ export function validateModel(model: Model): Diagnostic[] {
   const out: Diagnostic[] = [];
   const tables = new Set(model.tables.keys());
   const arity = (name: string): [number, number] | undefined => ARITY[name] ?? EXTRA_ARITY[name];
-  // Every name we'll suggest from: builtins, stateful, sum, and lookup tables.
-  const known = [...Object.keys(ARITY), ...STATEFUL, "sum", ...tables];
+  // Every name we'll suggest from: builtins, stateful, the array reducers, and lookup tables.
+  const known = [...Object.keys(ARITY), ...STATEFUL, "sum", "mean", ...tables];
 
   const visit = (e: Expr, loc: Loc): void => {
     switch (e.kind) {

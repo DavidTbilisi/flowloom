@@ -79,6 +79,11 @@ export const ARITY: Record<string, [number, number]> = {
   random: [0, 0],
   random_uniform: [2, 2],
   random_normal: [2, 2],
+  random_lognormal: [2, 2],
+  random_triangular: [3, 3],
+  random_exponential: [1, 1],
+  random_poisson: [1, 1],
+  random_normal_truncated: [4, 4],
 };
 
 /** Names of the stateful builtins handled by the compiler: the delay/smooth

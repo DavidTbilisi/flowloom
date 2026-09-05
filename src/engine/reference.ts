@@ -60,8 +60,9 @@ const CONSTS: RefEntry[] = [
 // Arity is attached from ARITY below, so it can't drift from the validator.
 const BUILTINS: Array<Omit<RefEntry, "arity">> = [
   { name: "sum", kind: "builtin", signature: "sum(X, axis?, …)", doc: "subscripts", summary: "Total of a subscripted X. sum(X) collapses every dimension to a scalar; sum(X, dim) collapses only that axis and keeps the rest (e.g. row[from] = sum(Trade, to))." },
-  { name: "min", kind: "builtin", signature: "min(a, b, …)", summary: "Smallest of its arguments." },
-  { name: "max", kind: "builtin", signature: "max(a, b, …)", summary: "Largest of its arguments." },
+  { name: "mean", kind: "builtin", signature: "mean(X, axis?, …)", doc: "subscripts", summary: "Average over a subscripted X — sum divided by the element count. Same axis rules as sum(): mean(X) collapses every dimension, mean(X, dim) only that one." },
+  { name: "min", kind: "builtin", signature: "min(a, b, …)  |  min(X, axis?, …)", doc: "subscripts", summary: "Smallest of its arguments — or, given a bare subscripted name, the smallest element of that array (same axis rules as sum). min(Pop) reduces; min(Pop[North], 5) is the scalar form." },
+  { name: "max", kind: "builtin", signature: "max(a, b, …)  |  max(X, axis?, …)", doc: "subscripts", summary: "Largest of its arguments — or, given a bare subscripted name, the largest element of that array (same axis rules as sum). max(Pop) reduces; max(Pop[North], 5) is the scalar form." },
   { name: "abs", kind: "builtin", signature: "abs(x)", summary: "Absolute value." },
   { name: "exp", kind: "builtin", signature: "exp(x)", summary: "e raised to the power x." },
   { name: "ln", kind: "builtin", signature: "ln(x)", summary: "Natural logarithm." },
@@ -84,6 +85,11 @@ const BUILTINS: Array<Omit<RefEntry, "arity">> = [
   { name: "random", kind: "builtin", signature: "random()", doc: "inputs", summary: "A uniform random number in [0, 1), resampled each step. Seed with `sim seed=…` (default 0, so runs are reproducible)." },
   { name: "random_uniform", kind: "builtin", signature: "random_uniform(lo, hi)", doc: "inputs", summary: "A uniform random number in [lo, hi), resampled each step." },
   { name: "random_normal", kind: "builtin", signature: "random_normal(mean, sd)", doc: "inputs", summary: "A normally-distributed random number with the given mean and standard deviation." },
+  { name: "random_lognormal", kind: "builtin", signature: "random_lognormal(median, sigma)", doc: "inputs", summary: "A positive, right-skewed draw: exp(ln(median) + sigma·normal). The shape of a delivery time, a project duration, an income — anything bounded below by zero with a long tail." },
+  { name: "random_triangular", kind: "builtin", signature: "random_triangular(lo, mode, hi)", doc: "inputs", summary: "The three-point estimate — worst case, most likely, best case — as a distribution. What an expert judgement actually looks like when you have no data." },
+  { name: "random_exponential", kind: "builtin", signature: "random_exponential(rate)", doc: "inputs", summary: "A waiting time at a constant hazard rate; mean 1/rate. The gap between Poisson arrivals." },
+  { name: "random_poisson", kind: "builtin", signature: "random_poisson(mean)", doc: "inputs", summary: "A non-negative integer count with the given mean — arrivals in a period, failures in a month. Variance equals the mean, which is the point." },
+  { name: "random_normal_truncated", kind: "builtin", signature: "random_normal_truncated(mean, sd, lo, hi)", doc: "inputs", summary: "A normal that genuinely lives in [lo, hi]: the inverse CDF is evaluated on the truncated interval, so the shape inside is right. Clamping a normal instead piles probability on the two bounds — a different distribution with the same name." },
 ];
 
 // ── stateful builtins (compiled into internal stocks; see compile.ts) ─────────

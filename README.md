@@ -293,7 +293,8 @@ flow draining = drainCurve(Water)
 ### Randomness (seeded, reproducible)
 
 ```flow
-flow gain = Balance * (ret + random_normal(0, vol))   # also random(), random_uniform(lo,hi)
+flow gain = Balance * (ret + random_normal(0, vol))   # also uniform, lognormal, triangular,
+                                                     # exponential, Poisson, truncated normal
 sim dt=1 to=60 seed=1                                  # same seed → identical run every time
 ```
 
@@ -393,7 +394,8 @@ canonical source so they never drift.)
 - [x] compiled (slot-based) evaluator + a generated **WASM** backend for large
       models, run off-thread in a Web Worker
 - [x] units checking (dimensional analysis) from the `[unit]` annotations
-- [x] seeded randomness (`random`/`random_uniform`/`random_normal`) + Monte Carlo bands
+- [x] seeded randomness (uniform, normal, lognormal, triangular, exponential,
+      Poisson, truncated normal) + Monte Carlo bands
 - [x] data import + calibration (fit params to an observed CSV by normalised-RMSE)
 - [x] studio plot overlays: Monte Carlo bands, observed-data overlay, model comparison, in-app calibrate
 - [x] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine
