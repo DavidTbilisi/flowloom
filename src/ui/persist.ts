@@ -121,3 +121,70 @@ export function enableDropLoad(el: HTMLElement, onLoad: (text: string) => void):
     if (file) file.text().then(onLoad);
   });
 }
+
+// ── Autosave and recents ────────────────────────────────────────────────────
+// The URL hash carries the model, so a *shared* link survives — but a plain
+// reload of a tab that was never shared did not, and the only history was
+// whatever the browser happened to keep. Two small stores fix that without
+// pretending to be a file system: the working text, and the models you had open.
+
+const AUTOSAVE = "flowloom.autosave";
+const RECENTS = "flowloom.recents";
+const MAX_RECENTS = 8;
+/** Well under the ~5 MB localStorage budget, and past any hand-written model. */
+const MAX_SAVE = 256 * 1024;
+
+export interface Recent {
+  /** Display name, from the model's first comment or first stock. */
+  name: string;
+  source: string;
+  /** Epoch ms, for ordering and for "2 minutes ago". */
+  at: number;
+}
+
+/** Remember the working text so a reload does not lose it. */
+export function saveAutosave(source: string): void {
+  try {
+    if (source.length > MAX_SAVE) return;
+    localStorage.setItem(AUTOSAVE, source);
+  } catch { /* private mode, or a full quota — autosave is a convenience */ }
+}
+
+export function readAutosave(): string | null {
+  try { return localStorage.getItem(AUTOSAVE); } catch { return null; }
+}
+
+export function clearAutosave(): void {
+  try { localStorage.removeItem(AUTOSAVE); } catch { /* ignore */ }
+}
+
+export function readRecents(): Recent[] {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENTS) ?? "[]") as unknown;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((r): r is Recent =>
+      !!r && typeof (r as Recent).source === "string" && typeof (r as Recent).name === "string");
+  } catch { return []; }
+}
+
+/**
+ * Record a model in the recents list, most recent first.
+ *
+ * Keyed by *text*, so re-opening the same model moves it up rather than
+ * duplicating it. Callers push only when a different model is adopted — never
+ * on every edit, or a single session would fill the list with eight
+ * near-identical snapshots of one model.
+ */
+export function pushRecent(source: string): void {
+  const trimmed = source.trim();
+  if (!trimmed || trimmed.length > MAX_SAVE) return;
+  try {
+    const list = readRecents().filter((r) => r.source !== trimmed);
+    list.unshift({ name: modelSlug(trimmed).replace(/-/g, " "), source: trimmed, at: Date.now() });
+    localStorage.setItem(RECENTS, JSON.stringify(list.slice(0, MAX_RECENTS)));
+  } catch { /* ignore */ }
+}
+
+export function clearRecents(): void {
+  try { localStorage.removeItem(RECENTS); } catch { /* ignore */ }
+}

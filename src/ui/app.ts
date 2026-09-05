@@ -46,7 +46,8 @@ function modelUsesRandom(model: Model): boolean {
   );
 }
 import { renderHelp } from "./help.js";
-import { readHash, writeHash, shareUrl, downloadFlow, download, enableDropLoad, resultCsv, downloadCanvasPng, svgMarkup, modelSlug } from "./persist.js";
+import { readHash, writeHash, shareUrl, downloadFlow, download, enableDropLoad, resultCsv, downloadCanvasPng, svgMarkup, modelSlug,
+  saveAutosave, readAutosave, pushRecent, readRecents, clearRecents, type Recent } from "./persist.js";
 import { mountEditor } from "./editor.js";
 import { mountStatusBar } from "./statusbar.js";
 import { startTour, type TourCtx, type Tour } from "./tour.js";
@@ -285,6 +286,7 @@ export function mountApp(root: HTMLElement): Store {
     store.build(src.value);
     reflectSettings();
     writeHash(src.value);
+    saveAutosave(src.value);
   }
   function scheduleRebuild() {
     window.clearTimeout(buildTimer);
@@ -365,9 +367,46 @@ export function mountApp(root: HTMLElement): Store {
   };
   enableDropLoad($<HTMLElement>(".editor-wrap"), (text) => { editor.setValue(text); rebuild(); resetHistory(); });
 
+  // ── recents ──
+  // The URL hash carries a *shared* model, so a link survives; a plain reload of
+  // a tab nobody shared did not, and there was no history at all. `openModel` is
+  // the one path that adopts a different model, so it is where a recent is
+  // recorded — an editing session stays one entry rather than eight snapshots.
+  const recentSel = $<HTMLSelectElement>("#recent");
+
+  function renderRecents() {
+    const list: Recent[] = readRecents();
+    recentSel.innerHTML = `<option value="">recent…</option>`
+      + list.map((r, i) => `<option value="${i}">${escapeHtml(r.name)}</option>`).join("")
+      + (list.length ? `<option value="clear">— clear list —</option>` : "");
+    recentSel.hidden = list.length === 0;
+    (recentSel.previousElementSibling as HTMLElement | null)?.toggleAttribute("hidden", list.length === 0);
+  }
+
+  /** Adopt a different model: record where we were, then switch. */
+  function openModel(text: string, exampleName = "") {
+    pushRecent(src.value);   // where we were, as it stands now — edits included
+    editor.setValue(text);
+    rebuild();
+    store.setFrame(store.frameCount - 1);
+    resetHistory();
+    pushRecent(text);        // …and where we now are, at the top
+    exampleSel.value = exampleName;
+    renderRecents();
+  }
+
+  recentSel.onchange = () => {
+    const v = recentSel.value;
+    recentSel.value = "";
+    if (!v) return;
+    if (v === "clear") { clearRecents(); renderRecents(); return; }
+    const r = readRecents()[Number(v)];
+    if (r) openModel(r.source);
+  };
+
   exampleSel.onchange = () => {
     const ex = EXAMPLES.find((e) => e.name === exampleSel.value);
-    if (ex) { editor.setValue(ex.source); rebuild(); store.setFrame(store.frameCount - 1); resetHistory(); }
+    if (ex) openModel(ex.source, ex.name);
   };
 
   // toolbar settings rewrite the canonical `sim` line so the text stays the source of truth
@@ -1066,6 +1105,35 @@ export function mountApp(root: HTMLElement): Store {
   // result lands or the computing flag flips — not on every tab switch.
   let lastResult: object | undefined;
   let lastComputing: boolean | undefined;
+  // ── plot scales and the phase portrait ──
+  // A model whose series span orders of magnitude is unreadable on one linear
+  // axis, and a limit cycle is invisible on a time plot however it is scaled.
+  const logYEl = $<HTMLInputElement>("#logY");
+  const phaseXEl = $<HTMLSelectElement>("#phaseX");
+  const phaseYEl = $<HTMLSelectElement>("#phaseY");
+  logYEl.onchange = () => store.setLogY(logYEl.checked);
+
+  const applyPhase = () => {
+    const x = phaseXEl.value, y = phaseYEl.value;
+    store.setPhase(x && y ? { x, y } : null);
+  };
+  phaseXEl.onchange = applyPhase;
+  phaseYEl.onchange = applyPhase;
+
+  /** Repopulate the phase pickers from the current run, keeping any live choice. */
+  function refreshPhasePickers() {
+    const names = store.run.result?.names ?? [];
+    for (const [el, blank] of [[phaseXEl, "— time —"], [phaseYEl, "—"]] as const) {
+      const keep = el.value;
+      el.innerHTML = `<option value="">${blank}</option>` +
+        names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+      if (names.includes(keep)) el.value = keep;
+    }
+    // The store drops a phase pair whose series an edit removed; mirror that.
+    if (!store.phase) { phaseXEl.value = ""; phaseYEl.value = ""; }
+    logYEl.checked = store.logY;
+  }
+
   // ── exporting the results ──
   // The model text could always leave (download, link, clipboard); the numbers
   // and the pictures could not, which is a dead end at exactly the point the
@@ -1094,6 +1162,7 @@ export function mountApp(root: HTMLElement): Store {
       lastComputing = store.computing;
       busyEl.hidden = !store.computing;
       renderStructure();
+      refreshPhasePickers();
       syncFrameUI();
     }
     root.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((b) => {
@@ -1160,13 +1229,20 @@ export function mountApp(root: HTMLElement): Store {
     if (store.tab === "diagram") diagram.render(store);
   });
 
-  // boot — a model in the URL hash (a shared link) wins over the default example
+  // boot — precedence is deliberate: a shared link is a request for *that*
+  // model, and beats what this browser was last doing; the autosave beats the
+  // default example, so a reload of a tab nobody shared does not lose the work.
   const shared = readHash();
-  editor.setValue(shared ?? DEFAULT_EXAMPLE.source);
-  exampleSel.value = shared ? "" : DEFAULT_EXAMPLE.name;
+  const restored = shared ? null : readAutosave();
+  editor.setValue(shared ?? restored ?? DEFAULT_EXAMPLE.source);
+  exampleSel.value = shared || restored ? "" : DEFAULT_EXAMPLE.name;
   rebuild();
   resetHistory();
   store.setTab("plot");
+  // The model we opened with is the first recent; later ones are recorded when
+  // a *different* model is loaded, so an editing session stays one entry.
+  pushRecent(src.value);
+  renderRecents();
 
   // first visit (and not arriving via a shared link): offer the tour once
   try {
@@ -1233,6 +1309,8 @@ const SHELL = `
   <button id="theme" class="ghost" title="toggle light / dark theme" aria-label="toggle light or dark theme">🌙</button>
   <label class="tag" for="example">example</label>
   <select id="example" data-help="ui:example"></select>
+  <label class="tag" for="recent">recent</label>
+  <select id="recent" data-help="ui:recent" title="models you had open in this browser"></select>
   <div class="learn-wrap">
     <button id="learn" class="ghost" data-help="ui:learn">？ Learn</button>
     <div id="learnMenu" class="learn-menu"></div>
@@ -1289,6 +1367,11 @@ const SHELL = `
         </label>
         <button id="scTableBtn" class="ghost" title="base vs every scenario, on the visible series" data-help="ui:scenario-table" hidden>▤ Scenarios table</button>
         <button id="clearOvBtn" class="ghost" title="remove all overlays" data-help="ui:clear-overlays" hidden>✕ overlays</button>
+        <label class="logy" data-help="ui:logy"><input type="checkbox" id="logY" /> log y</label>
+        <label class="phase-pick" data-help="ui:phase">◌ Phase
+          <select id="phaseX" title="x axis (— for the time series)"></select>
+          <select id="phaseY" title="y axis"></select>
+        </label>
         <button id="csvBtn" class="ghost" title="download the visible series as CSV" data-help="ui:export-csv">⤓ CSV</button>
         <button id="pngBtn" class="ghost" title="download the plot as a PNG" data-help="ui:export-png">⤓ PNG</button>
         <span id="calParams" class="cal-params" data-help="ui:calibrate" hidden></span>

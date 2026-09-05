@@ -462,3 +462,9 @@ a { color: var(--accent); }
   }
   .busy .spin { border-top-color: var(--accent); }  /* a static ring, still visible */
 }
+
+/* log-y toggle and phase-portrait pickers, in the plot control row */
+.plot-ctrls .logy { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); cursor: pointer; }
+.plot-ctrls .logy input { margin: 0; }
+.plot-ctrls .phase-pick { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
+.plot-ctrls .phase-pick select { max-width: 120px; font-size: 11px; }

@@ -56,6 +56,13 @@ export class Store {
   scenario: string = BASE_SCENARIO;
   /** True while a large model is being simulated in the worker. */
   computing = false;
+  /** Log-scale the plot's y axis. A model whose series span orders of magnitude
+   *  (a population next to a rate) is unreadable on one linear axis. */
+  logY = false;
+  /** Phase portrait: one series against another rather than against time — the
+   *  view that shows a limit cycle as a closed orbit instead of two wiggles.
+   *  View state like `visible`; the text stays canonical. */
+  phase: { x: string; y: string } | null = null;
 
   // animation clock
   frame = 0; // index into result.t
@@ -100,6 +107,17 @@ export class Store {
 
   setTab(tab: Tab) {
     this.tab = tab;
+    this.notify();
+  }
+
+  setLogY(on: boolean) {
+    this.logY = on;
+    this.notify();
+  }
+
+  /** Choose the phase-portrait axes, or null to go back to the time series. */
+  setPhase(p: { x: string; y: string } | null) {
+    this.phase = p;
     this.notify();
   }
 
@@ -210,6 +228,9 @@ export class Store {
   private applyResult(model: Model, result: SimResult, loops?: LoopReport) {
     this.computing = false;
     this.run = { ok: true, model, result, loops, diagnostics: model.diagnostics, note: result.note };
+    // A phase pair naming a series the edit removed would draw nothing and
+    // explain nothing; fall back to the time series, as the scenario does.
+    if (this.phase && !(result.series.has(this.phase.x) && result.series.has(this.phase.y))) this.phase = null;
     const def = (model.plot.length ? model.plot : result.stockNames).filter((n) => result.series.has(n));
     this.visible = new Set(def.length ? def : result.names.slice(0, 3));
     this.frame = result.t.length - 1; // show the finished run by default

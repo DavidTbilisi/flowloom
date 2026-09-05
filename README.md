@@ -108,8 +108,14 @@ dynamics, and check the numbers. Validate, don't vibe.
   diagram, loops, and table all re-simulate at once (Vensim's "SyntheSim", in the
   browser). The slider edits the *text*, so what you tuned is what's saved.
 - **Plots that look designed** — round-number axes, gradient area fills, and
-  hover-to-scrub the time cursor across every series.
+  hover-to-scrub the time cursor across every series. Toggle a **log y axis**
+  when the series span orders of magnitude, or switch to a **phase portrait**
+  (one series against another) — the view that shows a limit cycle as a closed
+  orbit rather than two wiggles.
 - **A data table and a time scrubber**, all synchronized to one clock.
+- **Work that can leave** — ⤓ CSV of the visible series, ⤓ PNG of the plot, ⤓ SVG
+  of the diagram, alongside the shareable link and `.flow` download. The working
+  text is autosaved and the models you have opened are one dropdown away.
 - **Learn-as-you-go** — a syntax-highlighted editor, a contextual-help bar that
   explains whatever the mouse is over, and a **Learn** button with a guided tour,
   interactive lessons, and example walkthroughs. See

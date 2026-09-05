@@ -102,3 +102,82 @@ test("a run in a worker can be cancelled", async ({ page }) => {
   await expect(page.evaluate(() => (window as any).flowloom.cancellable)).resolves.toBe(false);
   await expect(page.evaluate(() => (window as any).flowloom.run.note)).resolves.toMatch(/cancelled/);
 });
+
+test("the y axis can be log-scaled", async ({ page }) => {
+  // A model spanning four orders of magnitude — unreadable on one linear axis.
+  await page.evaluate(() => (window as any).flowloom.build(
+    "stock Small = 0.01\nstock Big = 1000\nchange(Small) = 0.02 * Small\nchange(Big) = 0.02 * Big\nsim dt=0.5 to=60 method=rk4\nplot Small Big",
+  ));
+  await expect(page.evaluate(() => (window as any).flowloom.logY)).resolves.toBe(false);
+  await page.locator("#logY").check();
+  await expect(page.evaluate(() => (window as any).flowloom.logY)).resolves.toBe(true);
+  // it survives a rebuild, being view state like the visible set
+  await page.evaluate(() => (window as any).flowloom.build((window as any).flowloom.source + "\n# edited"));
+  await expect(page.evaluate(() => (window as any).flowloom.logY)).resolves.toBe(true);
+});
+
+test("a phase portrait plots one series against another", async ({ page }) => {
+  await page.evaluate(() => (window as any).flowloom.build(
+    ["stock Prey = 100", "stock Pred = 20",
+     "change(Prey) = 0.6 * Prey - 0.02 * Prey * Pred",
+     "change(Pred) = 0.01 * Prey * Pred - 0.5 * Pred",
+     "sim dt=0.02 to=40 method=rk4", "plot Prey Pred"].join("\n"),
+  ));
+  await page.locator("#phaseX").selectOption("Prey");
+  await page.locator("#phaseY").selectOption("Pred");
+  await expect(page.evaluate(() => (window as any).flowloom.phase)).resolves.toEqual({ x: "Prey", y: "Pred" });
+
+  // an edit that removes the series drops back to the time plot rather than
+  // drawing nothing
+  await page.evaluate(() => (window as any).flowloom.build(
+    "stock Cash = 0\nchange(Cash) = 1\nsim dt=1 to=10 method=euler",
+  ));
+  await expect(page.evaluate(() => (window as any).flowloom.phase)).resolves.toBeNull();
+  await expect(page.locator("#phaseX")).toHaveValue("");
+});
+
+test("the working text is autosaved and survives a reload", async ({ page }) => {
+  const edited = "# my own model\nstock Widgets = 7\nchange(Widgets) = 3\nsim dt=1 to=5 method=euler";
+  await page.evaluate((t) => (window as any).flowloom.build(t), edited);
+  await page.locator("#src").fill(edited);
+  await page.locator("#src").blur();
+  await page.waitForFunction(() => localStorage.getItem("flowloom.autosave")?.includes("Widgets"));
+
+  // A real reload: changing only the fragment navigates within the same
+  // document, which would leave the editor as it already is and prove nothing.
+  await page.goto("/?reload=1");
+  await page.waitForFunction(() => (window as any).flowloom?.run?.ok === true);
+  await expect(page.locator("#src")).toHaveValue(/stock Widgets = 7/);
+});
+
+test("a shared link still wins over the autosave", async ({ page }) => {
+  await page.evaluate(() => localStorage.setItem("flowloom.autosave", "stock Autosaved = 1\nchange(Autosaved) = 0\nsim dt=1 to=2"));
+  const shared = "stock Shared = 42\nchange(Shared) = 0\nsim dt=1 to=2 method=euler";
+  const hash = await page.evaluate((t) => "#m=" + btoa(String.fromCharCode(...new TextEncoder().encode(t))), shared);
+  await page.goto(`/?reload=1${hash}`);
+  await page.waitForFunction(() => (window as any).flowloom?.run?.ok === true);
+  // a link is a request for *that* model, not for what this browser was doing
+  await expect(page.locator("#src")).toHaveValue(/stock Shared = 42/);
+});
+
+test("opening a different model records the one you left", async ({ page }) => {
+  // Start clean: with an autosave present the app opens *that* rather than the
+  // default example, and "a different example" would not be different.
+  await page.evaluate(() => { localStorage.removeItem("flowloom.recents"); localStorage.removeItem("flowloom.autosave"); });
+  await page.goto("/?reload=1");
+  await page.waitForFunction(() => (window as any).flowloom?.run?.ok === true);
+  const first = await page.locator("#src").inputValue();
+
+  // switch examples: the list gains the model we left and the one we opened
+  const current = await page.locator("#example").inputValue();
+  const options = await page.locator("#example option").allTextContents();
+  const other = options.find((o) => o && o !== current)!;
+  await page.locator("#example").selectOption({ label: other });
+  await page.waitForFunction((t) => (document.querySelector("#src") as HTMLTextAreaElement).value !== t, first);
+
+  const recents = await page.evaluate(() => JSON.parse(localStorage.getItem("flowloom.recents") ?? "[]"));
+  expect(recents.length).toBeGreaterThanOrEqual(2);
+  expect(recents[0].source).toBe((await page.locator("#src").inputValue()).trim());
+  // and the picker offers them
+  await expect(page.locator("#recent option")).not.toHaveCount(0);
+});
