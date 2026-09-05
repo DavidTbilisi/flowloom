@@ -27,6 +27,7 @@ export {
   type SensitivityRow,
 } from "./sweep.js";
 export { lintModel } from "./lint.js";
+export { checkNumerics, type NumericsReport, type NumericsSeries, type NumericsAdvisory, type NumericsOptions, type AdvisoryKind } from "./numerics.js";
 export {
   parseUnit,
   inferDim,
@@ -60,4 +61,5 @@ export { independentLoops, type SilsResult } from "./sils.js";
 export { runExpects, judge, loopMetric, formatExpect, type ExpectReport, type ExpectResult } from "./expect.js";
 export { diffModels, type DiffOptions, type DiffResult, type ScenarioDiff, type SeriesDiff, type StructureDiff, type LoopCensus } from "./diff.js";
 export { timeGrainParams, knobParams } from "./grain.js";
+export { paramRanges, type ParamRange } from "./uncertainty.js";
 export { leverageLadder, MEADOWS_RUNGS, type LeverageResult, type LadderRung, type Lever } from "./leverage.js";

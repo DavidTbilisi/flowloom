@@ -1,0 +1,61 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "flowloom",
+  "scopeName": "source.flow",
+  "fileTypes": [
+    "flow"
+  ],
+  "patterns": [
+    {
+      "name": "comment.line.number-sign.flow",
+      "begin": "#",
+      "end": "$",
+      "patterns": [
+        {
+          "name": "keyword.other.annotation.flow",
+          "match": "@(rung|pos)\\b"
+        }
+      ]
+    },
+    {
+      "name": "keyword.control.flow",
+      "match": "^\\s*(scenario|change|switch|expect|stock|param|const|table|flow|link|data|plot|aux|sim|d)\\b"
+    },
+    {
+      "name": "entity.name.function.rate.flow",
+      "match": "^\\s*(change|d)(?=\\s*\\()"
+    },
+    {
+      "name": "support.function.flow",
+      "match": "\\b(delay_fixed|previous|smoothi|smooth3|smooth|delay1|delay3|log10|floor|round|clamp|pulse|sqrt|ceil|sign|step|ramp|min|max|abs|exp|log|pow|sin|cos|tan|ln|if)(?=\\s*\\()"
+    },
+    {
+      "name": "constant.language.flow",
+      "match": "\\b(time|PI|dt|E|t)\\b"
+    },
+    {
+      "name": "constant.numeric.flow",
+      "match": "\\b\\d+(\\.\\d+)?([eE][+-]?\\d+)?\\b|\\B\\.\\d+"
+    },
+    {
+      "name": "entity.name.type.unit.flow",
+      "match": "\\[[^\\]]*\\]"
+    },
+    {
+      "name": "keyword.operator.range.flow",
+      "match": "±|\\+/-|\\bin\\b(?=\\s*-?[\\d.]+\\s*\\.\\.)|\\.\\."
+    },
+    {
+      "name": "keyword.operator.flow",
+      "match": "->|→|>=|<=|==|!=|&&|\\|\\||\\*\\*|[-+*/%^<>!=]"
+    },
+    {
+      "name": "constant.language.boolean.flow",
+      "match": "\\b(on|off|true|false|yes|no)\\b"
+    },
+    {
+      "name": "variable.other.flow",
+      "match": "\\b[A-Za-z_]\\w*(\\.[A-Za-z_]\\w*)*\\b"
+    }
+  ]
+}

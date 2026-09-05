@@ -1,6 +1,9 @@
 # Build the studio and publish it to GitHub Pages on every push to main.
 # The app is a static Vite bundle (vite.config.ts sets base: "./", so it works
-# from any Pages sub-path) — no backend. Unit tests gate the deploy.
+# from any Pages sub-path) — no backend.
+#
+# The gate lives in ci.yml (typecheck, unit, CLI build, e2e), which runs on the
+# same push; this workflow only builds and publishes.
 name: Deploy to GitHub Pages
 
 on:
@@ -29,7 +32,6 @@ jobs:
           node-version: 20
           cache: npm
       - run: npm ci
-      - run: npm test
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3

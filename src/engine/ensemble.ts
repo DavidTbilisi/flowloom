@@ -1,9 +1,20 @@
 // ── Monte Carlo ensemble ─────────────────────────────────────────────────────
-// Run a stochastic model under N different seeds and summarize the spread as
+// Run a model N times under its declared uncertainty and summarize the spread as
 // per-timestep percentile bands. Same shape as sweep.ts/solve.ts: clone the
-// model, rebind one setting via applyOverride (here the RNG `seed`), run, and
-// aggregate — so an agent gets "what's the distribution of outcomes?" without
-// scripting a loop of --set runs or ingesting every raw trajectory.
+// model, rebind via applyOverride, run, and aggregate — so an agent gets "what's
+// the distribution of outcomes?" without scripting a loop of --set runs or
+// ingesting every raw trajectory.
+//
+// Two independent sources of spread, and a run varies both:
+//   • the RNG seed, for a model that calls random*()
+//   • every `param … ± tol` / `in lo..hi`, sampled ONCE per run
+// The second is what makes this useful on a deterministic model. Sampling a
+// param once per run is the whole point and is not the same as writing
+// `param x = random_normal(…)`, which resamples every step — that is noise
+// inside the model, not uncertainty about a constant.
+//
+// Sampling draws from the same counter-based PRNG the engine uses (rng.ts),
+// keyed on the run index, so an ensemble is reproducible: same seed, same bands.
 //
 // All runs share the dt/to/start grid, so the i-th sample of every run lines up
 // in time and the bands are just per-column order statistics across the N runs.
@@ -11,6 +22,8 @@
 import type { Model } from "../lang/types.js";
 import { simulateAsync } from "./simulator.js";
 import { applyOverride } from "./overrides.js";
+import { paramRanges, type ParamRange } from "./uncertainty.js";
+import { u01 } from "./rng.js";
 
 export interface Bands {
   p05: number[];
@@ -29,6 +42,10 @@ export interface EnsembleResult {
   /** Output series the bands were computed for. */
   series: string[];
   bands: Map<string, Bands>;
+  /** Params sampled per run, with the bounds they were sampled over. Empty when
+   *  the model declares no ranges — in which case only the seed varied, and on a
+   *  deterministic model the bands will be flat. */
+  sampled: ParamRange[];
   /** One note per run that halted early (non-finite), if any. */
   notes?: string[];
 }
@@ -51,6 +68,9 @@ export interface MonteCarloOptions {
   seed?: number;
   /** Series to band (defaults to the model's `plot` line, else every output). */
   series?: string[];
+  /** Restrict per-run param sampling to these names (default: every param that
+   *  declares a range). Pass `[]` to sample none and vary only the seed. */
+  params?: string[];
 }
 
 /**
@@ -61,11 +81,21 @@ export async function monteCarlo(model: Model, opts: MonteCarloOptions): Promise
   const runs = Math.max(1, Math.floor(opts.runs));
   const baseSeed = opts.seed ?? model.settings.seed ?? 0;
 
+  const declared = paramRanges(model);
+  const sampled = (opts.params ? opts.params.map((n) => declared.get(n)).filter((r): r is ParamRange => !!r) : [...declared.values()]);
+
   const results = [];
   const notes: string[] = [];
   for (let i = 0; i < runs; i++) {
     const m = structuredClone(model);
     applyOverride(m, `seed=${baseSeed + i}`);
+    // One draw per param per run, from the engine's own counter-based PRNG so
+    // the ensemble is reproducible. Uniform over the declared bounds: the
+    // language states a range, not a distribution, and inventing a shape the
+    // modeller didn't write would put weight where they never asked for it.
+    sampled.forEach((r, k) => {
+      applyOverride(m, `${r.name}=${r.lo + u01(baseSeed, i, k) * (r.hi - r.lo)}`);
+    });
     const res = await simulateAsync(m);
     results.push(res);
     if (res.note) notes.push(`seed ${baseSeed + i}: ${res.note}`);
@@ -94,5 +124,5 @@ export async function monteCarlo(model: Model, opts: MonteCarloOptions): Promise
     bands.set(name, b);
   }
 
-  return { runs, baseSeed, t, series, bands, ...(notes.length ? { notes } : {}) };
+  return { runs, baseSeed, t, series, bands, sampled, ...(notes.length ? { notes } : {}) };
 }

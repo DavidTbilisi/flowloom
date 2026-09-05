@@ -173,6 +173,22 @@ plot Pop tot`;
     }
   });
 
+  it("matches on a model with a `>= 0` stock floor", async () => {
+    // The floor lives in runIntegration, which both backends share — this pins
+    // that it stays there rather than drifting into either backend's deriv.
+    const src = `stock Inv [u] >= 0 = 100
+param out = 30
+param inn = 10
+change(Inv) = inn - out
+sim dt=0.25 to=20 method=rk4
+plot Inv`;
+    const { ts, wasm } = await runBoth(src);
+    expect(wasm.clamped).toEqual(ts.clamped);
+    const a = ts.series.get("Inv")!, b = wasm.series.get("Inv")!;
+    for (let i = 0; i < a.length; i++) expect(b[i], `Inv[${i}]`).toBe(a[i]!);
+    expect(Math.min(...b)).toBe(0);
+  });
+
   it("matches under Euler too", async () => {
     const { ts, wasm } = await runBoth(
       "stock X = 1000\nparam r = 0.05\nflow interest = r*X\nd(X) = interest\nsim dt=1 to=40 method=euler\nplot X",

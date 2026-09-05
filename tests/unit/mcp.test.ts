@@ -14,36 +14,72 @@ plot Population`;
 const parse = (r: { content: Array<{ text: string }> }) => JSON.parse(r.content[0]!.text);
 
 describe("mcp handlers", () => {
-  it("flow_check reports ok with counts", () => {
-    const r = parse(handlers.flow_check({ model: SRC }));
+  it("flow_check reports ok with counts", async () => {
+    const r = parse(await handlers.flow_check({ model: SRC }));
     expect(r.ok).toBe(true);
     expect(r.stocks).toBe(1);
   });
 
-  it("flow_check surfaces structured diagnostics on a bad model", () => {
-    const r = parse(handlers.flow_check({ model: "flow x = undefinedThing" }));
+  it("flow_check surfaces structured diagnostics on a bad model", async () => {
+    const r = parse(await handlers.flow_check({ model: "flow x = undefinedThing" }));
     expect(r.ok).toBe(false);
     expect(r.diagnostics[0]).toHaveProperty("line");
     expect(r.diagnostics[0]).toHaveProperty("message");
   });
 
-  it("flow_check is trustworthy: a lint-level call error makes ok:false, not a buried error", () => {
+  it("flow_check is trustworthy: a lint-level call error makes ok:false, not a buried error", async () => {
     // unknown function / wrong arity parse fine but won't run. `check` must report
     // ok:false with structured diagnostics — an agent treats ok:true as "this runs".
-    const badFn = parse(handlers.flow_check({ model: "stock S = 1\nd(S) = avg(1, 2)" }));
+    const badFn = parse(await handlers.flow_check({ model: "stock S = 1\nd(S) = avg(1, 2)" }));
     expect(badFn.ok).toBe(false);
     expect(badFn.diagnostics[0]).toMatchObject({ line: 2 });
     expect(badFn.diagnostics[0].message).toMatch(/unknown function 'avg'/);
 
-    const badArity = parse(handlers.flow_check({ model: "stock S = 1\nd(S) = clamp(S)" }));
+    const badArity = parse(await handlers.flow_check({ model: "stock S = 1\nd(S) = clamp(S)" }));
     expect(badArity.ok).toBe(false);
     expect(badArity.diagnostics[0].message).toMatch(/clamp\(\) takes 3 arguments/);
   });
 
-  it("flow_check includes lint warnings on an ok model", () => {
-    const r = parse(handlers.flow_check({ model: "stock X = 1\nparam unused = 9\nd(X) = 1" }));
+  it("flow_check includes lint warnings on an ok model", async () => {
+    const r = parse(await handlers.flow_check({ model: "stock X = 1\nparam unused = 9\nd(X) = 1" }));
     expect(r.ok).toBe(true);
     expect(r.lint.some((d: { message: string }) => /never used/.test(d.message))).toBe(true);
+  });
+
+  it("flow_check validates the run too when asked, and stays cheap when not", async () => {
+    // Opt-in: the default check must not pay for extra simulations.
+    const plain = parse(await handlers.flow_check({ model: SRC }));
+    expect(plain.numerics).toBeUndefined();
+
+    const checked = parse(await handlers.flow_check({ model: SRC, numerics: true }));
+    expect(checked.ok).toBe(true);
+    expect(checked.numerics.converged).toBe(true);
+
+    // and it actually says no when the step is too coarse to trust
+    const coarse = parse(await handlers.flow_check({ model: `stock X = 100\nparam k = 0.1\nd(X) = -k * X\nsim dt=4 to=50 method=euler`, numerics: true }));
+    expect(coarse.ok).toBe(true); // it parses and runs — but the numbers moved
+    expect(coarse.numerics.converged).toBe(false);
+    expect(coarse.numerics.worst.name).toBe("X");
+  });
+
+  it("flow_fmt reprints canonically and says whether it changed anything", () => {
+    const messy = "stock X  =  1\nparam k=2   # a knob\nchange(X) = k\nsim dt=1 to=5";
+    const r = parse(handlers.flow_fmt({ model: messy }));
+    expect(r.changed).toBe(true);
+    expect(r.formatted).toMatch(/^param k = 2 {3}# a knob$/m);
+    // idempotent, so an agent can format before flow_diff without churn
+    expect(parse(handlers.flow_fmt({ model: r.formatted })).changed).toBe(false);
+  });
+
+  it("flow_import brings in an XMILE model with its notes", () => {
+    const xml = '<xmile><model><variables><stock name="Total Pop"><eqn>10</eqn><inflow>g</inflow></stock>'
+      + '<flow name="g"><eqn>1</eqn></flow></variables></model>'
+      + "<sim_specs><start>0</start><stop>10</stop><dt>1</dt></sim_specs></xmile>";
+    const r = parse(handlers.flow_import({ xmile: xml }));
+    expect(r.model).toMatch(/stock Total_Pop = 10/);
+    expect(r.notes.join(" ")).toMatch(/Euler/);
+    // and what comes back is a model the other tools accept
+    expect(parse(handlers.flow_lint({ model: r.model })).warnings).toBeDefined();
   });
 
   it("flow_lint reports non-fatal warnings", () => {
@@ -193,7 +229,7 @@ describe("agent journey: cold build → error → fix → run", () => {
   it("a check failure carries a recovery hint, and the fixed model runs", async () => {
     // forgot to define `rate` — a classic LLM omission with no near-miss neighbour
     const broken = `stock S = 1\nd(S) = rate * S\nsim dt=0.1 to=5`;
-    const bad = parse(handlers.flow_check({ model: broken }));
+    const bad = parse(await handlers.flow_check({ model: broken }));
     expect(bad.ok).toBe(false);
     // the diagnostic names the offending symbol with a line, so the agent knows
     // exactly what to fix (not just that something failed)
@@ -202,7 +238,7 @@ describe("agent journey: cold build → error → fix → run", () => {
 
     // apply the obvious fix the message implies
     const fixed = `param rate = 0.5\n${broken}`;
-    expect(parse(handlers.flow_check({ model: fixed })).ok).toBe(true);
+    expect(parse(await handlers.flow_check({ model: fixed })).ok).toBe(true);
 
     // and the fixed model actually produces a series
     const run = parse(await handlers.flow_run({ model: fixed, plot: ["S"] }));

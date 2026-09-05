@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseModel, printExpr, parseExpr } from "../../src/lang/index.js";
+import { parseModel, printExpr, parseExpr, scalarize } from "../../src/lang/index.js";
 import { simulate } from "../../src/engine/index.js";
 import { applyOverride } from "../../src/engine/overrides.js";
 import { lintModel } from "../../src/engine/lint.js";
@@ -318,3 +318,35 @@ describe("subscripts — printExpr round-trip", () => {
     expect(printExpr(parseExpr("sum(Pop)", 1))).toBe("sum(Pop)");
   });
 });
+
+describe("scalarization preserves declaration flags", () => {
+  // An element is the same kind of thing its declaration was. Rebuilding the
+  // decl field by field silently dropped every flag, so a subscripted `const`
+  // became an ordinary sensitivity knob and its `# @rung` tag vanished from the
+  // leverage ladder — with nothing anywhere saying so.
+  const scalar = (src: string) => scalarize(parseModel(src));
+
+  it("keeps `const` constant across elements", () => {
+    const m = scalar("dim r = A, B\nconst rate[r] = 0.1\nstock X[r] = 1\nchange(X[r]) = rate[r]\nsim dt=1 to=3");
+    for (const name of ["rate.A", "rate.B"]) expect(m.varIndex.get(name)!.constant, name).toBe(true);
+  });
+
+  it("keeps a `# @rung N` tag on every element", () => {
+    const m = scalar("dim r = A, B\nparam lever[r] = 1   # @rung 4 a lever\nstock X[r] = 1\nchange(X[r]) = lever[r]\nsim dt=1 to=3");
+    for (const name of ["lever.A", "lever.B"]) expect(m.varIndex.get(name)!.rung, name).toBe(4);
+  });
+
+  it("keeps a `>= 0` floor on every element", () => {
+    const m = scalar("dim r = A, B\nstock Pop[r] >= 0 = 5\nchange(Pop[r]) = -1\nsim dt=1 to=3");
+    for (const s of m.stocks) expect(s.nonNegative, s.name).toBe(true);
+  });
+
+  it("does not leave an expanded element claiming to be an array", () => {
+    const m = scalar("dim r = A, B\nstock Pop[r] = 5, 6\nchange(Pop[r]) = -1\nsim dt=1 to=3");
+    for (const s of m.stocks) {
+      expect(s.dims, s.name).toBeUndefined();
+      expect(s.elemExprs, s.name).toBeUndefined();
+    }
+  });
+});
+

@@ -14,7 +14,8 @@ import process from "node:process";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { parseModel, ModelError, type Model } from "./lang/index.js";
+import { VERSION } from "./version.js";
+import { parseModel, printModel, ModelError, type Model } from "./lang/index.js";
 import {
   simulateAsync,
   analyzeLoops,
@@ -33,6 +34,7 @@ import {
   sensitivity,
   globalSensitivity,
   lintModel,
+  checkNumerics,
   solveParam,
   monteCarlo,
   parseDataset,
@@ -42,8 +44,7 @@ import {
   type EnsembleResult,
 } from "./engine/index.js";
 import { EXAMPLES } from "./examples/index.js";
-
-const VERSION = "0.1.0";
+import { importXmile } from "./interop/xmile.js";
 
 // ── result helpers ───────────────────────────────────────────────────────────
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
@@ -68,7 +69,7 @@ function loadModel(src: string, sets?: string[], scenario?: string): Model {
 
 // ── tool implementations (pure-ish; reused by the smoke test) ────────────────
 export const handlers = {
-  flow_check({ model }: { model: string }): ToolResult {
+  async flow_check({ model, numerics, tol }: { model: string; numerics?: boolean; tol?: number }): Promise<ToolResult> {
     let m: Model;
     try {
       m = parseModel(model);
@@ -86,11 +87,26 @@ export const handlers = {
     const errors = lint.filter((d) => d.severity === "error");
     if (errors.length) return text({ ok: false, diagnostics: errors.map(diag) });
     const warnings = m.diagnostics.filter((d) => d.severity === "warning").map(diag);
-    return text({ ok: true, stocks: m.stocks.length, vars: m.vars.length, loops: analyzeLoops(m).loops.length, warnings, lint: lint.map(diag) });
+    const base = { ok: true, stocks: m.stocks.length, vars: m.vars.length, loops: analyzeLoops(m).loops.length, warnings, lint: lint.map(diag) };
+    // The numbers are only worth reporting if the run that produced them holds
+    // up at a smaller step — but it costs extra simulations, so it is opt-in.
+    if (!numerics) return text(base);
+    const report = await checkNumerics(m, tol !== undefined ? { tol } : {});
+    return text({ ...base, numerics: report });
   },
 
   flow_lint({ model }: { model: string }): ToolResult {
     return text({ warnings: lintModel(parseModel(model)).map(diag) });
+  },
+
+  flow_import({ xmile }: { xmile: string }): ToolResult {
+    const r = importXmile(xmile);
+    return text(r);
+  },
+
+  flow_fmt({ model }: { model: string }): ToolResult {
+    const formatted = printModel(parseModel(model), model);
+    return text({ formatted, changed: formatted !== model });
   },
 
   async flow_run({ model, plot, set, scenario, maxPoints }: { model: string; plot?: string[]; set?: string[]; scenario?: string; maxPoints?: number }): Promise<ToolResult> {
@@ -282,7 +298,17 @@ function compactEnsemble(r: EnsembleResult) {
       trajectory: { t: pick(r.t), p05: pick(b.p05), p50: pick(b.p50), p95: pick(b.p95) },
     };
   });
-  return { runs: r.runs, baseSeed: r.baseSeed, series, ...(r.notes ? { notes: r.notes } : {}) };
+  // What varied is part of the answer: flat bands with nothing sampled mean
+  // "nothing in this model is uncertain", not "this outcome is certain".
+  const sampled = r.sampled.map((p) => ({ param: p.name, lo: p.lo, hi: p.hi }));
+  const note = sampled.length
+    ? undefined
+    : "no param declares a range, so only the RNG seed varied — without random*() every run is identical and these bands are flat. Add a range (e.g. `param rate = 0.03 ± 0.01`) to get a real spread.";
+  return {
+    runs: r.runs, baseSeed: r.baseSeed, sampled, series,
+    ...(note ? { flat: note } : {}),
+    ...(r.notes ? { notes: r.notes } : {}),
+  };
 }
 
 /** Wrap a handler so thrown errors (incl. parse diagnostics) become tool errors. */
@@ -322,11 +348,11 @@ export const INSTRUCTIONS = `flowloom is a text-first systems-thinking studio (V
 Don't guess the syntax. Read the resource flow://reference (a one-page grammar + builtins guide) before writing or editing a model.
 
 The authoring loop:
-1. flow_check — parse + lint cheaply. Do this after every edit; it returns {line, col, message} diagnostics with a "did you mean" / recovery hint, so fix those before running.
+1. flow_check — parse + lint cheaply. Do this after every edit; it returns {line, col, message} diagnostics with a "did you mean" / recovery hint, so fix those before running. Add numerics:true before you quote a number from a model to anyone: the integrator is fixed-step, so a converged-looking run can still be wrong, and this re-runs at half the step to say whether the answer actually holds (it also flags a branch on a stock under rk4, a random draw whose variance scales with dt, and a time constant the grid cannot resolve). Costs a couple of extra runs.
 2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
 3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops read along the run; with a metric, ranked by knockout; basis:true for the shortest independent loop set — the rank-many loops every other loop is built from) — to understand an existing model before changing it.
 
-Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (stochastic bands), flow_calibrate (fit params to observed data — CSV text, or the model's own 'data' lines), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
+Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (uncertainty bands — samples every 'param … ± tol' / 'in lo..hi' once per run, plus the RNG seed; if no param declares a range the bands on a deterministic model are flat and the result says so), flow_calibrate (fit params to observed data — CSV text, or the model's own 'data' lines), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
 
 Discrete-period models (monthly, yearly): use 'sim method=map dt=1' (stock(t+dt) = stock(t) + change(t); change() is a per-step increment in the stock's own units, so no x dt bookkeeping), previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
@@ -475,8 +501,39 @@ export function buildServer(): McpServer {
 
   server.registerTool(
     "flow_check",
-    { title: "Validate a model", description: "Parse a .flow model; report ok with counts and lint warnings, or structured parse diagnostics ({line, col, message}, with a 'did you mean' hint on a misspelled name).", inputSchema: { model: modelArg } },
+    {
+      title: "Validate a model",
+      description:
+        "Parse a .flow model; report ok with counts and lint warnings, or structured parse diagnostics ({line, col, message}, with a 'did you mean' hint on a misspelled name). With numerics:true it also validates the *run*: re-simulates at half the step and reports whether the answer moved, suggests a dt when it did, and flags a state-dependent branch under rk4, a random draw whose variance scales with dt, and a time constant the grid cannot resolve. Costs 2+ extra simulations — use it before quoting a number from a model.",
+      inputSchema: {
+        model: modelArg,
+        numerics: z.boolean().optional().describe("Also check that the numbers survive a smaller step (2+ extra runs). Do this before citing a result."),
+        tol: z.number().optional().describe("Convergence threshold for the numerics check, as normalised RMSE. Default 1e-3 (0.1% of a series' range)."),
+      },
+    },
     guard(handlers.flow_check),
+  );
+
+  server.registerTool(
+    "flow_import",
+    {
+      title: "Import an XMILE model",
+      description:
+        "Convert an XMILE document (Stella's .stmx, or .xmile) into .flow text. Returns {model, notes} — `notes` lists what did not survive (arrays flattened, macros skipped, functions with no equivalent), so check it before trusting the result. Run flow_check on the model afterwards.",
+      inputSchema: { xmile: z.string().describe("The XMILE document as text.") },
+    },
+    guard(handlers.flow_import),
+  );
+
+  server.registerTool(
+    "flow_fmt",
+    {
+      title: "Format a model",
+      description:
+        "Reprint a .flow model in canonical form: source order and grouping kept, spelling and spacing normalised (one space around `=`, on/off for a switch, a `data` line back in one piece, trailing comments aligned). Run it on a model you just wrote before flow_diff — otherwise the diff is mostly whitespace.",
+      inputSchema: { model: modelArg },
+    },
+    guard(handlers.flow_fmt),
   );
 
   server.registerTool(

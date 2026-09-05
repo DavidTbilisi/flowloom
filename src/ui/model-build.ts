@@ -25,17 +25,29 @@ function splitComment(line: string): [string, string] {
   return h < 0 ? [line, ""] : [line.slice(0, h), line.slice(h)];
 }
 
+/** Index of a declaration's assignment `=`, skipping any comparison operator
+ *  that can appear on the left (`stock X >= 0 = 100`). -1 if there is none. */
+function assignIndex(code: string): number {
+  for (let i = 0; i < code.length; i++) {
+    if (code[i] !== "=") continue;
+    if (code[i + 1] === "=") continue;                       // ==
+    if (i > 0 && "<>!=".includes(code[i - 1]!)) continue;    // >= <= != ==
+    return i;
+  }
+  return -1;
+}
+
 /** The right-hand side of a `name = expr` line (trimmed), or "" if there is no `=`. */
 function getRHS(line: string): string {
   const [code] = splitComment(line);
-  const eq = code.indexOf("=");
+  const eq = assignIndex(code);
   return eq < 0 ? "" : code.slice(eq + 1).trim();
 }
 
 /** Replace a line's right-hand side, preserving its left side and any comment. */
 function setRHS(line: string, rhs: string): string {
   const [code, comment] = splitComment(line);
-  const eq = code.indexOf("=");
+  const eq = assignIndex(code);
   if (eq < 0) return line;
   const left = code.slice(0, eq).replace(/\s+$/, "");
   return `${left} = ${rhs}${comment ? "  " + comment.trim() : ""}`;

@@ -150,22 +150,31 @@ export function scalarize(model: Model): Model {
   // ── expand declarations ──
   // A subscripted decl uses its per-element expression list when given, else the
   // single expression broadcasts to (and is lowered under) every element tuple.
+  // Spread the declaration rather than rebuilding it field by field: an element
+  // is the same *kind* of thing its declaration was, so every flag on it —
+  // `nonNegative`, `constant`, `boolean`, `data`, `rung` — has to survive the
+  // expansion. Only the two things scalarization consumes are dropped, and only
+  // the two things it computes are overwritten.
+  const scalarized = <T extends { dims?: string[]; elemExprs?: Expr[] }>(d: T): Omit<T, "dims" | "elemExprs"> => {
+    const { dims: _dims, elemExprs: _elems, ...rest } = d;
+    return rest;
+  };
+
   const expandStock = (s: StockDecl): StockDecl[] => {
     if (!s.dims) return [{ ...s, initExpr: sub(s.initExpr, null) }];
     return tuplesOf(s.dims).map((tuple, i) => ({
+      ...scalarized(s),
       name: elemName(s.name, tuple),
       initExpr: sub(s.elemExprs ? s.elemExprs[i]! : s.initExpr, bindingFor(s.dims!, tuple)),
-      unit: s.unit, doc: s.doc, loc: s.loc,
     }));
   };
 
   const expandVar = (v: VarDecl): VarDecl[] => {
     if (!v.dims) return [{ ...v, expr: sub(v.expr, null) }];
     return tuplesOf(v.dims).map((tuple, i) => ({
+      ...scalarized(v),
       name: elemName(v.name, tuple),
-      kind: v.kind,
       expr: sub(v.elemExprs ? v.elemExprs[i]! : v.expr, bindingFor(v.dims!, tuple)),
-      unit: v.unit, doc: v.doc, loc: v.loc,
     }));
   };
 

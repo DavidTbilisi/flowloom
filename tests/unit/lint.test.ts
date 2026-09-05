@@ -88,3 +88,34 @@ describe("call validation (unknown function / arity)", () => {
     expect(diags(ok).filter((x) => x.severity === "error")).toEqual([]);
   });
 });
+
+describe("stock floors", () => {
+  // The floor doing its job still costs something: it truncates an outflow, so
+  // downstream of that moment the model no longer balances. Say where it bit.
+  it("reports where a `>= 0` floor engaged, and when it never did", () => {
+    const drains = "stock Inv [u] >= 0 = 100\nparam out = 30\nchange(Inv) = -out\nsim dt=0.5 to=20";
+    expect(messages(drains).join(" ")).toMatch(/stock 'Inv' hits its `>= 0` floor from t=3\.5/);
+
+    const holds = "stock Inv [u] >= 0 = 100\nparam k = 0.1\nchange(Inv) = -k * Inv\nsim dt=0.5 to=20";
+    expect(messages(holds).join(" ")).not.toMatch(/floor/);
+  });
+
+  it("costs the run by its scalarized size, not its declaration count", () => {
+    // 2 stocks over a 40-element dim is 80 states, not 2 — getting this wrong
+    // lets a run far over budget execute inside a lint that `check` calls.
+    const elems = Array.from({ length: 40 }, (_, i) => `e${i}`).join(", ");
+    const src = `dim r = ${elems}\nstock A[r] >= 0 = 1\nstock B[r] >= 0 = 1\nchange(A[r]) = -1\nchange(B[r]) = -1\nsim dt=0.001 to=40`;
+    const started = Date.now();
+    expect(messages(src).join(" ")).not.toMatch(/floor/); // skipped, not run
+    expect(Date.now() - started).toBeLessThan(3000);
+  });
+
+  it("says nothing about an undeclared stock going negative", () => {
+    // Cash, a runway, a net position: crossing zero is the answer, not a bug.
+    // Only the declaration can tell those apart, so lint follows it and no
+    // heuristic fires on the models where negative is the point.
+    const cash = "stock Cash = 1500\nparam burn = 200\nchange(Cash) = -burn\nsim dt=1 to=24";
+    expect(messages(cash).join(" ")).not.toMatch(/negative|floor/);
+  });
+});
+

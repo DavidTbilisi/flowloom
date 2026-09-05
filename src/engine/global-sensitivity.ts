@@ -18,6 +18,7 @@ import { applyOverride } from "./overrides.js";
 import { resolveMetric } from "./summarize.js";
 import { operatingPoint } from "./loops.js";
 import { timeGrainParams, knobParams } from "./grain.js";
+import { paramRanges } from "./uncertainty.js";
 import { u01 } from "./rng.js";
 
 export interface GsaRow {
@@ -40,6 +41,10 @@ export interface GsaResult {
   runs: number;
   /** Ranked most-influential first (by mu* / ST). */
   rows: GsaRow[];
+  /** The interval each knob was actually explored over, and where it came from.
+   *  An index is only meaningful against a range, so the range is part of the
+   *  answer — `declared` says whether it is the modeller's or a ±frac default. */
+  explored: Array<{ param: string; lo: number; hi: number; declared: boolean }>;
 }
 
 export interface GsaOptions {
@@ -55,22 +60,46 @@ export interface GsaOptions {
   seed?: number;
 }
 
-interface Range { name: string; base: number; lo: number; hi: number; boolean?: true; /** snap samples to multiples of this (time-grain knobs: dt) */ grain?: number }
+interface Range { name: string; base: number; lo: number; hi: number; boolean?: true; /** the bounds came from the model text, not a ±frac default */ declared?: true; /** snap samples to multiples of this (time-grain knobs: dt) */ grain?: number }
 
-/** Build [base-d, base+d] ranges for the chosen (numeric) params. A `switch`
- *  spans its two states, {0, 1}, and is sampled as such (see mapPoint). */
+/**
+ * The interval each param is explored over.
+ *
+ * A declared range (`param x = 3 ± 1`, `in 2..5`) wins: it is the modeller's own
+ * statement of how well the knob is known, and an index computed over made-up
+ * bounds is an answer to a question nobody asked. `frac` is the fallback for
+ * knobs that don't declare one — a symmetric ±frac box around the base value.
+ * A `switch` spans its two states, {0, 1}, and is sampled as such (see mapPoint).
+ */
 function ranges(model: Model, params: string[], frac: number): Range[] {
   const op = operatingPoint(model);
   const grid = timeGrainParams(model);
+  const declared = paramRanges(model, op);
   const dt = model.settings.dt;
   const out: Range[] = [];
   for (const name of params) {
     const base = op[name];
     if (base === undefined || !Number.isFinite(base)) continue;
     if (model.varIndex.get(name)?.boolean) { out.push({ name, base, lo: 0, hi: 1, boolean: true }); continue; }
-    let d = base !== 0 ? Math.abs(base) * frac : frac;
-    // a time-grain knob spans at least one step either way, and samples snap to steps
-    if (grid.has(name)) { d = Math.max(d, dt); out.push({ name, base, lo: base - d, hi: base + d, grain: dt }); continue; }
+    const given = declared.get(name);
+    // A declared range is a statement about the world and is never widened —
+    // widening it symmetrically would sample outside it (a `lag in 3..9` becomes
+    // -3..9, i.e. negative pipeline lengths). Grain snapping still applies, so a
+    // time-grain knob's samples land on the step grid inside its own bounds; if
+    // the declared range is narrower than a step, the knob genuinely cannot move
+    // on this grid and reads as no effect, which is the honest answer.
+    if (given) {
+      out.push({ name, base, lo: given.lo, hi: given.hi, declared: true, ...(grid.has(name) ? { grain: dt } : {}) });
+      continue;
+    }
+    // Undeclared: a ±frac box, widened for a time-grain knob so it can cross at
+    // least one step boundary (else the bump rounds away and reads as Δ = 0).
+    if (grid.has(name)) {
+      const d = Math.max(base !== 0 ? Math.abs(base) * frac : frac, dt);
+      out.push({ name, base, lo: base - d, hi: base + d, grain: dt });
+      continue;
+    }
+    const d = base !== 0 ? Math.abs(base) * frac : frac;
     out.push({ name, base, lo: base - d, hi: base + d });
   }
   return out;
@@ -98,12 +127,15 @@ export async function globalSensitivity(model: Model, opts: GsaOptions): Promise
   const seed = opts.seed ?? 1;
   const names = knobParams(model, opts.params ?? []);
   const rs = ranges(model, names, frac);
-  if (!rs.length) return { method: opts.method, metric: opts.metric, runs: 0, rows: [] };
+  if (!rs.length) return { method: opts.method, metric: opts.metric, runs: 0, rows: [], explored: [] };
 
   return opts.method === "morris"
     ? morris(model, rs, opts.metric, opts.samples ?? 10, seed)
     : sobol(model, rs, opts.metric, opts.samples ?? 128, seed);
 }
+
+/** The intervals, for the report — an index means nothing without them. */
+const explored = (rs: Range[]) => rs.map((r) => ({ param: r.name, lo: r.lo, hi: r.hi, declared: r.declared === true }));
 
 // ── Morris elementary effects ────────────────────────────────────────────────
 async function morris(model: Model, rs: Range[], metric: string, traj: number, seed: number): Promise<GsaResult> {
@@ -142,7 +174,7 @@ async function morris(model: Model, rs: Range[], metric: string, traj: number, s
     return { param: r.name, base: r.base, muStar, sigma };
   });
   rows.sort((a, b) => (b.muStar ?? 0) - (a.muStar ?? 0));
-  return { method: "morris", metric, runs, rows };
+  return { method: "morris", metric, runs, rows, explored: explored(rs) };
 }
 
 // ── Sobol indices (Saltelli estimators) ──────────────────────────────────────
@@ -186,5 +218,5 @@ async function sobol(model: Model, rs: Range[], metric: string, N: number, seed:
     });
   }
   rows.sort((a, b) => (b.st ?? 0) - (a.st ?? 0));
-  return { method: "sobol", metric, runs, rows };
+  return { method: "sobol", metric, runs, rows, explored: explored(rs) };
 }

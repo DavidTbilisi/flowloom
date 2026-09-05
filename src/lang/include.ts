@@ -125,7 +125,9 @@ export function resolveIncludes(text: string, opts: IncludeOptions): string {
     // Apply bindings on the renamed text: rewrite the declaration line in place.
     for (const { key, value } of parseBindings(bindSpec ?? "", rel!)) {
       const full = `${ns}.${key}`;
-      const decl = new RegExp(`^(\\s*)(param|const|switch|stock|aux|flow|data)(\\s+${esc(full)}\\s*(?:\\[[^\\]]*\\])?\\s*=\\s*)([^#\\n]*)(#.*)?$`, "m");
+      // `(?:>=\s*0\s*)?` keeps a `stock X >= 0 = …` floor inside the preserved
+      // middle group, so binding its init doesn't silently drop the declaration.
+      const decl = new RegExp(`^(\\s*)(param|const|switch|stock|aux|flow|data)(\\s+${esc(full)}\\s*(?:\\[[^\\]]*\\])?\\s*(?:>=\\s*0\\s*)?=\\s*)([^#\\n]*)(#.*)?$`, "m");
       const hit = child.match(decl);
       if (!hit) throw new Error(`include "${rel}": no param, switch, const, or stock named '${key}' to bind (looked for '${full}')`);
       const kind = hit[2]!;

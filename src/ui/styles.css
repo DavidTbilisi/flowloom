@@ -133,6 +133,9 @@ textarea#src.transparent-text { color: transparent; }
 .err.show { display: block; }
 .err.error { color: var(--red); background: var(--err-bg); }
 .err.warn { color: var(--warn); background: var(--warn-bg); }
+/* A passing check is not a warning — the numerics verdict reads green when the
+   numbers held still, so "no news" and "checked and good" don't look alike. */
+.err.ok { color: var(--green); background: transparent; }
 
 .tabs {
   display: flex; gap: 2px; padding: 8px 12px 0; border-bottom: 1px solid var(--line);

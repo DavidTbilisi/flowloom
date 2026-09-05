@@ -55,6 +55,36 @@ describe("expression parser", () => {
   });
 });
 
+describe("stock floors (`>= 0`)", () => {
+  // A stock is a signed accumulator by default — cash, a net position and a
+  // temperature all need to cross zero. `>= 0` is how a model says "this one is
+  // a physical quantity", which is the only way the engine could know.
+  it("parses the floor and leaves the initial value alone", () => {
+    const m = parseModel("stock Inventory [units] >= 0 = 100\nchange(Inventory) = -1\nsim dt=1 to=5");
+    const s = m.stocks[0]!;
+    expect(s.nonNegative).toBe(true);
+    expect(s.unit).toBe("units");
+    expect(s.initExpr).toMatchObject({ kind: "num", value: 100 });
+  });
+
+  it("leaves an undeclared stock signed", () => {
+    const m = parseModel("stock Cash = 100\nchange(Cash) = -1\nsim dt=1 to=5");
+    expect(m.stocks[0]!.nonNegative).toBeUndefined();
+  });
+
+  it("rejects any floor but zero, and says where the bound belongs instead", () => {
+    expect(() => parseModel("stock X [u] >= 5 = 100\nchange(X) = -1\nsim dt=1 to=5")).toThrow(
+      /only '>= 0' is supported.*gate the outflow instead, e\.g\. max\(0, X - 5\)/s,
+    );
+  });
+
+  it("still reads a bracket as a unit, and a dim as a dim, with a floor present", () => {
+    const m = parseModel("dim region = North, South\nstock Pop[region] >= 0 = 10\nchange(Pop[region]) = -1\nsim dt=1 to=3");
+    expect(m.stocks[0]!.dims).toEqual(["region"]);
+    expect(m.stocks[0]!.nonNegative).toBe(true);
+  });
+});
+
 describe("model parser", () => {
   it("parses the canonical declarations", () => {
     const m = parseModel(`stock X = 5\nparam r = 0.1\nflow f = r * X\nd(X) = f`);

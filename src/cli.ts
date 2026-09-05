@@ -17,10 +17,12 @@
 // the text the same way (then any --set on top). Pass `-` as the path to read
 // the model on stdin.
 
-import { readFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import process from "node:process";
-import { parseModel, scalarize, ModelError, resolveIncludes, hasIncludes, type Model } from "./lang/index.js";
+import { VERSION } from "./version.js";
+import { parseModel, printModel, scalarize, ModelError, resolveIncludes, hasIncludes, type Model } from "./lang/index.js";
+import { importXmile } from "./interop/xmile.js";
 import {
   simulateAsync,
   analyzeLoops,
@@ -40,6 +42,7 @@ import {
   sensitivity,
   globalSensitivity,
   lintModel,
+  checkNumerics,
   solveParam,
   monteCarlo,
   parseDataset,
@@ -52,6 +55,7 @@ import {
   type SweepResult,
   type SensitivityResult,
   type SensitivityRow,
+  type NumericsReport,
   type GsaResult,
   type SolveResult,
   type SolveOptions,
@@ -66,8 +70,6 @@ import {
   type ExpectReport,
   type DiffResult,
 } from "./engine/index.js";
-
-const VERSION = "0.1.0";
 
 // ── tiny arg model ───────────────────────────────────────────────────────────
 interface Args {
@@ -84,6 +86,8 @@ interface Args {
   goal?: "max" | "min"; // --goal for policies
   cost: string[]; // --cost a=2,b=1 for policies
   all: boolean; // --all: loops — list the inactive ones too
+  numerics: boolean; // --numerics: check — does the answer survive a smaller dt?
+  write: boolean; // --write: fmt — rewrite the file in place instead of printing
   basis: boolean; // --basis: loops — only the shortest independent loop set
   columns: string[]; // --column a,b for data
   timeColumn?: string; // --time COL for data
@@ -107,7 +111,7 @@ interface Args {
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", noLoops: false, basis: false, columns: [], linear: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", noLoops: false, basis: false, numerics: false, write: false, columns: [], linear: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -117,6 +121,8 @@ function parseArgs(argv: string[]): Args {
       case "--json": a.format = "json"; break;
       case "--chart": a.chart = true; break;
       case "--all": a.all = true; break;
+      case "--numerics": a.numerics = true; break;
+      case "--write": case "-w": a.write = true; break;
       case "--no-loops": a.noLoops = true; break;
       case "--basis": case "--sils": case "--independent": a.basis = true; break;
       case "--column": a.columns.push(...splitList(need(argv, ++i, arg))); break;
@@ -421,7 +427,7 @@ async function cmdLoops(args: Args): Promise<void> {
   }
 }
 
-function cmdCheck(args: Args): void {
+async function cmdCheck(args: Args): Promise<void> {
   const model = load(args); // exits non-zero on parse error
   const diagnostics = lintModel(model);
   const errors = diagnostics.filter((d) => d.severity === "error");
@@ -431,8 +437,46 @@ function cmdCheck(args: Args): void {
   }
   const loops = analyzeLoops(model).loops.length;
   const sketch = model.links.length ? ` (${model.stocks.length ? "" : "causal-loop sketch: "}${new Set(model.links.flatMap((l) => [l.from, l.to])).size} nodes, ${model.links.length} declared link${plural(model.links.length)})` : "";
+  const report = args.numerics ? await checkNumerics(model, args.tol !== undefined ? { tol: args.tol } : {}) : undefined;
+  if (args.format === "json") {
+    out(JSON.stringify({
+      ok: true,
+      stocks: model.stocks.length,
+      vars: model.vars.length,
+      loops,
+      ...(report ? { numerics: report } : {}),
+      warnings: diagnostics.map((d) => ({ line: d.loc.line, col: d.loc.col, message: d.message })),
+    }, null, 2));
+    if (report && !report.converged) process.exit(1);
+    return;
+  }
   out(`ok: ${model.stocks.length} stock${plural(model.stocks.length)}, ${model.vars.length} variable${plural(model.vars.length)}, ${loops} loop${plural(loops)}${sketch}`);
   for (const d of diagnostics) warn(`line ${d.loc.line}: ${d.message}`);
+  if (report) { renderNumerics(report); if (!report.converged) process.exit(1); }
+}
+
+/** The numerics block under `check --numerics`: the refinement verdict first,
+ *  then the advisories that explain (or pre-empt) it. */
+function renderNumerics(r: NumericsReport): void {
+  const pct = (v: number) => (Number.isFinite(v) ? `${(v * 100).toPrecision(3)}%` : "non-finite");
+  const cost = `${r.runs} run${plural(r.runs)}`;
+  if (r.refinedDt === undefined) {
+    out(`numerics: not refined (${r.method}, dt=${r.dt})`);
+  } else if (r.converged) {
+    const w = r.worst;
+    out(`numerics: converged — halving dt to ${r.refinedDt} moved ${w ? `${w.name} by ${pct(w.nrmse)}` : "nothing"} (tolerance ${pct(r.tol)}, ${cost})`);
+  } else {
+    const w = r.worst;
+    out(`numerics: NOT converged — halving dt to ${r.refinedDt} moved ${w ? `${w.name} by ${pct(w.nrmse)}` : "the run"}, over the ${pct(r.tol)} tolerance (${cost})`);
+    for (const s of r.series) if (!s.converged) out(`  ${s.name.padEnd(20)} ${pct(s.nrmse)}`);
+    if (r.suggestedDt !== undefined) out(`  try \`sim dt=${r.suggestedDt}\` — the answer stops moving there`);
+  }
+  if (r.methodAgreement && !r.methodAgreement.converged) {
+    const w = r.methodAgreement.worst;
+    out(`  ${r.methodAgreement.other} gives a different answer at this same dt${w ? ` (${w.name} by ${pct(w.nrmse)})` : ""} — euler's step is too large; \`sim method=rk4\` is more accurate at any dt`);
+  }
+  for (const a of r.advisories) out(`  advisory (${a.kind})${a.loc ? ` line ${a.loc.line}` : ""}: ${a.message}`);
+  for (const n of r.notes) out(`  note: ${n}`);
 }
 
 function cmdLint(args: Args): void {
@@ -653,7 +697,13 @@ function renderGsa(r: GsaResult): string {
     const bar = "█".repeat(Math.round(Math.max(0, Math.min(1, x.st ?? 0)) * 24)) || "·";
     return `  ${x.param.padEnd(wp)}  S1=${fmt(x.s1!).padStart(8)}  ST=${fmt(x.st!).padStart(8)}  ${bar}`;
   });
-  return [head, ...lines].join("\n");
+  // An index is meaningless without the interval it was measured over, and a
+  // reader can't tell a declared range from a ±frac default by looking.
+  const declared = r.explored.filter((e) => e.declared);
+  const tail = declared.length
+    ? [`over declared ranges: ${declared.map((e) => `${e.param} ∈ [${fmt(e.lo)}, ${fmt(e.hi)}]`).join(", ")}`]
+    : ["over ±frac boxes around each base value — declare what you actually know (e.g. `param rate = 0.03 ± 0.01`) for indices you can defend"];
+  return [head, ...lines, ...tail].join("\n");
 }
 
 async function cmdSensitivity(args: Args): Promise<void> {
@@ -710,7 +760,13 @@ async function cmdSolve(args: Args): Promise<void> {
 }
 
 function renderMonteCarlo(r: EnsembleResult): string {
-  const head = `monte carlo — ${r.runs} runs, seeds ${r.baseSeed}…${r.baseSeed + r.runs - 1}`;
+  // Say what actually varied. A flat band is not a result — it means nothing in
+  // the model was uncertain, and the reader needs to know that rather than
+  // conclude the outcome is certain.
+  const varied = r.sampled.length
+    ? `, sampling ${r.sampled.map((p) => `${p.name} ∈ [${fmt(p.lo)}, ${fmt(p.hi)}]`).join(", ")}`
+    : "";
+  const head = `monte carlo — ${r.runs} runs, seeds ${r.baseSeed}…${r.baseSeed + r.runs - 1}${varied}`;
   const N = r.t.length;
   const every = Math.max(1, Math.floor(N / 14));
   const idx: number[] = [];
@@ -728,7 +784,12 @@ function renderMonteCarlo(r: EnsembleResult): string {
     return `${name}\n  ${header}\n` + rows.map((row) => `  ${row}`).join("\n");
   });
   const notes = r.notes?.length ? "\n\n" + r.notes.map((n) => `note: ${n}`).join("\n") : "";
-  return [head, ...blocks].join("\n\n") + notes;
+  // A flat band is not a result — it means nothing in the model was uncertain,
+  // and the reader needs to know that rather than read certainty into it.
+  const hint = r.sampled.length
+    ? ""
+    : "\n\nnote: no param declares a range, so only the RNG seed varied — without random*() every run is identical and these bands are flat. Say what is uncertain (e.g. `param rate = 0.03 ± 0.01`) to get a real spread.";
+  return [head, ...blocks].join("\n\n") + notes + hint;
 }
 
 async function cmdMonteCarlo(args: Args): Promise<void> {
@@ -750,9 +811,17 @@ async function cmdMonteCarlo(args: Args): Promise<void> {
 function renderCalibrate(r: CalibrateResult): string {
   const head = `calibrate — ${r.converged ? "converged" : "stopped"} after ${r.evals} run${plural(r.evals)} (residual nrmse ${fmt(r.residual)})`;
   const wp = Math.max(...Object.keys(r.params).map((p) => p.length));
-  const params = Object.entries(r.params).map(([p, v]) => `  ${p.padEnd(wp)}  ${fmt(r.start[p]!)} → ${fmt(v)}`);
+  const atBound = new Set(r.atBound ?? []);
+  const params = Object.entries(r.params).map(([p, v]) => {
+    const b = r.bounds?.[p];
+    const range = b ? `   [${fmt(b[0])}, ${fmt(b[1])}]${atBound.has(p) ? " ← at the bound" : ""}` : "";
+    return `  ${p.padEnd(wp)}  ${fmt(r.start[p]!)} → ${fmt(v)}${range}`;
+  });
   const fits = Object.entries(r.perSeries).map(([s, e]) => `  ${s}: nrmse ${fmt(e)}`);
-  return [head, "fitted params:", ...params, "fit per series:", ...fits].join("\n");
+  const tail = atBound.size
+    ? [`note: ${[...atBound].join(", ")} fitted to the edge of the declared range — the data wants to go further than the model calls plausible, so either the range or the structure is wrong`]
+    : [];
+  return [head, "fitted params:", ...params, "fit per series:", ...fits, ...tail].join("\n");
 }
 
 async function cmdCalibrate(args: Args): Promise<void> {
@@ -782,6 +851,66 @@ async function cmdCalibrate(args: Args): Promise<void> {
     die((e as Error).message);
   }
   out(args.format === "json" ? JSON.stringify(r, null, 2) : renderCalibrate(r));
+}
+
+/**
+ * `fmt` — reprint a model in canonical form.
+ *
+ * The text is the model, so a formatter is not cosmetics: it is what makes two
+ * versions of a model comparable. An AI writing `.flow` produces whatever
+ * spacing it produces; running that through `fmt` first is what turns a `diff`
+ * into a list of real changes rather than a list of whitespace.
+ *
+ * Exits non-zero without `--write` when the file is not already formatted, so it
+ * can be a CI check as well as a fixer.
+ */
+function cmdFmt(args: Args): void {
+  if (!args.file) die("fmt needs a model file: flowloom fmt model.flow [--write]");
+  let text: string;
+  try { text = args.file === "-" ? readFileSync(0, "utf8") : readFileSync(args.file, "utf8"); } catch (e) { die(`cannot read ${args.file}: ${(e as Error).message}`); }
+  // A model with `include` lines cannot be formatted in place: parsing it means
+  // inlining the parts first, and printing *that* would replace the includes
+  // with the flat text they stand for — silently deleting the composition. The
+  // parts are the thing to format.
+  if (hasIncludes(text!)) {
+    die(`${args.file} has include lines, which fmt would replace with the text they inline — format the parts instead (each .flow file it includes), or run \`flowloom bundle ${args.file}\` if you want the flat text`);
+  }
+  let formatted: string;
+  try {
+    formatted = printModel(parseModel(text!), text!);
+  } catch (e) {
+    if (e instanceof ModelError) {
+      for (const d of e.diagnostics) process.stderr.write(`error: ${args.file}: line ${d.loc.line}: ${d.message}\n`);
+      process.exit(1);
+    }
+    throw e;
+  }
+  if (args.write) {
+    if (args.file === "-") die("fmt --write needs a real file, not stdin");
+    if (formatted === text) { out(`${args.file} is already formatted`); return; }
+    writeFileSync(args.file, formatted);
+    out(`formatted ${args.file}`);
+    return;
+  }
+  process.stdout.write(formatted);
+  if (formatted !== text) process.exit(1); // so `fmt` can gate a CI job
+}
+
+/**
+ * `import` — bring in a model from XMILE (`.stmx` / `.xmile`).
+ *
+ * Notes go to stderr and the model to stdout, so `flowloom import m.stmx > m.flow`
+ * gives you the model and still tells you what didn't survive.
+ */
+function cmdImport(args: Args): void {
+  if (!args.file) die("import needs a file: flowloom import model.stmx > model.flow");
+  let text: string;
+  try { text = args.file === "-" ? readFileSync(0, "utf8") : readFileSync(args.file, "utf8"); } catch (e) { die(`cannot read ${args.file}: ${(e as Error).message}`); }
+  let r: { model: string; notes: string[] };
+  try { r = importXmile(text!); } catch (e) { die((e as Error).message); }
+  if (args.format === "json") { out(JSON.stringify(r!, null, 2)); return; }
+  process.stdout.write(r!.model);
+  for (const n of r!.notes) warn(n);
 }
 
 function cmdBundle(args: Args): void {
@@ -926,7 +1055,11 @@ usage:
                                              them by knockout (cut a link, re-run); --all lists inactive ones;
                                              --basis only the shortest independent loop set (the cycle-rank
                                              many loops every other loop is a combination of)
-  flowloom check    <model.flow>             parse + lint; non-zero exit on parse error
+  flowloom check    <model.flow> [--numerics] [--tol T] [--json]
+                                             parse + lint; non-zero exit on parse error. --numerics also
+                                             re-runs at half the step and reports whether the answer moved
+                                             (plus advisories on discontinuities, dt-scaled noise, and a
+                                             time constant the grid can't resolve); non-zero if it did
   flowloom lint     <model.flow> [--json]    non-fatal warnings (unused params, dead vars, bad τ)
   flowloom describe <model.flow> [--json]    dump model structure (stocks/rates/vars/loops)
   flowloom explain  <model.flow>             plain-language summary of the model
@@ -939,6 +1072,11 @@ usage:
                                              or, with no --data, against the model's own 'data' lines: --against S=dataName
   flowloom data     <obs.csv> [--column a,b] [--time COL] [--unit U] [--linear]
                                              print the CSV as 'data NAME = (t, v) …' lines to paste into a model
+  flowloom import   <model.stmx> [--json]     read an XMILE (.stmx/.xmile) model from Stella and friends
+                                             and print it as .flow; what didn't survive goes to stderr
+  flowloom fmt      <model.flow> [--write]    reprint in canonical form (source order kept, spelling and
+                                             spacing normalised); non-zero exit if it wasn't already
+                                             formatted, so it can gate CI
   flowloom bundle   <main.flow>              resolve 'include "part.flow" as ns' lines into the one flat text
                                              the studio / MCP / share links take (the CLI resolves them itself)
   flowloom scenarios <model.flow> [--json]   list the model's scenario lines
@@ -1007,7 +1145,7 @@ async function main(): Promise<void> {
   switch (args.cmd) {
     case "run": await cmdRun(args); break;
     case "loops": await cmdLoops(args); break;
-    case "check": cmdCheck(args); break;
+    case "check": await cmdCheck(args); break;
     case "lint": cmdLint(args); break;
     case "describe": cmdDescribe(args); break;
     case "explain": cmdExplain(args); break;
@@ -1023,6 +1161,8 @@ async function main(): Promise<void> {
     case "leverage": await cmdLeverage(args); break;
     case "test": await cmdTest(args); break;
     case "data": cmdData(args); break;
+    case "fmt": cmdFmt(args); break;
+    case "import": cmdImport(args); break;
     case "bundle": cmdBundle(args); break;
     case "diff": await cmdDiff(args); break;
     case "reference": cmdReference(args); break;
