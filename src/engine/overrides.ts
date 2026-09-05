@@ -25,9 +25,10 @@ export function applyOverride(model: Model, spec: string): string[] {
     model.settings.method = raw;
     return warnings;
   }
-  if (key === "dt" || key === "to" || key === "start" || key === "seed") {
+  if (key === "dt" || key === "to" || key === "start" || key === "seed" || key === "savper") {
     const v = Number(raw);
     if (!Number.isFinite(v)) throw new Error(`${key} must be a number, got "${raw}"`);
+    if (key === "savper" && v <= 0) throw new Error(`savper must be positive, got ${v}`);
     model.settings[key] = v;
     return warnings;
   }

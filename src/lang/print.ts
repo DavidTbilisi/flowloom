@@ -87,6 +87,7 @@ function simLine(m: Model): string {
   bits.push(`method=${s.method}`);
   if (s.timeunit) bits.push(`timeunit=${s.timeunit}`);
   if (s.seed !== undefined) bits.push(`seed=${s.seed}`);
+  if (s.savper !== undefined) bits.push(`savper=${s.savper}`);
   return `sim ${bits.join(" ")}`;
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseModel } from "../../src/lang/index.js";
+import { parseModel, SETTING_KEYS } from "../../src/lang/index.js";
 import { applyOverride, applyScenario, simulate } from "../../src/engine/index.js";
 
 // CONTRACT: `--set k=v` (CLI) / `set` (MCP) rebinds a param, a stock init, or a
@@ -67,7 +67,10 @@ describe("applyOverride: errors teach the fix", () => {
   });
 
   it("an unknown key with no near match still gets a recovery pointer", () => {
-    expect(() => applyOverride(model(), "Popultion=50")).toThrow(/named "Popultion" \(overridable: params, stock inits, and dt\/to\/start\/seed\/method\/timeunit\)/);
+    // Derived from SETTING_KEYS rather than spelled out: adding a settable key
+    // is a language change, not a reason for this test to rot.
+    expect(() => applyOverride(model(), "Popultion=50"))
+      .toThrow(`no param, stock, or sim setting named "Popultion" (overridable: params, stock inits, and ${SETTING_KEYS.join("/")})`);
   });
 
   it("a genuinely non-numeric value for a real param is reported as such", () => {

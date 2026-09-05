@@ -312,7 +312,11 @@ The `[unit]` annotation never changes the numbers, but where you supply it,
 `exp`/`ln`/`sin`, or a `change(stock)` whose units aren't the stock's-per-time.
 Un-annotated names are *unknown* (not dimensionless), so checking only fires where
 you've annotated enough to make the claim. Set the time unit with
-`sim timeunit=month`.
+`sim timeunit=month`. Unit tokens stay free-form (`widgets`, `GEL`), but the
+standard ones are known — SI bases and prefixes, the time family, `person` =
+`people` — so `people/hour` and `person/day` are one dimension. Reduction is
+dimensional only: a model that mixes hours and days is *told* it needs a
+conversion constant, never quietly rescaled.
 
 ### Simulation settings and `plot`
 
@@ -323,7 +327,9 @@ plot S I R                            # method: rk4 (default, accurate), euler, 
 
 The toolbar's dt / to / method controls rewrite this exact line, so the text
 always reflects what ran. `plot` only sets which series start visible — it's
-cosmetic.
+cosmetic. Add `savper=1` to record one sample per time unit rather than one per
+step — the model still integrates at `dt`, so a small step on a long horizon
+stops meaning a 200,000-point array per series.
 
 ### A complete model
 

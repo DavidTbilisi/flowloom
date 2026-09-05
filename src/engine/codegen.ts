@@ -300,7 +300,7 @@ export interface RunResult {
 export function runIntegration(
   plan: SimPlan,
   backend: DerivBackend,
-  settings: { dt: number; to: number; start: number; method: "euler" | "rk4" | "map" },
+  settings: { dt: number; to: number; start: number; method: "euler" | "rk4" | "map"; savper?: number },
   /** Called after each step's first derivative evaluation, with the full scope
    *  vector (every state, var and internal slot at that instant). Used by the
    *  loop analyzer to read link signs along the actual trajectory. */
@@ -308,6 +308,14 @@ export function runIntegration(
 ): RunResult {
   const { dt, to, start, method } = settings;
   const steps = Math.max(1, Math.round((to - start) / dt));
+  // `savper` thins the *output*, never the integration: every step is still
+  // taken, and only every `every`-th is recorded. A long horizon at a small
+  // step used to mean one `number[]` entry per step per series (a 200k-sample
+  // stress model is 1.6 MB a series), which is the reason a stiff model —
+  // exactly the one that needs a small dt — was expensive to look at.
+  const every = settings.savper !== undefined && settings.savper > 0
+    ? Math.max(1, Math.round(settings.savper / dt))
+    : 1;
   const { mem, rates } = backend;
   const ns = plan.stateSlots.length;
 
@@ -361,11 +369,15 @@ export function runIntegration(
     for (let j = 0; j < ns; j++) k1[j] = rates[j]!;
     if (onStep) onStep(i, time, mem);
 
-    t.push(time);
-    for (let o = 0; o < plan.outSlots.length; o++) cols[o]!.push(mem[plan.outSlots[o]!]!);
-
     let bad = false;
     for (let j = 0; j < ns; j++) if (!Number.isFinite(getState(j))) { bad = true; break; }
+    // Record on the save grid — and always the first step, the last one, and the
+    // step a run halts on, so no thinning can hide where it ended or what it
+    // ended at.
+    if (i % every === 0 || i === steps || bad) {
+      t.push(time);
+      for (let o = 0; o < plan.outSlots.length; o++) cols[o]!.push(mem[plan.outSlots[o]!]!);
+    }
     if (bad) {
       note = `stopped at t=${time.toFixed(3)} — a stock went non-finite (try a smaller dt or check the model).`;
       break;

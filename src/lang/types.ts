@@ -194,6 +194,11 @@ export interface SimSettings {
   timeunit?: string;
   /** RNG seed for random*() builtins. Defaults to 0 ⇒ runs are reproducible. */
   seed?: number;
+  /** How often to *record* a sample, in time units (Vensim's SAVEPER). The model
+   *  still integrates at `dt` — this only thins the output, which is what makes
+   *  a small step affordable on a long horizon. Defaults to `dt` (record every
+   *  step). Rounded to a whole number of steps, minimum one. */
+  savper?: number;
   /** Where the `sim` line sits, so a settings-level diagnostic can point at it. */
   loc?: Loc;
 }

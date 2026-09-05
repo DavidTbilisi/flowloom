@@ -13,6 +13,7 @@
 
 import type { Model, Diagnostic, Expr, Loc } from "../lang/index.js";
 import { declExprs } from "../lang/index.js";
+import { resolveUnit, pluralFolding } from "./unit-library.js";
 
 /** A dimension: base-unit token → exponent. Empty map = dimensionless. */
 export type Dim = Map<string, number>;
@@ -64,12 +65,21 @@ export function isDimensionless(d: Dim): boolean {
   return d.size === 0;
 }
 
-/** Human-readable form for diagnostics: "widgets/month", "people", "1". */
-export function fmtDim(d: Dim): string {
+/**
+ * Human-readable form for diagnostics: "widgets/month", "people", "1".
+ *
+ * `display` maps a base dimension back to the spelling the model actually uses,
+ * so a model written in months is told its rate should be `people/month` rather
+ * than the `people/s` its units reduce to. Reduction is an implementation
+ * detail of the check; the modeller's own vocabulary is what a diagnostic
+ * should speak.
+ */
+export function fmtDim(d: Dim, display?: Map<string, string>): string {
   if (d.size === 0) return "1";
   const num: string[] = [];
   const den: string[] = [];
-  for (const [k, v] of [...d].sort((x, y) => x[0].localeCompare(y[0]))) {
+  for (const [k0, v] of [...d].sort((x, y) => x[0].localeCompare(y[0]))) {
+    const k = display?.get(k0) ?? k0;
     const tok = Math.abs(v) === 1 ? k : `${k}^${Math.abs(v)}`;
     (v > 0 ? num : den).push(tok);
   }
@@ -86,12 +96,56 @@ export function fmtDim(d: Dim): string {
 //   term   := atom ('^' INTEGER)?
 //   atom   := IDENT | '1' | '(' expr ')'
 
-/** One place owns vocabulary equivalence: trim + lowercase, no pluralization magic. */
+/** One place owns vocabulary equivalence: trim + lowercase. Reduction to base
+ *  units (and model-local plural folding) happens in `tokenDim` below. */
 export function normToken(tok: string): string {
   return tok.trim().toLowerCase();
 }
 
-export function parseUnit(src: string): Dim {
+/** How a model spells its units — everything a `[…]` annotation mentions, plus
+ *  the `sim timeunit`. Used to fold plurals and to name base dimensions back. */
+export interface UnitVocab {
+  /** Model-local plural folding, from `pluralFolding`. */
+  fold?: Map<string, string>;
+  /** Records the spelling each base dimension came from, for diagnostics. */
+  display?: Map<string, string>;
+}
+
+/**
+ * One unit token as a dimension, reduced through the library.
+ *
+ * A token the library knows becomes its base dimensions (`km` → m, `hour` → s,
+ * `people` → person, `W` → kg·m²/s³). One it does not know stays its own base,
+ * which is what keeps `widgets`, `GEL` and `customers` working exactly as they
+ * always have. The token's own spelling is remembered so diagnostics can speak
+ * the model's language rather than SI's.
+ */
+function tokenDim(raw: string, vocab?: UnitVocab): Dim {
+  const norm = normToken(raw);
+  const folded = vocab?.fold?.get(norm);
+  // Resolve the token *as written* when no plural fold applies: `M` is mega and
+  // `m` is milli, the one place in the unit vocabulary where case carries
+  // meaning, and lowercasing first turned MW into a milliwatt.
+  const known = resolveUnit(folded ?? raw.trim());
+  const shown = folded ?? norm;
+  if (!known) {
+    vocab?.display?.set(shown, shown);
+    return new Map([[shown, 1]]);
+  }
+  // Remember the spelling only for a token that *is* one base dimension —
+  // "W" would otherwise claim the name of kg, m and s all at once.
+  if (known.dim.length === 1 && known.dim[0]![1] === 1 && !vocab?.display?.has(known.dim[0]![0])) {
+    vocab?.display?.set(known.dim[0]![0], shown);
+  }
+  return new Map(known.dim);
+}
+
+/** The scale of one unit token relative to its base (`day` → 86400), or 1. */
+export function unitScale(raw: string, vocab?: UnitVocab): number {
+  return resolveUnit(vocab?.fold?.get(normToken(raw)) ?? raw.trim())?.factor ?? 1;
+}
+
+export function parseUnit(src: string, vocab?: UnitVocab): Dim {
   const toks = src.match(/[A-Za-z_]\w*|\d+(?:\.\d+)?|[*/^()]/g) ?? [];
   let i = 0;
   const peek = () => toks[i];
@@ -106,7 +160,7 @@ export function parseUnit(src: string): Dim {
       return d;
     }
     if (t === "1") return new Map();
-    if (/^[A-Za-z_]/.test(t)) return new Map([[normToken(t), 1]]);
+    if (/^[A-Za-z_]/.test(t)) return tokenDim(t, vocab);
     throw new UnitParseError(`unexpected "${t}" in unit "${src}"`);
   }
 
@@ -149,6 +203,9 @@ export interface UnitEnv {
   tables: Set<string>;
   /** The time dimension (from `sim timeunit=…`, default the token "time"). */
   time: Dim;
+  /** Base dimension → the spelling this model uses for it, so diagnostics speak
+   *  the modeller's vocabulary rather than the SI base the check reduces to. */
+  display: Map<string, string>;
 }
 
 /** Fold an expression to a constant integer (literal or negated literal), else undefined. */
@@ -211,7 +268,7 @@ export function inferDim(e: Expr, env: UnitEnv, out: Diagnostic[]): DimResult {
         case "!=":
           // comparing unlike units is a mistake; the result is a dimensionless 0/1
           if (conflict(l, r)) {
-            out.push(warn(e.loc, `unit mismatch: ${fmtDim(l)} ${e.op} ${fmtDim(r as Dim)} — both sides must share units`));
+            out.push(warn(e.loc, `unit mismatch: ${fmtDim(l, env.display)} ${e.op} ${fmtDim(r as Dim, env.display)} — both sides must share units`));
           }
           return new Map();
         case "&&":
@@ -232,7 +289,7 @@ export function inferDim(e: Expr, env: UnitEnv, out: Diagnostic[]): DimResult {
         case "-":
         case "%": {
           if (conflict(l, r)) {
-            out.push(warn(e.loc, `unit mismatch: ${fmtDim(l)} ${e.op} ${fmtDim(r as Dim)} — both sides must share units`));
+            out.push(warn(e.loc, `unit mismatch: ${fmtDim(l, env.display)} ${e.op} ${fmtDim(r as Dim, env.display)} — both sides must share units`));
           }
           return unify(l, r);
         }
@@ -242,7 +299,7 @@ export function inferDim(e: Expr, env: UnitEnv, out: Diagnostic[]): DimResult {
           if (l === LITERAL) return LITERAL;
           if (isDimensionless(l)) return new Map();
           if (n === undefined) {
-            out.push(warn(e.loc, `cannot raise a dimensioned quantity (${fmtDim(l)}) to a non-constant-integer power`));
+            out.push(warn(e.loc, `cannot raise a dimensioned quantity (${fmtDim(l, env.display)}) to a non-constant-integer power`));
             return UNKNOWN;
           }
           return powDim(l, n);
@@ -270,7 +327,7 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
   if (DIMENSIONLESS_FN.has(name)) {
     const a = argDim(0);
     if (a !== UNKNOWN && a !== LITERAL && !isDimensionless(a)) {
-      out.push(warn(e.loc, `${e.name}() expects a dimensionless argument, got ${fmtDim(a)}`));
+      out.push(warn(e.loc, `${e.name}() expects a dimensionless argument, got ${fmtDim(a, env.display)}`));
     }
     return new Map();
   }
@@ -286,7 +343,7 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
       if (base === UNKNOWN || base === LITERAL) return base;
       if (isDimensionless(base)) return new Map();
       if (n === undefined) {
-        out.push(warn(e.loc, `pow() of a dimensioned base (${fmtDim(base)}) needs a constant-integer exponent`));
+        out.push(warn(e.loc, `pow() of a dimensioned base (${fmtDim(base, env.display)}) needs a constant-integer exponent`));
         return UNKNOWN;
       }
       return powDim(base, n);
@@ -307,7 +364,7 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
       const a = argDim(1);
       const b = argDim(2);
       if (conflict(a, b)) {
-        out.push(warn(e.loc, `if() branches disagree on units: ${fmtDim(a)} vs ${fmtDim(b as Dim)}`));
+        out.push(warn(e.loc, `if() branches disagree on units: ${fmtDim(a, env.display)} vs ${fmtDim(b as Dim, env.display)}`));
       }
       return unify(a, b);
     }
@@ -332,13 +389,13 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
       requireTime(e, 1, env, out);
       const input = argDim(0);
       const init = argDim(2);
-      if (conflict(input, init)) out.push(warn(e.loc, `delay_fixed() init units (${fmtDim(init as Dim)}) differ from input (${fmtDim(input)})`));
+      if (conflict(input, init)) out.push(warn(e.loc, `delay_fixed() init units (${fmtDim(init as Dim, env.display)}) differ from input (${fmtDim(input, env.display)})`));
       return unify(input, init);
     }
     case "previous": {
       const input = argDim(0);
       const init = argDim(1);
-      if (conflict(input, init)) out.push(warn(e.loc, `previous() init units (${fmtDim(init as Dim)}) differ from input (${fmtDim(input)})`));
+      if (conflict(input, init)) out.push(warn(e.loc, `previous() init units (${fmtDim(init as Dim, env.display)}) differ from input (${fmtDim(input, env.display)})`));
       return unify(input, init);
     }
     case "smoothi": {
@@ -347,7 +404,7 @@ function inferCall(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]):
       const input = argDim(0);
       const init = argDim(2);
       if (conflict(input, init)) {
-        out.push(warn(e.loc, `smoothi() init units (${fmtDim(init as Dim)}) differ from input (${fmtDim(input)})`));
+        out.push(warn(e.loc, `smoothi() init units (${fmtDim(init as Dim, env.display)}) differ from input (${fmtDim(input, env.display)})`));
       }
       return unify(input, init);
     }
@@ -368,7 +425,7 @@ function sameDims(e: Expr & { kind: "call" }, env: UnitEnv, out: Diagnostic[]): 
     if (d === UNKNOWN) { sawUnknown = true; continue; }
     if (known === undefined) known = d;
     else if (!eqDim(known, d)) {
-      out.push(warn(e.loc, `${e.name}() arguments disagree on units: ${fmtDim(known)} vs ${fmtDim(d)}`));
+      out.push(warn(e.loc, `${e.name}() arguments disagree on units: ${fmtDim(known, env.display)} vs ${fmtDim(d, env.display)}`));
     }
   }
   return known ?? (sawUnknown ? UNKNOWN : LITERAL);
@@ -380,17 +437,33 @@ function requireTime(e: Expr & { kind: "call" }, i: number, env: UnitEnv, out: D
   if (!arg) return;
   const d = inferDim(arg, env, out);
   if (d !== UNKNOWN && d !== LITERAL && !eqDim(d, env.time)) {
-    out.push(warn(e.loc, `${e.name}() time constant should be in ${fmtDim(env.time)}, got ${fmtDim(d)}`));
+    out.push(warn(e.loc, `${e.name}() time constant should be in ${fmtDim(env.time, env.display)}, got ${fmtDim(d, env.display)}`));
   }
 }
 
 // ── Top-level check ──────────────────────────────────────────────────────────
 
 /** Build the name→dimension environment, warning on any malformed unit string. */
+/** Every unit token the model writes, in source order. */
+function unitTokens(model: Model): string[] {
+  const toks: string[] = [];
+  const take = (u: string | undefined) => {
+    for (const t of u?.match(/[A-Za-z_]\w*/g) ?? []) if (t !== "1") toks.push(t);
+  };
+  for (const s of model.stocks) take(s.unit);
+  for (const v of model.vars) take(v.unit);
+  take(model.settings.timeunit);
+  return toks;
+}
+
 export function buildUnitEnv(model: Model, out: Diagnostic[]): UnitEnv {
   const names = new Map<string, DimResult>();
+  // The vocabulary is collected before anything is parsed, because plural
+  // folding is model-local: `widgets` collapses onto `widget` only if the model
+  // writes both. The display map is filled as tokens are resolved.
+  const vocab: UnitVocab = { fold: pluralFolding(unitTokens(model)), display: new Map() };
   const timeUnit = model.settings.timeunit?.trim();
-  const time: Dim = new Map([[timeUnit ? normToken(timeUnit) : "time", 1]]);
+  const time: Dim = timeUnit ? parseUnit(timeUnit, vocab) : new Map([["time", 1]]);
 
   const declare = (name: string, unit: string | undefined, loc: Loc) => {
     if (unit === undefined || unit.trim() === "") {
@@ -398,7 +471,7 @@ export function buildUnitEnv(model: Model, out: Diagnostic[]): UnitEnv {
       return;
     }
     try {
-      names.set(name, parseUnit(unit));
+      names.set(name, parseUnit(unit, vocab));
     } catch (err) {
       names.set(name, UNKNOWN);
       out.push(warn(loc, err instanceof UnitParseError ? err.message : `invalid unit "${unit}"`));
@@ -408,7 +481,44 @@ export function buildUnitEnv(model: Model, out: Diagnostic[]): UnitEnv {
   for (const s of model.stocks) declare(s.name, s.unit, s.loc);
   for (const v of model.vars) declare(v.name, v.unit, v.loc);
 
-  return { names, tables: new Set(model.tables.keys()), time };
+  return { names, tables: new Set(model.tables.keys()), time, display: vocab.display! };
+}
+
+/**
+ * Warn where a model writes two units of the same dimension at different scales.
+ *
+ * Reducing `hour` and `day` to seconds is what lets them check against each
+ * other at all — but flowloom has never rescaled a number for an annotation and
+ * will not start, so `X [widgets/hour] * T [day]` is dimensionally clean and
+ * numerically out by 24. Dimensional analysis cannot catch that; naming it can.
+ * One warning per family, on the `sim` line (or the first declaration), because
+ * the fix is one conversion constant, not an edit per site.
+ */
+function checkUnitScales(model: Model, env: UnitEnv, out: Diagnostic[]): void {
+  const fold = pluralFolding(unitTokens(model));
+  // base dimension → spelling → the scale it stands for
+  const families = new Map<string, Map<string, number>>();
+  for (const tok of unitTokens(model)) {
+    const norm = normToken(tok);
+    const folded = fold.get(norm);
+    const known = resolveUnit(folded ?? tok);
+    if (!known || known.dim.length !== 1 || known.dim[0]![1] !== 1) continue;
+    const base = known.dim[0]![0];
+    const seen = families.get(base) ?? new Map<string, number>();
+    seen.set(folded ?? norm, known.factor);
+    families.set(base, seen);
+  }
+  const at = model.settings.loc ?? model.stocks[0]?.loc ?? model.vars[0]?.loc;
+  if (!at) return;
+  for (const [base, seen] of families) {
+    const scales = [...new Set(seen.values())];
+    if (scales.length < 2) continue;
+    const spellings = [...seen.entries()].sort((a, b) => a[1] - b[1]);
+    const [smallName, small] = spellings[0]!;
+    const [bigName, big] = spellings[spellings.length - 1]!;
+    const ratio = big / small;
+    out.push(warn(at, `this model measures ${env.display.get(base) ?? base} in ${spellings.map(([n]) => n).join(" and ")} — the same dimension at different scales, so the units check out but the arithmetic does not: 1 ${bigName} = ${Number(ratio.toPrecision(10))} ${smallName}. flowloom never rescales a number for an annotation; make the conversion explicit, e.g. \`const per${bigName[0]!.toUpperCase()}${bigName.slice(1)} [${smallName}/${bigName}] = ${Number(ratio.toPrecision(10))}\`.`));
+  }
 }
 
 /**
@@ -417,6 +527,7 @@ export function buildUnitEnv(model: Model, out: Diagnostic[]): UnitEnv {
  */
 export function checkUnits(model: Model, out: Diagnostic[]): void {
   const env = buildUnitEnv(model, out);
+  checkUnitScales(model, env, out);
 
   // Var bodies and stock initialisers are checked for their own internal mismatches.
   for (const v of model.vars) for (const e of declExprs(v.expr, v.elemExprs)) inferDim(e, env, out);
@@ -429,7 +540,7 @@ export function checkUnits(model: Model, out: Diagnostic[]): void {
     // A bare numeric initial value is read as "in the stock's units" (idiomatic),
     // so only a concretely dimensioned, conflicting initial value is a mismatch.
     if (declared && declared !== UNKNOWN && declared !== LITERAL && init !== UNKNOWN && init !== LITERAL && !isDimensionless(init) && !eqDim(declared, init)) {
-      out.push(warn(s.loc, `stock '${s.name}' is ${fmtDim(declared)} but its initial value is ${fmtDim(init)}`));
+      out.push(warn(s.loc, `stock '${s.name}' is ${fmtDim(declared, env.display)} but its initial value is ${fmtDim(init, env.display)}`));
     }
   }
 
@@ -444,9 +555,9 @@ export function checkUnits(model: Model, out: Diagnostic[]): void {
     const expected = isMap ? stockDim : divDim(stockDim, env.time);
     if (!eqDim(rateDim, expected)) {
       const why = isMap
-        ? `(a per-step increment under method=map — the stock's own units, not per ${fmtDim(env.time)})`
-        : `(${fmtDim(stockDim)} per ${fmtDim(env.time)})`;
-      out.push(warn(r.loc, `change(${name}) should be ${fmtDim(expected)} ${why}, got ${fmtDim(rateDim)}`));
+        ? `(a per-step increment under method=map — the stock's own units, not per ${fmtDim(env.time, env.display)})`
+        : `(${fmtDim(stockDim, env.display)} per ${fmtDim(env.time, env.display)})`;
+      out.push(warn(r.loc, `change(${name}) should be ${fmtDim(expected, env.display)} ${why}, got ${fmtDim(rateDim, env.display)}`));
     }
   }
 }

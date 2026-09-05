@@ -49,6 +49,35 @@ where you've annotated enough to make the claim. Set the time unit with
 never warn on their own (the way a modeller reads them); under `*` and `/` a
 literal is a pure scalar.
 
+**The vocabulary.** Unit tokens are free-form — `widgets`, `GEL`, `customers`
+are their own dimensions and always will be — but the ones with a standard
+meaning are known: SI base and derived units (`m`, `kg`, `s`, `W`, `N`, `J`,
+`Hz`, `Pa`, `V`, `L`), SI prefixes on them (`km`, `MW`, `ms`, `kilometer`), the
+time family (`second` … `century`, plus `hr`/`wk`/`yr`), lengths and masses in
+both systems, and the irregulars that matter (`person` = `people`, `foot` =
+`feet`). They reduce to base dimensions, so `people/hour` and `person/day` check
+against each other and against `sim timeunit=month` instead of being three
+unrelated dimensions. A known token always wins over a prefix reading: `min` is
+a minute, not a milli-inch.
+
+Plurals fold **model-locally**: `widgets` collapses onto `widget` only if the
+model writes both, which is exactly when the two spellings must mean one thing —
+a blanket `-s` rule would turn `mass` into `mas`.
+
+Reduction is dimensional, never numeric. flowloom has never rescaled a number
+for an annotation and does not start here, so a model that measures one
+dimension at two scales gets told:
+
+```
+this model measures hour in hour and day — the same dimension at different
+scales, so the units check out but the arithmetic does not: 1 day = 24 hour.
+flowloom never rescales a number for an annotation; make the conversion
+explicit, e.g. `const perDay [hour/day] = 24`.
+```
+
+Diagnostics speak your vocabulary, not SI: a model in months is told its rate
+should be `people/month`, not `person/s`.
+
 ### Stocks and rates — the engine
 
 A stock is the running integral of its net flow:
@@ -538,6 +567,22 @@ sim dt=0.1 to=50 start=0 method=rk4   # method: rk4 | euler | map
   [Discrete periods](#discrete-periods-previous-delay_fixed).
 - `timeunit` — the name of the time unit for units checking (e.g. `month`).
 - `seed` — the RNG seed for `random*()` (default `0`, so runs are reproducible).
+- `savper` — how often to **record** a sample, in time units (default: every
+  step). The model still integrates at `dt`; this only thins the output.
+
+```flow
+sim dt=0.001 to=200 method=rk4 savper=1     # 200,001 steps, 201 samples
+```
+
+`savper` is what makes a small step affordable to look at. Recording every step
+of a long horizon is one array entry per step per series — the 200k-step stress
+model holds 200,000 samples a series — and it compounds with a stiff model,
+which is exactly the one that needs a small `dt`. The samples kept are
+bit-identical to the un-thinned run: this is a save period, not a bigger step.
+The first sample, the last one, and the step a run halts on are always kept, so
+no thinning can hide where a run ended or what it ended at. A period that is not
+a whole multiple of `dt` is rounded (with a warning), and one finer than `dt` is
+a warning too — output cannot be finer than the step.
 
 Every one of these is bindable by `--set`, a scenario line, or MCP `set` —
 including `timeunit`, so a scenario can re-frame a model from weeks to months

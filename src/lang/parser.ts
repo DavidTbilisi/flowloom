@@ -69,7 +69,7 @@ interface Raw {
 export const SWITCH_WORDS: Record<string, number> = { on: 1, off: 0, true: 1, false: 0, yes: 1, no: 0 };
 
 /** Sim-setting keys a scenario (or `--set`) may bind. One list, shared with overrides.ts. */
-export const SETTING_KEYS = ["dt", "to", "start", "seed", "method", "timeunit"] as const;
+export const SETTING_KEYS = ["dt", "to", "start", "seed", "method", "timeunit", "savper"] as const;
 
 // A NAME may be dotted — `eng.Cash` — the namespace form `include … as eng`
 // produces (see include.ts; scalarize's `base.elem` lives in the same flat space).
@@ -447,8 +447,17 @@ function parseSim(m: Raw, body: string, loc: Loc): void {
       else push(m, "error", loc, `unknown method '${v}' (use euler, rk4 or map)`);
     } else if (k === "timeunit") m.settings.timeunit = v;
     else if (k === "seed") m.settings.seed = num(m, v, loc, "seed");
+    else if (k === "savper") m.settings.savper = num(m, v, loc, "savper");
     else {
       push(m, "warning", loc, `unknown sim setting '${k}'`);
+    }
+  }
+  const { savper, dt } = m.settings;
+  if (savper !== undefined) {
+    if (savper <= 0) push(m, "error", loc, `savper must be positive, got ${savper}`);
+    else if (savper < dt) push(m, "warning", loc, `savper=${savper} is smaller than dt=${dt} — output cannot be finer than the step; every step will be recorded`);
+    else if (Math.abs(savper / dt - Math.round(savper / dt)) > 1e-9) {
+      push(m, "warning", loc, `savper=${savper} is not a whole multiple of dt=${dt} — it is rounded to ${Math.max(1, Math.round(savper / dt)) * dt}`);
     }
   }
 }

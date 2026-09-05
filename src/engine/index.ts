@@ -30,6 +30,7 @@ export { lintModel } from "./lint.js";
 export { checkNumerics, type NumericsReport, type NumericsSeries, type NumericsAdvisory, type NumericsOptions, type AdvisoryKind } from "./numerics.js";
 export {
   parseUnit,
+  unitScale,
   inferDim,
   checkUnits,
   buildUnitEnv,
