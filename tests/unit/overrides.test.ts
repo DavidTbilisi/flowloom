@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parseModel } from "../../src/lang/index.js";
-import { applyOverride, simulate } from "../../src/engine/index.js";
+import { applyOverride, applyScenario, simulate } from "../../src/engine/index.js";
 
 // CONTRACT: `--set k=v` (CLI) / `set` (MCP) rebinds a param, a stock init, or a
 // sim setting on the parsed Model via a constant-folded AST edit — an agent's
@@ -67,7 +67,7 @@ describe("applyOverride: errors teach the fix", () => {
   });
 
   it("an unknown key with no near match still gets a recovery pointer", () => {
-    expect(() => applyOverride(model(), "Popultion=50")).toThrow(/named "Popultion" \(overridable: params, stock inits, and dt\/to\/start\/seed\/method\)/);
+    expect(() => applyOverride(model(), "Popultion=50")).toThrow(/named "Popultion" \(overridable: params, stock inits, and dt\/to\/start\/seed\/method\/timeunit\)/);
   });
 
   it("a genuinely non-numeric value for a real param is reported as such", () => {
@@ -76,5 +76,29 @@ describe("applyOverride: errors teach the fix", () => {
 
   it("an invalid method value is rejected with the allowed set", () => {
     expect(() => applyOverride(model(), "method=heun")).toThrow(/method must be euler, rk4 or map/);
+  });
+});
+
+describe("timeunit is overridable", () => {
+  // It changes no arithmetic — only what the units checker reads `/time` as —
+  // but a scenario that reframes a model from weeks to months has to say so,
+  // and `timeunit` was the one sim setting missing from SETTING_KEYS.
+  const src = "stock Cash [usd] = 0\nchange(Cash) = 1\nsim dt=1 to=2 timeunit=week";
+
+  it("rebinds the setting", () => {
+    const m = parseModel(src);
+    expect(m.settings.timeunit).toBe("week");
+    expect(applyOverride(m, "timeunit=month")).toEqual([]);
+    expect(m.settings.timeunit).toBe("month");
+  });
+
+  it("a scenario can set it", () => {
+    const m = parseModel(`${src}\nscenario monthly timeunit=month`);
+    applyScenario(m, "monthly");
+    expect(m.settings.timeunit).toBe("month");
+  });
+
+  it("rejects an empty name", () => {
+    expect(() => applyOverride(parseModel(src), "timeunit=")).toThrow(/timeunit must be a name/);
   });
 });

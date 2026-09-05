@@ -350,3 +350,124 @@ describe("scalarization preserves declaration flags", () => {
   });
 });
 
+
+describe("change() subscripts are checked, not discarded", () => {
+  // The subscript list on a rate target used to be matched by a non-capturing
+  // group: `change(Pop[Sooth])` and `change(Trade[to, from])` both parsed
+  // cleanly and silently meant the un-indexed stock. A wrong axis name or a
+  // wrong axis *order* is exactly the mistake that survives review, so it has
+  // to be a located error rather than a shrug.
+  const head = `dim region = North, South\nstock Pop [region] = 10\n`;
+
+  it("accepts the stock's own dimensions, in order", () => {
+    const m = parseModel(`${head}change(Pop[region]) = 1\nsim dt=1 to=2 method=euler`);
+    expect(m.rates.get("Pop")!.subs).toEqual(["region"]);
+    const r = simulate(scalarize(m));
+    expect(r.series.get("Pop.North")!.at(-1)).toBeCloseTo(12, 9);
+  });
+
+  it("rejects a misspelled dimension", () => {
+    expect(() => parseModel(`${head}change(Pop[Sooth]) = 1\nsim dt=1 to=2`))
+      .toThrow(/'Sooth' is not a declared dim.*subscripted over \[region\]/s);
+  });
+
+  it("rejects the right axes in the wrong order", () => {
+    const two = `dim a = A1, A2\ndim b = B1, B2\nstock Trade [a, b] = 0\n`;
+    expect(() => parseModel(`${two}change(Trade[b, a]) = 1\nsim dt=1 to=2`))
+      .toThrow(/names dimension 'b' in position 1.*declared over \[a, b\]/s);
+  });
+
+  it("rejects indexing a stock that has no dimensions", () => {
+    expect(() => parseModel(`dim region = North, South\nstock Cash = 0\nchange(Cash[region]) = 1\nsim dt=1 to=2`))
+      .toThrow(/'Cash' is not subscripted.*write change\(Cash\)/s);
+  });
+
+  it("rejects the wrong number of axes", () => {
+    const two = `dim a = A1, A2\ndim b = B1, B2\nstock Trade [a, b] = 0\n`;
+    expect(() => parseModel(`${two}change(Trade[a]) = 1\nsim dt=1 to=2`))
+      .toThrow(/has 2 dimension\(s\) \[a, b\] but change\(\) indexes it with 1/);
+  });
+});
+
+describe("expect on a subscripted series", () => {
+  // `expect final:Pop[North] > 5` used to pass parse-time validation (the base
+  // was split off at the bracket and the subscript discarded) and then fail at
+  // run time, because the scalarized series is `Pop.North`.
+  const src = (line: string) =>
+    `dim region = North, South\nstock Pop [region] = 10, 20\nchange(Pop[region]) = 0\nsim dt=1 to=2 method=euler\n${line}`;
+
+  it("resolves the bracket form to the scalar series name", () => {
+    const m = parseModel(src("expect final:Pop[South] == 20"));
+    expect(m.expects[0]!.metric).toBe("final:Pop.South");
+  });
+
+  it("runs, and judges the indexed element", async () => {
+    const { runExpects } = await import("../../src/engine/expect.js");
+    const pass = await runExpects(parseModel(src("expect final:Pop[South] == 20")));
+    expect(pass.failed).toBe(0);
+    expect(pass.results[0]!.actual).toBe(20);
+    const fail = await runExpects(parseModel(src("expect final:Pop[North] == 20")));
+    expect(fail.failed).toBe(1);
+    expect(fail.results[0]!.actual).toBe(10);
+  });
+
+  it("accepts the already-scalar spelling, so fmt output re-reads", () => {
+    expect(parseModel(src("expect final:Pop.North == 10")).expects[0]!.metric).toBe("final:Pop.North");
+  });
+
+  it("rejects a bare reference to a whole vector", () => {
+    expect(() => parseModel(src("expect final:Pop == 10")))
+      .toThrow(/'Pop' is subscripted over \[region\].*index it, e\.g\. Pop\[North\]/s);
+  });
+
+  it("rejects an element that isn't in the dimension", () => {
+    expect(() => parseModel(src("expect final:Pop[East] == 10")))
+      .toThrow(/'East' is not an element of dim 'region' \(North, South\)/);
+  });
+
+  it("tells a dimension name apart from an element name", () => {
+    expect(() => parseModel(src("expect final:Pop[region] == 10")))
+      .toThrow(/'region' is a dimension, not an element/);
+  });
+});
+
+describe("per-element overrides", () => {
+  const model = () => parseModel(
+    `dim region = North, South\nstock Pop [region] = 10, 20\nchange(Pop[region]) = 0\nparam rate [region] = 1\nsim dt=1 to=2 method=euler`,
+  );
+
+  it("sets one element and leaves the others alone", () => {
+    const m = model();
+    expect(applyOverride(m, "Pop[North]=99")).toEqual([]);
+    const r = simulate(scalarize(m));
+    expect(r.series.get("Pop.North")!.at(-1)).toBe(99);
+    expect(r.series.get("Pop.South")!.at(-1)).toBe(20);
+  });
+
+  it("broadcasts the shared expression before replacing one entry", () => {
+    // `param rate [region] = 1` has no per-element list, so overriding one
+    // element has to materialise the other from the shared expression.
+    const m = model();
+    applyOverride(m, "rate[South]=7");
+    const s = scalarize(m);
+    expect(s.varIndex.get("rate.North")!.expr).toMatchObject({ kind: "num", value: 1 });
+    expect(s.varIndex.get("rate.South")!.expr).toMatchObject({ kind: "num", value: 7 });
+  });
+
+  it("still supports the broadcast form, with its warning", () => {
+    const m = model();
+    expect(applyOverride(m, "Pop=5")).toEqual(['"Pop" is subscripted — setting every element to 5']);
+    const r = simulate(scalarize(m));
+    expect(r.series.get("Pop.North")!.at(-1)).toBe(5);
+    expect(r.series.get("Pop.South")!.at(-1)).toBe(5);
+  });
+
+  it("rejects an element that isn't in the dimension", () => {
+    expect(() => applyOverride(model(), "Pop[East]=1")).toThrow(/"East" is not an element of dim "region"/);
+  });
+
+  it("rejects indexing something that isn't subscripted", () => {
+    const m = parseModel("stock Cash = 0\nchange(Cash) = 1\nsim dt=1 to=2");
+    expect(() => applyOverride(m, "Cash[North]=1")).toThrow(/"Cash" is not subscripted.*set Cash instead/s);
+  });
+});

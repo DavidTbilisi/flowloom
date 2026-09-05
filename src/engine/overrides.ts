@@ -7,9 +7,10 @@
 // override the same way. Throws on a malformed/unknown spec; returns any soft
 // warnings (e.g. overriding a non-param) for the caller to surface.
 
-import type { Model, Expr } from "../lang/index.js";
+import type { Model, Expr, StockDecl, VarDecl } from "../lang/index.js";
 import { SWITCH_WORDS, SETTING_KEYS } from "../lang/index.js";
 import { suggestName } from "../lang/suggest.js";
+import { elemTuples, elemName } from "../lang/scalarize.js";
 
 /** Apply one `key=value` override to `model` in place. Returns warnings. */
 export function applyOverride(model: Model, spec: string): string[] {
@@ -30,6 +31,20 @@ export function applyOverride(model: Model, spec: string): string[] {
     model.settings[key] = v;
     return warnings;
   }
+  // The one setting whose value is a word rather than a number. It changes no
+  // arithmetic — only what the units checker reads `/time` as — but a scenario
+  // that reframes a model from weeks to months has to be able to say so.
+  if (key === "timeunit") {
+    if (!raw) throw new Error(`timeunit must be a name, e.g. timeunit=month`);
+    model.settings.timeunit = raw;
+    return warnings;
+  }
+
+  // `Pop[North]=…` addresses one element of a subscripted declaration. Without
+  // it the only thing an override could say about a vector was "every element",
+  // which is rarely the experiment anyone wanted to run.
+  const idx = key.match(/^([^[\]]+?)\s*\[([^\]]*)\]$/);
+  if (idx) return applyElementOverride(model, idx[1]!.trim(), idx[2]!.split(/[\s,]+/).filter(Boolean), raw);
 
   // Resolve the *target* before validating the value. Otherwise a misspelled key
   // like `methdo=rk4` falls through here and is reported as "value must be a
@@ -71,6 +86,56 @@ export function applyOverride(model: Model, spec: string): string[] {
   if (stock!.dims && stock!.elemExprs) warnings.push(`"${key}" is subscripted — setting every element to ${v}`);
   stock!.initExpr = node;
   stock!.elemExprs = undefined;
+  return warnings;
+}
+
+/**
+ * Rebind a single element of a subscripted stock or var.
+ *
+ * A subscripted declaration carries either one expression for every element or
+ * an explicit per-element list; overriding one element means materialising the
+ * list first (broadcasting the shared expression) and then replacing one entry.
+ * The tuple order comes from scalarize, so `Pop[North]` here and `Pop.North` in
+ * the output series are the same element by construction rather than by luck.
+ */
+function applyElementOverride(model: Model, base: string, subs: string[], raw: string): string[] {
+  const decl: VarDecl | undefined = model.varIndex.get(base);
+  const stock: StockDecl | undefined = decl ? undefined : model.stocks.find((s) => s.name === base);
+  const target = decl ?? stock;
+  if (!target) {
+    const candidates = [...model.stocks.map((s) => s.name), ...model.vars.map((v) => v.name)];
+    const hint = suggestName(base, candidates);
+    throw new Error(`no param, stock, or sim setting named "${base}"` + (hint ? ` — did you mean "${hint}"?` : ""));
+  }
+  const dims = target.dims;
+  if (!dims?.length) throw new Error(`"${base}" is not subscripted, so "${base}[${subs.join(", ")}]" is invalid — set ${base} instead`);
+  if (subs.length !== dims.length) {
+    throw new Error(`"${base}" has ${dims.length} dimension(s) [${dims.join(", ")}] but was indexed with ${subs.length}`);
+  }
+  subs.forEach((sub, i) => {
+    const elements = model.dims.get(dims[i]!)?.elements ?? [];
+    if (elements.includes(sub)) return;
+    const hint = suggestName(sub, elements);
+    throw new Error(`"${sub}" is not an element of dim "${dims[i]}" (${elements.join(", ")})` + (hint ? ` — did you mean "${hint}"?` : ""));
+  });
+
+  const warnings: string[] = [];
+  if (decl && decl.kind !== "param") warnings.push(`overriding ${decl.kind} "${elemName(base, subs)}" with a constant`);
+  const word = decl?.boolean ? SWITCH_WORDS[raw.toLowerCase()] : undefined;
+  const v = word !== undefined ? word : Number(raw);
+  if (!Number.isFinite(v)) throw new Error(`${base}[${subs.join(", ")}]: value must be a number, got "${raw}"`);
+  if (decl?.boolean && v !== 0 && v !== 1) throw new Error(`"${base}" is a switch — set it on or off (1 or 0), not "${raw}"`);
+  const node: Expr = { kind: "num", value: v, loc: { line: 0, col: 0 } };
+
+  const tuples = elemTuples(dims, model.dims);
+  const at = tuples.findIndex((t) => t.every((el, i) => el === subs[i]));
+  const shared = decl ? decl.expr : stock!.initExpr;
+  const list = target.elemExprs ? [...target.elemExprs] : tuples.map(() => shared);
+  list[at] = node;
+  target.elemExprs = list;
+  // Single-expression consumers read the head, so keep it pointing at the same
+  // element the list's first entry describes.
+  if (decl) decl.expr = list[0]!; else stock!.initExpr = list[0]!;
   return warnings;
 }
 

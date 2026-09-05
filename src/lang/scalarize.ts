@@ -21,6 +21,16 @@ export function elemName(base: string, elems: string[]): string {
   return [base, ...elems].join(".");
 }
 
+/**
+ * Every element tuple of a declaration's dimensions, in the order a per-element
+ * value list (`= a, b, c`) and the expansion below both use. Exported because
+ * anything that addresses one element by position — a `--set Pop[North]=…`
+ * override, for one — has to agree with that order exactly.
+ */
+export function elemTuples(dims: string[], all: Map<string, { elements: string[] }>): string[][] {
+  return product(dims.map((d) => all.get(d)?.elements ?? []));
+}
+
 /** Cartesian product of per-dimension element lists: [[A,B],[X,Y]] → AX AY BX BY. */
 function product(lists: string[][]): string[][] {
   return lists.reduce<string[][]>(

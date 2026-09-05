@@ -62,4 +62,5 @@ export { runExpects, judge, loopMetric, formatExpect, type ExpectReport, type Ex
 export { diffModels, type DiffOptions, type DiffResult, type ScenarioDiff, type SeriesDiff, type StructureDiff, type LoopCensus } from "./diff.js";
 export { timeGrainParams, knobParams } from "./grain.js";
 export { paramRanges, type ParamRange } from "./uncertainty.js";
+export { causesTree, usesTree, renderTree, documentModel, renderDocument, type TraceNode, type TraceOptions, type DocEntry, type NodeKind } from "./trace.js";
 export { leverageLadder, MEADOWS_RUNGS, type LeverageResult, type LadderRung, type Lever } from "./leverage.js";

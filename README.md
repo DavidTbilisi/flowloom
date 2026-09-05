@@ -140,6 +140,9 @@ npm i -g .                                   # installs `flowloom` + `flowloom-m
 flowloom run     model.flow --json           # simulate → all series as JSON
 flowloom explain model.flow                  # plain-language summary (stocks, knobs, loops)
 flowloom describe model.flow --json          # full structure (stocks/rates/vars/deps/loops)
+flowloom causes  model.flow infection        # what feeds it, signed (params included)
+flowloom uses    model.flow beta             # what it feeds — what breaks if I change this
+flowloom document model.flow                 # every name: definition, causes, and who reads it
 flowloom loops   model.flow --json           # feedback loops with R/B polarity
 flowloom check   model.flow                  # validate; non-zero exit + line/col diagnostics
 flowloom check   model.flow --numerics       # …and validate the *run*: does the answer survive dt/2?
@@ -159,7 +162,9 @@ flowloom reference --json                     # the language + builtins catalog
   canonical catalog (`npm run gen:llms`), so it never drifts.
 - **MCP server:** `flowloom-mcp` exposes the engine to Claude Code / Claude Desktop
   as tools — `flow_run`, `flow_check`, `flow_loops`, `flow_describe`, `flow_explain`,
-  `flow_compare`, `flow_policies`, `flow_leverage`, `flow_test`, `flow_diff`, `flow_examples`, … — plus a `flow://reference` resource carrying the
+  `flow_causes`/`flow_uses`/`flow_document` (the dependency index, forwards and back),
+  `flow_compare`, `flow_policies`, `flow_leverage`, `flow_test`, `flow_diff`, `flow_bundle`,
+  `flow_data`, `flow_scenarios`, `flow_reference`, `flow_examples`, … — plus a `flow://reference` resource carrying the
   guide. Each tool takes the model as text (plus optional `set` / `scenario` what-ifs). Register it as a stdio MCP server pointing at
   `dist-cli/mcp.js` (build with `npm run build:cli`).
 

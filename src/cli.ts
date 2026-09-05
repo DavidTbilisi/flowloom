@@ -36,6 +36,11 @@ import {
   formatExpect,
   diffModels,
   describeModel,
+  causesTree,
+  usesTree,
+  renderTree,
+  documentModel,
+  renderDocument,
   explainModel,
   summarizeRun,
   sweepParam,
@@ -108,10 +113,12 @@ interface Args {
   seed?: number; // --seed N base seed for montecarlo
   data?: string; // --data FILE.csv for calibrate
   against: string[]; // --against Series=column mappings for calibrate
+  depth?: number; // --depth N for causes/uses
+  init: boolean; // --init: causes/uses — follow a stock's initial value too
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", noLoops: false, basis: false, numerics: false, write: false, columns: [], linear: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", noLoops: false, basis: false, numerics: false, write: false, init: false, columns: [], linear: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -129,6 +136,8 @@ function parseArgs(argv: string[]): Args {
       case "--time": a.timeColumn = need(argv, ++i, arg); break;
       case "--unit": a.unit = need(argv, ++i, arg); break;
       case "--linear": a.linear = true; break;
+      case "--init": a.init = true; break;
+      case "--depth": a.depth = Math.max(1, Math.floor(Number(need(argv, ++i, arg)))); break;
       case "--plot": a.plot.push(...splitList(need(argv, ++i, arg))); break;
       case "-s":
       case "--set": a.sets.push(need(argv, ++i, arg)); break;
@@ -171,6 +180,7 @@ function parseArgs(argv: string[]): Args {
         else if (arg.startsWith("--seed=")) a.seed = Number(arg.slice(7));
         else if (arg.startsWith("--data=")) a.data = arg.slice(7);
         else if (arg.startsWith("--against=")) a.against.push(...splitList(arg.slice(10)));
+        else if (arg.startsWith("--depth=")) a.depth = Math.max(1, Math.floor(Number(arg.slice(8))));
         else if (arg !== "-" && arg.startsWith("-")) die(`unknown flag: ${arg}`);
         else rest.push(arg); // positional, including "-" for stdin
     }
@@ -505,6 +515,28 @@ function cmdDescribe(args: Args): void {
 
 function cmdExplain(args: Args): void {
   out(explainModel(load(args)));
+}
+
+/**
+ * `causes` / `uses` — the two questions an unfamiliar model has to answer
+ * before it can be edited: what moved this, and what breaks if I change it.
+ * The forward half was available one level deep through `describe`; the reverse
+ * index existed only inside the loop finder, where nothing could read it.
+ */
+function cmdTrace(args: Args, dir: "causes" | "uses"): void {
+  const name = args.file2;
+  if (!name) die(`${dir} needs a name — e.g. \`flowloom ${dir} model.flow Cash\``);
+  const opts = { ...(args.depth !== undefined ? { depth: args.depth } : {}), init: args.init };
+  const tree = dir === "causes" ? causesTree(load(args), name!, opts) : usesTree(load(args), name!, opts);
+  if (args.format === "json") { out(JSON.stringify(tree, null, 2)); return; }
+  out(renderTree(tree));
+}
+
+/** `document` — every name, its definition, its causes and its readers. */
+function cmdDocument(args: Args): void {
+  const entries = documentModel(load(args));
+  if (args.format === "json") { out(JSON.stringify(entries, null, 2)); return; }
+  out(renderDocument(entries).replace(/\n$/, ""));
 }
 
 async function cmdSummary(args: Args): Promise<void> {
@@ -1063,6 +1095,9 @@ usage:
   flowloom lint     <model.flow> [--json]    non-fatal warnings (unused params, dead vars, bad τ)
   flowloom describe <model.flow> [--json]    dump model structure (stocks/rates/vars/loops)
   flowloom explain  <model.flow>             plain-language summary of the model
+  flowloom causes   <model.flow> <name>      what feeds it, signed  [--depth N] [--init] [--json]
+  flowloom uses     <model.flow> <name>      what it feeds, signed  [--depth N] [--json]
+  flowloom document <model.flow> [--json]    every name: definition, causes, and who reads it
   flowloom summary  <model.flow> [--json]    classify each series' dynamics (no raw arrays)
   flowloom sweep    <model.flow> --param P --range A..B[/N] --metric SPEC [--json]
   flowloom sensitivity <model.flow> --metric SPEC [--param a,b] [--frac F] [--method ofat|morris|sobol] [--samples N] [--json]
@@ -1118,6 +1153,8 @@ sweep / sensitivity options:
 examples:
   flowloom run examples/coffee-cooling.flow
   flowloom explain examples/sir-epidemic.flow
+  flowloom causes examples/sir-epidemic.flow infection
+  flowloom uses examples/sir-epidemic.flow beta --depth 2
   flowloom summary examples/predator-prey.flow
   flowloom sweep examples/logistic-growth.flow --param carrying --range 500..2000/7 --metric final:Population
   flowloom sensitivity examples/sir-epidemic.flow --metric max:I
@@ -1149,6 +1186,9 @@ async function main(): Promise<void> {
     case "lint": cmdLint(args); break;
     case "describe": cmdDescribe(args); break;
     case "explain": cmdExplain(args); break;
+    case "causes": cmdTrace(args, "causes"); break;
+    case "uses": cmdTrace(args, "uses"); break;
+    case "document": case "doc": cmdDocument(args); break;
     case "summary": await cmdSummary(args); break;
     case "sweep": await cmdSweep(args); break;
     case "sensitivity": await cmdSensitivity(args); break;

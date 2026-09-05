@@ -223,9 +223,9 @@ scenario recovery separate=on pay=9000 Cash=5000    # the plan after the raise
 A `scenario` is a named set of overrides that lives **in the model text** — a
 policy experiment is a first-class artefact, not shell history. Each binding may
 target a `param`, a `switch` (`on`/`off`), a stock's initial value, or a sim
-setting (`dt`/`to`/`start`/`seed`/`method`); the parser checks every key and value
-so a typo is a located error in the editor. `base` is reserved for the model as
-written. Scenarios are applied on top of the base text when chosen:
+setting (`dt`/`to`/`start`/`seed`/`method`/`timeunit`); the parser checks every
+key and value so a typo is a located error in the editor. `base` is reserved for
+the model as written. Scenarios are applied on top of the base text when chosen:
 
 - CLI: `flowloom run model.flow --scenario recovery` (then any `--set` on top);
   `flowloom scenarios model.flow` lists them; `flowloom compare model.flow
@@ -468,9 +468,29 @@ The axis must be a dimension of the array, and whatever you don't collapse has t
 be supplied by the surrounding declaration's subscripts (`sum(Trade, to)` leaves
 `from`, so it belongs on a `[from]` result).
 
+A `change()` may name the stock's dimensions — `change(Population[region])` —
+and they are **checked**: the axes must be the stock's own, in the stock's own
+order, because a rate is elementwise over the whole stock. `change(Pop[Sooth])`
+and `change(Trade[to, from])` are located errors, not silently the un-indexed
+stock.
+
+Elements are addressable everywhere a name is:
+
+```flow
+expect final:Population[North] > 1200      # one element's series
+```
+
+```console
+$ flowloom run model.flow --set Population[North]=500   # one element's value
+$ flowloom causes model.flow 'Population[North]'        # one element's causes
+```
+
+An `expect` on the bare vector is an error (it is not one series), and both
+`Population[North]` and the lowered spelling `Population.North` are accepted.
+
 Covered today: multi-dimensional subscripts, elementwise equations, single-element
-indexing, per-element values, full and partial/axis `sum`. Other reducers
-(`mean`/`min`/`max`) are planned.
+indexing, per-element values, per-element overrides, full and partial/axis `sum`.
+Other reducers (`mean`/`min`/`max`) are planned.
 
 ## Composing models (`include`)
 
@@ -518,6 +538,10 @@ sim dt=0.1 to=50 start=0 method=rk4   # method: rk4 | euler | map
   [Discrete periods](#discrete-periods-previous-delay_fixed).
 - `timeunit` — the name of the time unit for units checking (e.g. `month`).
 - `seed` — the RNG seed for `random*()` (default `0`, so runs are reproducible).
+
+Every one of these is bindable by `--set`, a scenario line, or MCP `set` —
+including `timeunit`, so a scenario can re-frame a model from weeks to months
+without editing the `sim` line.
 
 The toolbar's dt / to / method controls rewrite this exact line, so the text
 always reflects what ran.
@@ -653,6 +677,45 @@ of its edge signs:
 Polarity is read at `t = start`; nonlinear models can flip a loop's polarity as
 they evolve (e.g. logistic growth is reinforcing while small and balancing near
 its ceiling — the same single structural loop).
+
+## Tracing: what feeds this, what does this feed
+
+Loops answer "what is this system doing"; tracing answers the two questions you
+have *before* editing an unfamiliar model:
+
+```console
+$ flowloom causes model.flow infection
+infection  [flow]
+├─ + beta  [param]
+├─ + S  [stock]
+│  └─ − infection  [flow] ↺
+├─ + I  [stock]
+│  ├─ + infection  [flow] ↺
+│  └─ − recovery  [flow]
+│     ├─ + gamma  [param]
+│     └─ + I  [stock] ↺
+└─ − N  [param]
+
+$ flowloom uses model.flow beta        # what breaks if I change this
+$ flowloom document model.flow         # every name: definition, causes, readers
+```
+
+`+` / `−` is the sign of the edge, read the same way loop polarity is (central
+difference at the operating point), and `↺` closes a branch that has come back
+to a name already open above it — the loop is real, and `loops` is where it gets
+named. `(+N more)` marks what `--depth` (default 3) cut off.
+
+Two deliberate differences from the loop graph: **params are included**, because
+"what determines the infection rate" is answered by `beta` as much as by `S` and
+a causes tree that hides the knobs hides the levers; and **internal names are
+not** — `smooth(X, tau)` becomes a hidden stock when compiled, but the author
+wrote `X` and `tau`, so that is what the tree shows. A stock's causes are what
+its `change()` reads; add `--init` to follow its initial value too.
+
+On a subscripted model, ask for an element (`causes model.flow 'Pop[North]'`) to
+trace the lowered model with real signs; the bare vector name gives the
+structure with `?` signs, since `births[region]` has no value until it is
+lowered. MCP: `flow_causes`, `flow_uses`, `flow_document`.
 
 ## Errors the parser will give you
 

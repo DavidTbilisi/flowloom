@@ -15,7 +15,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { VERSION } from "./version.js";
-import { parseModel, printModel, ModelError, type Model } from "./lang/index.js";
+import { parseModel, printModel, ModelError, resolveIncludes, hasIncludes, type Model } from "./lang/index.js";
 import {
   simulateAsync,
   analyzeLoops,
@@ -38,7 +38,12 @@ import {
   solveParam,
   monteCarlo,
   parseDataset,
+  dataLines,
   datasetFromModel,
+  causesTree,
+  usesTree,
+  renderTree,
+  documentModel,
   calibrate,
   REFERENCE,
   type EnsembleResult,
@@ -223,6 +228,65 @@ export const handlers = {
     return text(describeModel(loadModel(model, set, scenario)));
   },
 
+  flow_causes({ model, name, depth, init }: { model: string; name: string; depth?: number; init?: boolean }): ToolResult {
+    const m = parseModel(model);
+    const opts = { ...(depth !== undefined ? { depth } : {}), ...(init !== undefined ? { init } : {}) };
+    return text({ tree: causesTree(m, name, opts), rendered: renderTree(causesTree(m, name, opts)) });
+  },
+
+  flow_uses({ model, name, depth }: { model: string; name: string; depth?: number }): ToolResult {
+    const m = parseModel(model);
+    const opts = depth !== undefined ? { depth } : {};
+    return text({ tree: usesTree(m, name, opts), rendered: renderTree(usesTree(m, name, opts)) });
+  },
+
+  flow_document({ model }: { model: string }): ToolResult {
+    return text({ entries: documentModel(parseModel(model)) });
+  },
+
+  flow_scenarios({ model }: { model: string }): ToolResult {
+    const m = parseModel(model);
+    return text({
+      scenarios: [...m.scenarios.values()].map((sc) => ({
+        name: sc.name,
+        sets: sc.sets.map((x) => ({ key: x.key, value: x.value })),
+        ...(sc.doc ? { doc: sc.doc } : {}),
+        ...(sc.rung !== undefined ? { rung: sc.rung } : {}),
+      })),
+    });
+  },
+
+  flow_data({ csv, columns, timeColumn, unit, linear }: { csv: string; columns?: string[]; timeColumn?: string; unit?: string; linear?: boolean }): ToolResult {
+    const ds = parseDataset(csv, timeColumn ? { timeColumn } : {});
+    const lines = dataLines(ds, { columns: columns ?? [], ...(unit ? { unit } : {}), linear: linear === true });
+    return text({ lines, columns: ds.columns, rows: ds.t.length });
+  },
+
+  // The include reader is injected rather than reaching for the filesystem: the
+  // server is text-in/text-out everywhere else, and an agent that holds the
+  // parts already has them in hand.
+  flow_bundle({ model, parts }: { model: string; parts?: Record<string, string> }): ToolResult {
+    if (!hasIncludes(model)) return text({ bundled: model.trimEnd(), inlined: 0 });
+    const have = parts ?? {};
+    const used: string[] = [];
+    const bundled = resolveIncludes(model, {
+      read: (path) => {
+        const hit = have[path] ?? have[path.replace(/^\.\//, "")];
+        if (hit === undefined) {
+          throw new Error(`no text supplied for include "${path}" — pass it in \`parts\` (have: ${Object.keys(have).join(", ") || "nothing"})`);
+        }
+        used.push(path);
+        return hit;
+      },
+    });
+    parseModel(bundled); // surface errors against the bundled line numbers
+    return text({ bundled: bundled.trimEnd(), inlined: used.length, parts: used });
+  },
+
+  flow_reference({ format }: { format?: "markdown" | "json" }): ToolResult {
+    return format === "json" ? text(REFERENCE) : text(referenceGuide());
+  },
+
   flow_explain({ model, set, scenario }: { model: string; set?: string[]; scenario?: string }): ToolResult {
     return text(explainModel(loadModel(model, set, scenario)));
   },
@@ -351,12 +415,15 @@ The authoring loop:
 1. flow_check — parse + lint cheaply. Do this after every edit; it returns {line, col, message} diagnostics with a "did you mean" / recovery hint, so fix those before running. Add numerics:true before you quote a number from a model to anyone: the integrator is fixed-step, so a converged-looking run can still be wrong, and this re-runs at half the step to say whether the answer actually holds (it also flags a branch on a stock under rk4, a random draw whose variance scales with dt, and a time constant the grid cannot resolve). Costs a couple of extra runs.
 2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
 3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops read along the run; with a metric, ranked by knockout; basis:true for the shortest independent loop set — the rank-many loops every other loop is built from) — to understand an existing model before changing it.
+4. Before you EDIT a name you did not write: flow_uses tells you everything that reads it (what your change will move), flow_causes tells you what feeds it (why it is where it is), and flow_document does both for every name at once. Signed, so the tree says which direction each edge pushes.
 
 Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (uncertainty bands — samples every 'param … ± tol' / 'in lo..hi' once per run, plus the RNG seed; if no param declares a range the bands on a deterministic model are flat and the result says so), flow_calibrate (fit params to observed data — CSV text, or the model's own 'data' lines), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
 
 Discrete-period models (monthly, yearly): use 'sim method=map dt=1' (stock(t+dt) = stock(t) + change(t); change() is a per-step increment in the stock's own units, so no x dt bookkeeping), previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
-Multi-file models: 'include "part.flow" as ns' composes models from parts, but MCP tools take ONE text — resolve first with the CLI ('flowloom bundle main.flow') and pass the bundled text; the parser's error says the same if an include line slips through.
+Multi-file models: 'include "part.flow" as ns' composes models from parts, but every other tool takes ONE text — flatten it with flow_bundle first, passing each part's text in "parts" (the server never reads your filesystem); the parser's error says the same if an include line slips through.
+
+Also: flow_reference (the language guide, for clients that do not read resources), flow_scenarios (what policy experiments the text already declares), flow_data (a CSV of observations into 'data' lines you can paste into the model).
 
 Gotchas: every referenced name must be defined and a model needs ≥1 stock; a stock changes ONLY through its change()/d() rate; if(cond,a,b) evaluates BOTH branches (guard the operand, e.g. x/max(y,1e-9), not the branch). Start from flow_examples if you want a known-good template.`;
 
@@ -563,6 +630,94 @@ export function buildServer(): McpServer {
     "flow_describe",
     { title: "Describe structure", description: "Dump the model's structure as JSON: stocks, rates, vars (with deps), tables, settings, and the loop summary.", inputSchema: { model: modelArg, set: setArg, scenario: scenarioArg } },
     guard(handlers.flow_describe),
+  );
+
+  server.registerTool(
+    "flow_causes",
+    {
+      title: "Causes tree",
+      description: "What feeds a name, recursively and signed (+ raises it, − lowers it, ? unread). Params are included — they are the levers — and internal delay stocks are not, so the tree shows what the author wrote. On a subscripted model, ask for an element (\"Pop[North]\") to get real signs; the bare vector name gives structure with \"?\".",
+      inputSchema: {
+        model: modelArg,
+        name: z.string().describe("The stock, flow, aux, param or table to trace back from."),
+        depth: z.number().optional().describe("Levels to expand (default 3)."),
+        init: z.boolean().optional().describe("Follow a stock's initial value as well as its rate (default false — at t>0 the init is history)."),
+      },
+    },
+    guard(handlers.flow_causes),
+  );
+
+  server.registerTool(
+    "flow_uses",
+    {
+      title: "Uses tree",
+      description: "What a name feeds, recursively and signed — the reverse dependency index, i.e. \"what breaks if I change this?\". Read it before editing an unfamiliar model.",
+      inputSchema: {
+        model: modelArg,
+        name: z.string().describe("The stock, flow, aux, param or table to trace forward from."),
+        depth: z.number().optional().describe("Levels to expand (default 3)."),
+      },
+    },
+    guard(handlers.flow_uses),
+  );
+
+  server.registerTool(
+    "flow_document",
+    {
+      title: "Document the model",
+      description: "Every name with its definition, its unit and doc comment, its direct causes and — the part describe never showed — everything that reads it. The whole-model orientation pass.",
+      inputSchema: { model: modelArg },
+    },
+    guard(handlers.flow_document),
+  );
+
+  server.registerTool(
+    "flow_scenarios",
+    {
+      title: "List scenarios",
+      description: "The model's `scenario` lines: name, bindings, doc and @rung tag. Use it to find out what policy experiments the text already declares before inventing new ones (then flow_compare runs them).",
+      inputSchema: { model: modelArg },
+    },
+    guard(handlers.flow_scenarios),
+  );
+
+  server.registerTool(
+    "flow_data",
+    {
+      title: "CSV → data lines",
+      description: "Turn a CSV/TSV of observations into `data NAME = (t,v) …` lines to paste into a model. Measured history then lives in the text like everything else, and `rmse:<model>:<data>` can score the fit.",
+      inputSchema: {
+        csv: z.string().describe("The CSV/TSV text."),
+        columns: z.array(z.string()).optional().describe("Columns to emit (default: every non-time column)."),
+        timeColumn: z.string().optional().describe("Name of the time column (default: the first, or one called t/time/date)."),
+        unit: z.string().optional().describe("Unit annotation to put on each emitted line."),
+        linear: z.boolean().optional().describe("Interpolate linearly between samples instead of step-holding (default false)."),
+      },
+    },
+    guard(handlers.flow_data),
+  );
+
+  server.registerTool(
+    "flow_bundle",
+    {
+      title: "Inline includes",
+      description: "Flatten `include \"part.flow\" as ns` lines into one self-contained model text, then parse it to check the result. Supply each part's text in `parts` keyed by the path as written — the server never reads your filesystem.",
+      inputSchema: {
+        model: modelArg,
+        parts: z.record(z.string(), z.string()).optional().describe('Included files by path, e.g. {"parts/income.flow": "param wage = 10\\n…"}.'),
+      },
+    },
+    guard(handlers.flow_bundle),
+  );
+
+  server.registerTool(
+    "flow_reference",
+    {
+      title: ".flow language reference",
+      description: "The one-page grammar + builtins guide, as a tool for clients that don't read resources. Same content as the flow://reference resource. Read it before writing or editing a model.",
+      inputSchema: { format: z.enum(["markdown", "json"]).optional().describe("markdown (default) or the JSON catalog with signatures and arities.") },
+    },
+    guard(handlers.flow_reference),
   );
 
   server.registerTool(

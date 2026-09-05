@@ -72,6 +72,10 @@ export interface RateDecl {
   /** Stock this is the derivative of. */
   target: string;
   expr: Expr;
+  /** Subscripts written on the target, `change(Pop[region])`. Kept so they can
+   *  be checked against the stock's own dimensions — writing the wrong dimension
+   *  name, or the right ones in the wrong order, used to parse and be discarded. */
+  subs?: string[];
   loc: Loc;
 }
 
