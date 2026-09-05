@@ -1,4 +1,5 @@
 import {
+  type Expr,
   type Model,
   type StockDecl,
   type RateDecl,
@@ -16,9 +17,10 @@ import {
   type Loc,
   DEFAULT_SETTINGS,
 } from "./types.js";
-import { parseExpr, freeVars, instantVars, declExprs } from "./expr.js";
+import { parseExpr, printExpr, freeVars, instantVars, declExprs } from "./expr.js";
 import { ExprSyntaxError } from "./tokenizer.js";
 import { suggestName, suggestSuffix } from "./suggest.js";
+import { elemName, elemTuples, isArrayReduction } from "./scalarize.js";
 
 // ── Model parser ────────────────────────────────────────────────────────────
 // The line grammar. One statement per line; `#` starts a comment. This grammar
@@ -68,7 +70,7 @@ interface Raw {
 export const SWITCH_WORDS: Record<string, number> = { on: 1, off: 0, true: 1, false: 0, yes: 1, no: 0 };
 
 /** Sim-setting keys a scenario (or `--set`) may bind. One list, shared with overrides.ts. */
-export const SETTING_KEYS = ["dt", "to", "start", "seed", "method"] as const;
+export const SETTING_KEYS = ["dt", "to", "start", "seed", "method", "timeunit", "savper"] as const;
 
 // A NAME may be dotted — `eng.Cash` — the namespace form `include … as eng`
 // produces (see include.ts; scalarize's `base.elem` lives in the same flat space).
@@ -79,7 +81,10 @@ const RE = {
   // and the `=`, where it reads as a property of the stock rather than of its
   // initial value. Only `>= 0` is accepted (see parseFloor).
   stock: new RegExp(String.raw`^stock\s+(${NAME})\s*(?:\[([^\]]*)\])?\s*(>=\s*[^=]+?)?\s*=\s*(.+)$`),
-  rate: new RegExp(String.raw`^(?:change|d)\(\s*(${NAME})\s*(?:\[\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\])?\s*\)\s*=\s*(.+)$`),
+  // The subscript list is *captured*, not skipped: `change(Pop[Sooth])` (a typo)
+  // and `change(Trade[to, from])` (axes reordered) used to parse cleanly and
+  // silently mean `change(Pop)` / `change(Trade)`. validateRateSubs checks them.
+  rate: new RegExp(String.raw`^(?:change|d)\(\s*(${NAME})\s*(?:\[([^\]]*)\])?\s*\)\s*=\s*(.+)$`),
   var: new RegExp(String.raw`^(flow|aux|param|const|switch)\s+(${NAME})\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$`),
   table: new RegExp(String.raw`^table\s+(${NAME})\s*=\s*(.+)$`),
   data: new RegExp(String.raw`^data\s+(${NAME})\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$`),
@@ -156,6 +161,7 @@ export function parseModel(text: string): Model {
   const order = topoSort(m);
 
   validateReferences(m);
+  validateRateSubs(m);
   validateSubscripts(m);
   validateScenarios(m);
   validateExpects(m);
@@ -248,9 +254,11 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
       if (floor !== undefined && parseFloor(m, floor, name!, loc)) s.nonNegative = true;
       m.stocks.push(s);
     } else if ((mt = line.match(RE.rate))) {
-      const [, name, expr] = mt;
+      const [, name, subs, expr] = mt;
       if (m.rates.has(name!)) push(m, "error", loc, `change(${name}) is defined twice`);
-      m.rates.set(name!, { target: name!, expr: parseExpr(expr!, lineNo), loc });
+      const r: RateDecl = { target: name!, expr: parseExpr(expr!, lineNo), loc };
+      if (subs !== undefined) r.subs = subs.split(/[\s,]+/).filter(Boolean);
+      m.rates.set(name!, r);
     } else if ((mt = line.match(RE.var))) {
       const [, kw, name, unit, expr] = mt;
       claim(m, name!, loc);
@@ -351,12 +359,34 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
   }
 }
 
+/**
+ * `table NAME = (x,y) (x,y) … [hold] [extrapolate]`
+ *
+ * The trailing words are modifiers on how the curve is read *between* and
+ * *beyond* its points — the same shape `data … linear` already uses. `hold` was
+ * previously reachable only by writing a `data` line, and clamping past the ends
+ * was the only behaviour on offer.
+ */
 function parseTable(name: string, body: string, loc: Loc): TableDecl {
   const points: Array<[number, number]> = [];
   const re = /\(\s*(-?[\d.eE+-]+)\s*,\s*(-?[\d.eE+-]+)\s*\)/g;
   let mt: RegExpExecArray | null;
+  let after = 0; // end of the last match — `re.lastIndex` is back to 0 once exec returns null
   while ((mt = re.exec(body))) {
     points.push([Number(mt[1]), Number(mt[2])]);
+    after = re.lastIndex;
+  }
+  const tail = body.slice(after).trim().toLowerCase();
+  const words = tail.split(/[\s,]+/).filter(Boolean);
+  const hold = words.includes("hold");
+  const extrapolate = words.includes("extrapolate");
+  for (const w of words) {
+    if (w !== "hold" && w !== "extrapolate") {
+      throw new ExprSyntaxError(`table ${name}: don't understand '${w}' — after the points only 'hold' and 'extrapolate' are allowed`, loc);
+    }
+  }
+  if (hold && extrapolate) {
+    throw new ExprSyntaxError(`table ${name}: 'hold' and 'extrapolate' contradict each other — a step-held table has no slope to continue`, loc);
   }
   if (points.length < 2) {
     throw new ExprSyntaxError(`table ${name} needs at least two (x,y) points`, loc);
@@ -367,7 +397,7 @@ function parseTable(name: string, body: string, loc: Loc): TableDecl {
       throw new ExprSyntaxError(`table ${name} x-values must strictly increase`, loc);
     }
   }
-  return { name, points, loc };
+  return { name, points, ...(hold ? { hold: true as const } : {}), ...(extrapolate ? { extrapolate: true as const } : {}), loc };
 }
 
 /** `± tol`, `± pct%`, or `in lo..hi` — the clause that says how well a knob is
@@ -440,8 +470,17 @@ function parseSim(m: Raw, body: string, loc: Loc): void {
       else push(m, "error", loc, `unknown method '${v}' (use euler, rk4 or map)`);
     } else if (k === "timeunit") m.settings.timeunit = v;
     else if (k === "seed") m.settings.seed = num(m, v, loc, "seed");
+    else if (k === "savper") m.settings.savper = num(m, v, loc, "savper");
     else {
       push(m, "warning", loc, `unknown sim setting '${k}'`);
+    }
+  }
+  const { savper, dt } = m.settings;
+  if (savper !== undefined) {
+    if (savper <= 0) push(m, "error", loc, `savper must be positive, got ${savper}`);
+    else if (savper < dt) push(m, "warning", loc, `savper=${savper} is smaller than dt=${dt} — output cannot be finer than the step; every step will be recorded`);
+    else if (Math.abs(savper / dt - Math.round(savper / dt)) > 1e-9) {
+      push(m, "warning", loc, `savper=${savper} is not a whole multiple of dt=${dt} — it is rounded to ${Math.max(1, Math.round(savper / dt)) * dt}`);
     }
   }
 }
@@ -473,6 +512,9 @@ function claim(m: Raw, name: string, loc: Loc): void {
 }
 
 const RESERVED = new Set(["t", "dt", "PI", "E", "time"]);
+
+/** The `expect always <expr>` keyword — one spelling, shared by parser and printer. */
+export const ALWAYS = "always";
 
 function push(m: Raw, severity: Diagnostic["severity"], loc: Loc, message: string): void {
   m.diagnostics.push({ severity, loc, message });
@@ -542,6 +584,12 @@ function validateReferences(m: Raw): void {
 
   const check = (expr: Parameters<typeof freeVars>[0], loc: Loc) => {
     for (const id of freeVars(expr)) {
+      // A declared dim can legitimately appear as a reducer's axis label
+      // (`max(Trade, b)`), which `freeVars` reports as a name because it cannot
+      // tell an axis from a value without knowing the dims. It is a declared
+      // name either way; `validateSubscripts` is what rejects a dim used as a
+      // *value*, where the distinction is actually visible.
+      if (m.dims.has(id)) continue;
       if (!known.has(id) && !tables.has(id) && !BUILTIN_CONSTS.has(id)) {
         const suffix = suggestSuffix(id, [...known, ...tables, ...BUILTIN_CONSTS],
           "define it (stock/param/aux/flow) or check the spelling");
@@ -578,9 +626,30 @@ const EXPECT_OPS = new Set(["<", "<=", ">", ">=", "=="]);
  *  scenario name never does. `base` names the model itself. */
 function parseExpect(m: Raw, body: string, doc: string | undefined, loc: Loc): void {
   const toks = body.split(/\s+/).filter(Boolean);
-  const usage = "expect [scenario] <op>:<series> <|<=|>|>=|== <number> [± <tol>[%]]";
+  const usage = "expect [scenario] <op>:<series> <|<=|>|>=|== <number> [± <tol>[%]]  |  expect [scenario] always <expr>";
   let scenario: string | undefined;
-  if (toks.length && !toks[0]!.includes(":")) scenario = toks.shift();
+  // `always` is a keyword here, never a scenario name — the scenario slot is
+  // "the leading token without a colon", which would otherwise swallow it.
+  if (toks.length && !toks[0]!.includes(":") && toks[0] !== ALWAYS) scenario = toks.shift();
+
+  if (toks[0] === ALWAYS) {
+    toks.shift();
+    const src = toks.join(" ");
+    if (!src) { push(m, "error", loc, `expect always: needs a condition, e.g. \`expect always Inventory >= 0\``); return; }
+    let expr: Expr;
+    try {
+      expr = parseExpr(src, loc.line);
+    } catch (err) {
+      push(m, "error", loc, `expect always: ${err instanceof ExprSyntaxError ? err.message : String(err)}`);
+      return;
+    }
+    const e: ExpectDecl = { always: expr, metric: `${ALWAYS}:${printExpr(expr)}`, op: "==", value: 1, loc };
+    if (scenario && scenario !== "base") e.scenario = scenario;
+    if (doc) e.doc = doc;
+    m.expects.push(e);
+    return;
+  }
+
   const [metric, op, valueTok, pm, tolTok, ...extra] = toks;
   if (!metric || !op || valueTok === undefined) { push(m, "error", loc, `expect: ${usage}`); return; }
   if (!EXPECT_OPS.has(op)) { push(m, "error", loc, `expect: comparison must be one of < <= > >= ==, got '${op}'`); return; }
@@ -609,6 +678,36 @@ function validateExpects(m: Raw): void {
       push(m, "error", e.loc, `expect: no scenario named '${e.scenario}'${hint ? ` — did you mean '${hint}'?` : ""} (or did you mean a metric like final:${e.scenario}?)`);
       continue;
     }
+    if (e.always) {
+      // Every name in the condition must be something the run will produce, or
+      // the clock. Catching it here means an editor squiggle rather than a
+      // run-time "no series named …" halfway through `test`.
+      const dimsOf = (n: string) => m.stocks.find((st) => st.name === n)?.dims ?? m.varIndex.get(n)?.dims;
+      const known = new Set([
+        ...m.stocks.map((st) => st.name),
+        ...m.vars.map((v) => v.name),
+        ...m.tables.keys(),
+        "t", "time", "dt", "PI", "E",
+      ]);
+      // The lowered element names too, so `fmt`'s output — which prints the
+      // condition after lowering — reads back in.
+      for (const d of [...m.stocks, ...m.vars]) {
+        if (!d.dims?.length) continue;
+        for (const tuple of elemTuples(d.dims, m.dims)) known.add(elemName(d.name, tuple));
+      }
+      for (const name of freeVars(e.always)) {
+        if (!known.has(name)) {
+          const hint = suggestName(name, [...known]);
+          push(m, "error", e.loc, `expect always: unknown name '${name}'${hint ? ` — did you mean '${hint}'?` : ""}`);
+        }
+      }
+      // The condition is evaluated against the *run*, whose series are already
+      // lowered, so `Pop[North]` becomes `Pop.North` here — the same
+      // normalisation a metric reference gets, for the same reason.
+      e.always = lowerIndices(m, e.always, e.loc, dimsOf);
+      e.metric = `${ALWAYS}:${printExpr(e.always)}`;
+      continue;
+    }
     const parts = e.metric.split(":");
     const op = parts[0]!;
     if (op === "loops") {
@@ -622,14 +721,139 @@ function validateExpects(m: Raw): void {
     }
     const shape = op === "at" ? (parts.length === 3 && Number.isFinite(Number(parts[1]))) : op === "rmse" ? parts.length === 3 : parts.length === 2;
     if (!shape) { push(m, "error", e.loc, `expect: metric '${e.metric}' is malformed — ${op === "at" ? "at:<time>:<series>" : op === "rmse" ? "rmse:<series>:<series>" : `${op}:<series>`}`); continue; }
-    for (const series of op === "rmse" ? parts.slice(1) : [parts[parts.length - 1]!]) {
-      const base = series.split(/[[.]/)[0]!;
-      if (!seriesNames.includes(base)) {
-        const hint = suggestName(base, seriesNames);
-        push(m, "error", e.loc, `expect: no stock, flow or aux named '${base}'${hint ? ` — did you mean '${hint}'?` : ""}${m.varIndex.get(base)?.kind === "param" ? " (a param is not a series — expect reads outputs)" : ""}`);
-      }
+    // Resolve every series reference to the name the *run* will produce, so a
+    // subscripted `Pop[North]` is checked here and rewritten to the scalarized
+    // `Pop.North` — it used to pass validation (the base was split off and the
+    // subscript thrown away) and then fail at run time with no series by that name.
+    const refs = op === "rmse" ? parts.slice(1) : [parts[parts.length - 1]!];
+    const resolved = refs.map((series) => resolveExpectSeries(m, seriesNames, series, e.loc));
+    if (resolved.every((r) => r !== undefined)) {
+      const head = op === "rmse" ? parts.slice(0, 1) : parts.slice(0, parts.length - 1);
+      e.metric = [...head, ...resolved].join(":");
     }
   }
+}
+
+/**
+ * Rewrite `X[elem]` to the lowered scalar `X.elem` inside an `always` condition,
+ * and reject a bare reference to a whole vector.
+ *
+ * The condition is checked series by series against a run whose subscripts have
+ * already been lowered, so this is the same normalisation `resolveExpectSeries`
+ * applies to a metric — just over an expression rather than one name.
+ */
+function lowerIndices(m: Raw, e: Expr, loc: Loc, dimsOf: (n: string) => string[] | undefined): Expr {
+  switch (e.kind) {
+    case "num":
+      return e;
+    case "ident": {
+      const dims = dimsOf(e.name);
+      if (dims?.length) {
+        const first = dims.map((d) => m.dims.get(d)?.elements[0] ?? "…");
+        push(m, "error", loc, `expect always: '${e.name}' is subscripted over [${dims.join(", ")}] — index it (e.g. ${e.name}[${first.join(", ")}]), since the condition is checked one series at a time`);
+      }
+      return e;
+    }
+    case "index": {
+      const dims = dimsOf(e.name);
+      if (!dims?.length) { push(m, "error", loc, `expect always: '${e.name}' is not subscripted, so '${e.name}[${e.subs.join(", ")}]' is invalid`); return e; }
+      if (e.subs.length !== dims.length) {
+        push(m, "error", loc, `expect always: '${e.name}' has ${dims.length} dimension(s) [${dims.join(", ")}] but is indexed with ${e.subs.length}`);
+        return e;
+      }
+      for (const [i, sub] of e.subs.entries()) {
+        const elements = m.dims.get(dims[i]!)?.elements ?? [];
+        if (elements.includes(sub)) continue;
+        const hint = suggestName(sub, elements);
+        push(m, "error", loc, m.dims.has(sub)
+          ? `expect always: '${sub}' is a dimension, not an element — index '${e.name}' with one element of '${dims[i]}' (${elements.join(", ")})`
+          : `expect always: '${sub}' is not an element of dim '${dims[i]}' (${elements.join(", ")})${hint ? ` — did you mean '${hint}'?` : ""}`);
+        return e;
+      }
+      return { kind: "ident", name: elemName(e.name, e.subs), loc: e.loc };
+    }
+    case "unary":
+      return { ...e, arg: lowerIndices(m, e.arg, loc, dimsOf) };
+    case "binary":
+      return { ...e, left: lowerIndices(m, e.left, loc, dimsOf), right: lowerIndices(m, e.right, loc, dimsOf) };
+    case "call":
+      return { ...e, args: e.args.map((a) => lowerIndices(m, a, loc, dimsOf)) };
+  }
+}
+
+/**
+ * The series name an `expect` reference denotes in the finished run.
+ *
+ * Subscripts are lowered before anything simulates, so the output series of
+ * `stock Pop[region]` are `Pop.North` / `Pop.South` — never `Pop`, and never
+ * `Pop[North]`. Both mistakes are worth a located parse error rather than a
+ * run-time "no series named …": one is the shape the language documents, the
+ * other is the shape a modeller naturally writes.
+ *
+ * Both spellings are accepted and normalise to the scalar name, which is what
+ * makes this idempotent — `fmt` prints the resolved metric, and re-reading its
+ * own output has to land in the same place.
+ */
+function resolveExpectSeries(m: Raw, seriesNames: string[], ref: string, loc: Loc): string | undefined {
+  const dimsOf = (n: string) => m.stocks.find((s) => s.name === n)?.dims ?? m.varIndex.get(n)?.dims;
+
+  const bracket = ref.match(/^([^[\]]+?)\s*\[([^\]]*)\]$/);
+  let base = ref;
+  let subs: string[] | undefined;
+  if (bracket) {
+    base = bracket[1]!.trim();
+    subs = bracket[2]!.split(/[\s,]+/).filter(Boolean);
+  } else if (!seriesNames.includes(ref)) {
+    // Already-scalar `Pop.North`. A declared name can itself contain dots
+    // (`include … as eng` ⇒ `eng.Cash`), so the whole reference is tried first
+    // above, and the split runs longest-prefix-first for the same reason.
+    const segs = ref.split(".");
+    for (let k = segs.length - 1; k >= 1; k--) {
+      const head = segs.slice(0, k).join(".");
+      if (dimsOf(head)?.length === segs.length - k) { base = head; subs = segs.slice(k); break; }
+    }
+  }
+
+  if (subs === undefined) {
+    if (!seriesNames.includes(ref)) {
+      const hint = suggestName(ref, seriesNames);
+      push(m, "error", loc, `expect: no stock, flow or aux named '${ref}'${hint ? ` — did you mean '${hint}'?` : ""}${m.varIndex.get(ref)?.kind === "param" ? " (a param is not a series — expect reads outputs)" : ""}`);
+      return undefined;
+    }
+    const dims = dimsOf(ref);
+    if (dims?.length) {
+      const first = dims.map((d) => m.dims.get(d)?.elements[0] ?? "…");
+      push(m, "error", loc, `expect: '${ref}' is subscripted over [${dims.join(", ")}] — it is not one series; index it, e.g. ${ref}[${first.join(", ")}]`);
+      return undefined;
+    }
+    return ref;
+  }
+
+  if (!seriesNames.includes(base)) {
+    const hint = suggestName(base, seriesNames);
+    push(m, "error", loc, `expect: no stock, flow or aux named '${base}'${hint ? ` — did you mean '${hint}'?` : ""}`);
+    return undefined;
+  }
+  const dims = dimsOf(base);
+  if (!dims?.length) {
+    push(m, "error", loc, `expect: '${base}' is not subscripted, so '${ref}' is invalid — write ${base}`);
+    return undefined;
+  }
+  if (subs.length !== dims.length) {
+    push(m, "error", loc, `expect: '${base}' has ${dims.length} dimension(s) [${dims.join(", ")}] but '${ref}' indexes it with ${subs.length}`);
+    return undefined;
+  }
+  let bad = false;
+  subs.forEach((sub, i) => {
+    const elements = m.dims.get(dims[i]!)?.elements ?? [];
+    if (elements.includes(sub)) return;
+    bad = true;
+    const hint = suggestName(sub, elements);
+    push(m, "error", loc, m.dims.has(sub)
+      ? `expect: '${sub}' is a dimension, not an element — an expect reduces one series, so index '${base}' with a single element of '${dims[i]}' (${elements.join(", ")})`
+      : `expect: '${sub}' is not an element of dim '${dims[i]}' (${elements.join(", ")})${hint ? ` — did you mean '${hint}'?` : ""}`);
+  });
+  return bad ? undefined : elemName(base, subs);
 }
 
 function validateScenarios(m: Raw): void {
@@ -643,16 +867,30 @@ function validateScenarios(m: Raw): void {
         if (value !== "euler" && value !== "rk4" && value !== "map") push(m, "error", sc.loc, `scenario ${sc.name}: method must be euler, rk4 or map, got '${value}'`);
         continue;
       }
+      if (key === "timeunit") {
+        if (!value) push(m, "error", sc.loc, `scenario ${sc.name}: timeunit must be a name, e.g. timeunit=month`);
+        continue;
+      }
       if (settingKeys.has(key)) {
         if (!Number.isFinite(Number(value))) push(m, "error", sc.loc, `scenario ${sc.name}: ${key} must be a number, got '${value}'`);
+        continue;
+      }
+      // A lookup table is often the policy itself — a response curve, a tax
+      // schedule — so a scenario may swap one for another table by name.
+      if (m.tables.has(key)) {
+        if (!m.tables.has(value)) {
+          const others = [...m.tables.keys()].filter((n) => n !== key && !n.includes("#"));
+          const hint = suggestName(value, others);
+          push(m, "error", sc.loc, `scenario ${sc.name}: '${key}' is a lookup table, so it can only be set to another table, got '${value}'${hint ? ` — did you mean '${hint}'?` : others.length ? ` (have: ${others.join(", ")})` : ""}`);
+        }
         continue;
       }
       const decl = m.varIndex.get(key);
       const stock = decl ? undefined : m.stocks.find((s) => s.name === key);
       if (!decl && !stock) {
-        const candidates = [...m.stocks.map((s) => s.name), ...m.vars.map((v) => v.name), ...SETTING_KEYS];
+        const candidates = [...m.stocks.map((s) => s.name), ...m.vars.map((v) => v.name), ...m.tables.keys(), ...SETTING_KEYS];
         const hint = suggestName(key, candidates);
-        push(m, "error", sc.loc, `scenario ${sc.name}: no param, switch, stock, or sim setting named '${key}'${hint ? ` — did you mean '${hint}'?` : ""}`);
+        push(m, "error", sc.loc, `scenario ${sc.name}: no param, switch, stock, table, or sim setting named '${key}'${hint ? ` — did you mean '${hint}'?` : ""}`);
         continue;
       }
       if (decl?.boolean) {
@@ -663,6 +901,40 @@ function validateScenarios(m: Raw): void {
       }
       if (!Number.isFinite(Number(value))) push(m, "error", sc.loc, `scenario ${sc.name}: '${key}' must be a number, got '${value}'`);
       if (decl && decl.kind !== "param") push(m, "warning", sc.loc, `scenario ${sc.name} overrides ${decl.kind} '${key}' with a constant`);
+    }
+  }
+}
+
+/**
+ * Check the subscripts written on a `change()` target against the stock's own
+ * dimensions. A rate is elementwise over the whole stock — there is no
+ * per-element rate — so the only meaningful thing to write is the stock's
+ * dimension list, positionally, and anything else is a mistake worth a location.
+ *
+ * Runs after the `[…]`-is-a-dimension-list resolution above, since that is what
+ * decides whether `stock Pop [region]` declared a unit or a subscript.
+ */
+function validateRateSubs(m: Raw): void {
+  const dimsOf = new Map<string, string[]>();
+  for (const s of m.stocks) dimsOf.set(s.name, s.dims ?? []);
+  for (const r of m.rates.values()) {
+    if (!r.subs) continue;
+    const dims = dimsOf.get(r.target);
+    if (dims === undefined) continue; // no such stock — already reported
+    if (dims.length === 0) {
+      push(m, "error", r.loc, `'${r.target}' is not subscripted, so 'change(${r.target}[${r.subs.join(", ")}])' is invalid — write change(${r.target})`);
+      continue;
+    }
+    if (r.subs.length !== dims.length) {
+      push(m, "error", r.loc, `'${r.target}' has ${dims.length} dimension(s) [${dims.join(", ")}] but change() indexes it with ${r.subs.length}`);
+      continue;
+    }
+    const wrong = r.subs.findIndex((s, i) => s !== dims[i]);
+    if (wrong >= 0) {
+      const known = m.dims.has(r.subs[wrong]!);
+      push(m, "error", r.loc, known
+        ? `change(${r.target}[${r.subs.join(", ")}]) names dimension '${r.subs[wrong]}' in position ${wrong + 1}, but '${r.target}' is declared over [${dims.join(", ")}] — a rate is elementwise over the whole stock, so the axes must be written in the stock's own order`
+        : `change(${r.target}[${r.subs.join(", ")}]) — '${r.subs[wrong]}' is not a declared dim; '${r.target}' is subscripted over [${dims.join(", ")}]`);
     }
   }
 }
@@ -687,6 +959,11 @@ function validateSubscripts(m: Raw): void {
       case "ident":
         if (dimsOf.has(e.name) && !insideSum) {
           push(m, "error", loc, `'${e.name}' is subscripted — index it (${e.name}[${dimsOf.get(e.name)!.join(", ")}]) or aggregate it (sum(${e.name}))`);
+        } else if (m.dims.has(e.name)) {
+          // Reached here only outside a reducer's axis slot, which the call
+          // branch consumes without walking — so this is a dimension used where
+          // a number belongs.
+          push(m, "error", loc, `'${e.name}' is a dimension, not a value — index a symbol with it (X[${e.name}]) or name one of its elements (${m.dims.get(e.name)!.elements.slice(0, 2).join(", ")})`);
         }
         break;
       case "index": {
@@ -721,16 +998,17 @@ function validateSubscripts(m: Raw): void {
         walk(e.right, loc, insideSum, scope);
         break;
       case "call": {
-        if (e.name.toLowerCase() === "sum") {
+        if (isArrayReduction(e, (n) => dimsOf.get(n))) {
+          const fn = e.name.toLowerCase();
           const a = e.args[0];
           const base = a && (a.kind === "ident" || a.kind === "index") ? a.name : undefined;
           const dims = base ? dimsOf.get(base) : undefined;
-          if (!base || !dims) { push(m, "error", loc, "sum() needs a subscripted argument, e.g. sum(Population)"); break; }
+          if (!base || !dims) { push(m, "error", loc, `${fn}() needs a subscripted argument, e.g. ${fn}(Population)`); break; }
           // The array arg may be written `Trade[from, to]`, but only as the plain
           // dimensions in order — a literal pin or reorder is silently dropped at
           // lowering, so reject it here instead of returning a wrong result.
           if (a!.kind === "index" && (a!.subs.length !== dims.length || a!.subs.some((s, i) => s !== dims[i]))) {
-            push(m, "error", loc, `sum()'s argument '${base}[${a!.subs.join(", ")}]' can't pin or reorder dimensions — use sum(${base}) or sum(${base}, axis)`);
+            push(m, "error", loc, `${fn}()'s argument '${base}[${a!.subs.join(", ")}]' can't pin or reorder dimensions — use ${fn}(${base}) or ${fn}(${base}, axis)`);
             break;
           }
           // Trailing args name the axes to collapse; each must be a distinct dim of `base`.
@@ -738,10 +1016,10 @@ function validateSubscripts(m: Raw): void {
           let badAxis = false;
           for (const ax of e.args.slice(1)) {
             if (ax.kind !== "ident" || !dims.includes(ax.name)) {
-              push(m, "error", loc, `sum()'s axis must be a dimension of '${base}' (one of ${dims.join(", ")})`);
+              push(m, "error", loc, `${fn}()'s axis must be a dimension of '${base}' (one of ${dims.join(", ")})`);
               badAxis = true;
             } else if (axes.includes(ax.name)) {
-              push(m, "error", loc, `sum() lists dimension '${ax.name}' more than once`);
+              push(m, "error", loc, `${fn}() lists dimension '${ax.name}' more than once`);
               badAxis = true;
             } else axes.push(ax.name);
           }
@@ -750,7 +1028,7 @@ function validateSubscripts(m: Raw): void {
           const collapsed = new Set(axes.length ? axes : dims);
           for (const d of dims) {
             if (!collapsed.has(d) && !scope.has(d)) {
-              push(m, "error", loc, `sum() over ${(axes.length ? axes : dims).join(", ")} leaves dimension '${d}' free — declare the result over '[${d}]'`);
+              push(m, "error", loc, `${fn}() over ${(axes.length ? axes : dims).join(", ")} leaves dimension '${d}' free — declare the result over '[${d}]'`);
             }
           }
         } else {

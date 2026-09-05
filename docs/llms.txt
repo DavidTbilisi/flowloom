@@ -41,22 +41,22 @@ change() rate; everything else is recomputed every step.
 ## Builtin functions and reserved names
 
 ### Line keywords
-  stock NAME [unit] [>= 0] = EXPR                                An accumulator (an integral). EXPR is its initial value; it then changes only through its change() rate. Add `>= 0` for a physical quantity that cannot go negative (an inventory, a workforce) — the integrator holds it at zero instead of letting an outflow drain past empty; without it a stock is signed, which is right for cash or a net position.
-  change(NAME) = EXPR                                            The net rate of change of a stock — literally dNAME/dt. This line is the engine; flowloom integrates it.
-  d(NAME) = EXPR                                                 Shorthand alias of change(NAME) — the net rate of change of a stock (dNAME/dt).
-  flow NAME [unit] = EXPR                                        A named rate. Same maths as aux, but drawn as a flow on the diagram.
-  aux NAME [unit] = EXPR                                         An instantaneous computed value (a converter/variable) recomputed every step.
-  param NAME [unit] = EXPR [± TOL | ± PCT% | in LO..HI]          A constant knob — evaluated once. `const` is an alias. The optional trailing range says how well the knob is known: Monte Carlo samples it once per run (so a deterministic model gets real bands), global sensitivity explores it instead of a made-up ±10% box, and calibrate is not allowed to fit outside it. Write ± or +/- (never +-, which is subtraction).
-  const NAME [unit] = EXPR                                       A structural constant — a calendar length, a conversion factor — not a knob: no slider, and sensitivity/calibration skip it unless it is named explicitly. Same maths as param.
-  switch NAME = on|off                                           A two-state policy toggle (a param that is only ever 0 or 1). Use it in if(NAME, a, b). Sensitivity tests it off→on, sliders show a toggle, and overrides/scenarios accept on/off.
-  link A -> B +|-                                                A declared signed influence: + (B moves with A) or − (against). The causal-loop sketch you draw before any equation exists — a model of links alone draws and has R/B loops but does not simulate; links also mark dependencies the equations don't carry yet.
-  scenario NAME key=value key=value …                            A named set of overrides kept in the text: params, switches (on/off), stock initial values, or dt/to/start/seed/method. Run it with --scenario NAME / the scenario picker; `compare` tabulates base vs every scenario.
-  expect [SCENARIO] <op>:<series> <|<=|>|>=|== VALUE [± TOL[%]]  A claim the model must keep satisfying — its own regression test, kept in the text. Metrics: final/max/min/mean/at:<t>/time-to-peak/settle-time of a series, or loops:active|total|reinforcing|balancing|rank. Run them with `test`; == is exact unless given ± tol (absolute or %).
-  data NAME [unit] = (t, v) (t, v) … [linear]                    A measured time series read off the clock — an exogenous input. Step-held between samples by default (a sampled series keeps its value); `linear` interpolates. A plain name in expressions and a plotted series; `flowloom data obs.csv` prints these lines from a CSV; calibrate can fit against one (--against Series=dataName); `rmse:<series>:<data>` measures the fit.
-  table NAME = (x,y) (x,y) …                                     A graphical lookup function; call it as NAME(x). Piecewise-linear, clamped past the ends.
-  dim NAME = A, B, C                                             A subscript dimension (array index) with named elements. Declare arrays as stock X[NAME], use X[NAME] elementwise, and collapse with sum(X).
-  sim dt=.1 to=50 start=0 method=rk4 timeunit=month seed=0       Simulation settings. method: rk4 (default) | euler | map. For a discrete-period model (monthly, yearly) use method=map — stock(t+dt) = stock(t) + change(t), change() a per-step increment in the stock's own units, no × dt. timeunit names the time unit for units checking; seed fixes random*(). The toolbar edits this line — the text stays canonical.
-  plot A B C                                                     Which series start visible on the plot and legend.
+  stock NAME [unit] [>= 0] = EXPR                                                                           An accumulator (an integral). EXPR is its initial value; it then changes only through its change() rate. Add `>= 0` for a physical quantity that cannot go negative (an inventory, a workforce) — the integrator holds it at zero instead of letting an outflow drain past empty; without it a stock is signed, which is right for cash or a net position.
+  change(NAME) = EXPR                                                                                       The net rate of change of a stock — literally dNAME/dt. This line is the engine; flowloom integrates it.
+  d(NAME) = EXPR                                                                                            Shorthand alias of change(NAME) — the net rate of change of a stock (dNAME/dt).
+  flow NAME [unit] = EXPR                                                                                   A named rate. Same maths as aux, but drawn as a flow on the diagram.
+  aux NAME [unit] = EXPR                                                                                    An instantaneous computed value (a converter/variable) recomputed every step.
+  param NAME [unit] = EXPR [± TOL | ± PCT% | in LO..HI]                                                     A constant knob — evaluated once. `const` is an alias. The optional trailing range says how well the knob is known: Monte Carlo samples it once per run (so a deterministic model gets real bands), global sensitivity explores it instead of a made-up ±10% box, and calibrate is not allowed to fit outside it. Write ± or +/- (never +-, which is subtraction).
+  const NAME [unit] = EXPR                                                                                  A structural constant — a calendar length, a conversion factor — not a knob: no slider, and sensitivity/calibration skip it unless it is named explicitly. Same maths as param.
+  switch NAME = on|off                                                                                      A two-state policy toggle (a param that is only ever 0 or 1). Use it in if(NAME, a, b). Sensitivity tests it off→on, sliders show a toggle, and overrides/scenarios accept on/off.
+  link A -> B +|-                                                                                           A declared signed influence: + (B moves with A) or − (against). The causal-loop sketch you draw before any equation exists — a model of links alone draws and has R/B loops but does not simulate; links also mark dependencies the equations don't carry yet.
+  scenario NAME key=value key=value …                                                                       A named set of overrides kept in the text: params, switches (on/off), stock initial values, or dt/to/start/seed/method. Run it with --scenario NAME / the scenario picker; `compare` tabulates base vs every scenario.
+  expect [SCENARIO] <op>:<series> <|<=|>|>=|== VALUE [± TOL[%]]   |   expect [SCENARIO] always <condition>  A claim the model must keep satisfying — its own regression test, kept in the text. Metrics: final/max/min/mean/at:<t>/time-to-peak/settle-time of a series, or loops:active|total|reinforcing|balancing|rank. `always <condition>` instead checks an expression at EVERY recorded step, so it can compare two series (always Inventory <= Capacity), state an implication (always !a || b), and report the step it first broke on with the values there. Run them with `test`; == is exact unless given ± tol (absolute or %).
+  data NAME [unit] = (t, v) (t, v) … [linear]                                                               A measured time series read off the clock — an exogenous input. Step-held between samples by default (a sampled series keeps its value); `linear` interpolates. A plain name in expressions and a plotted series; `flowloom data obs.csv` prints these lines from a CSV; calibrate can fit against one (--against Series=dataName); `rmse:<series>:<data>` measures the fit.
+  table NAME = (x,y) (x,y) … [hold] [extrapolate]                                                           A graphical lookup function; call it as NAME(x). Piecewise-linear between the points and clamped past the ends by default. `hold` steps instead of interpolating (the value is the last point at or before x); `extrapolate` continues the slope of the end segment past the ends instead of clamping. The two are mutually exclusive.
+  dim NAME = A, B, C                                                                                        A subscript dimension (array index) with named elements. Declare arrays as stock X[NAME], use X[NAME] elementwise, and collapse with sum(X).
+  sim dt=.1 to=50 start=0 method=rk4 timeunit=month seed=0 savper=1                                         Simulation settings. method: rk4 (default) | euler | map. For a discrete-period model (monthly, yearly) use method=map — stock(t+dt) = stock(t) + change(t), change() a per-step increment in the stock's own units, no × dt. timeunit names the time unit for units checking; seed fixes random*(); savper is how often to RECORD a sample (the model still integrates at dt), which is what makes a small step affordable on a long horizon. The toolbar edits this line — the text stays canonical.
+  plot A B C                                                                                                Which series start visible on the plot and legend.
 
 ### Reserved constants / clock
   t     The current simulation time. `time` is an alias. Use it to drive test inputs.
@@ -66,31 +66,37 @@ change() rate; everything else is recomputed every step.
   E     Euler's number e ≈ 2.71828.
 
 ### Builtins (stateless)
-  sum(X, axis?, …)         Total of a subscripted X. sum(X) collapses every dimension to a scalar; sum(X, dim) collapses only that axis and keeps the rest (e.g. row[from] = sum(Trade, to)).
-  min(a, b, …)             Smallest of its arguments.
-  max(a, b, …)             Largest of its arguments.
-  abs(x)                   Absolute value.
-  exp(x)                   e raised to the power x.
-  ln(x)                    Natural logarithm.
-  log(x)                   Natural logarithm (same as ln).
-  log10(x)                 Base-10 logarithm.
-  sqrt(x)                  Square root.
-  pow(x, y)                x raised to the power y (same as x ^ y).
-  sin(x)                   Sine (radians).
-  cos(x)                   Cosine (radians).
-  tan(x)                   Tangent (radians).
-  floor(x)                 Round down to an integer.
-  ceil(x)                  Round up to an integer.
-  round(x)                 Round to the nearest integer.
-  sign(x)                  −1, 0, or +1 by the sign of x.
-  if(cond, a, b)           a when cond is non-zero, otherwise b. Both branches are evaluated.
-  clamp(x, lo, hi)         x held within the range [lo, hi].
-  step(height, t0)         0 before t0, then height — a sudden change.
-  pulse(t0, width)         1 during [t0, t0+width), else 0 — a temporary kick.
-  ramp(slope, t0, t1)      A linear ramp of the given slope between two times.
-  random()                 A uniform random number in [0, 1), resampled each step. Seed with `sim seed=…` (default 0, so runs are reproducible).
-  random_uniform(lo, hi)   A uniform random number in [lo, hi), resampled each step.
-  random_normal(mean, sd)  A normally-distributed random number with the given mean and standard deviation.
+  sum(X, axis?, …)                           Total of a subscripted X. sum(X) collapses every dimension to a scalar; sum(X, dim) collapses only that axis and keeps the rest (e.g. row[from] = sum(Trade, to)).
+  mean(X, axis?, …)                          Average over a subscripted X — sum divided by the element count. Same axis rules as sum(): mean(X) collapses every dimension, mean(X, dim) only that one.
+  min(a, b, …)  |  min(X, axis?, …)          Smallest of its arguments — or, given a bare subscripted name, the smallest element of that array (same axis rules as sum). min(Pop) reduces; min(Pop[North], 5) is the scalar form.
+  max(a, b, …)  |  max(X, axis?, …)          Largest of its arguments — or, given a bare subscripted name, the largest element of that array (same axis rules as sum). max(Pop) reduces; max(Pop[North], 5) is the scalar form.
+  abs(x)                                     Absolute value.
+  exp(x)                                     e raised to the power x.
+  ln(x)                                      Natural logarithm.
+  log(x)                                     Natural logarithm (same as ln).
+  log10(x)                                   Base-10 logarithm.
+  sqrt(x)                                    Square root.
+  pow(x, y)                                  x raised to the power y (same as x ^ y).
+  sin(x)                                     Sine (radians).
+  cos(x)                                     Cosine (radians).
+  tan(x)                                     Tangent (radians).
+  floor(x)                                   Round down to an integer.
+  ceil(x)                                    Round up to an integer.
+  round(x)                                   Round to the nearest integer.
+  sign(x)                                    −1, 0, or +1 by the sign of x.
+  if(cond, a, b)                             a when cond is non-zero, otherwise b. Both branches are evaluated.
+  clamp(x, lo, hi)                           x held within the range [lo, hi].
+  step(height, t0)                           0 before t0, then height — a sudden change.
+  pulse(t0, width)                           1 during [t0, t0+width), else 0 — a temporary kick.
+  ramp(slope, t0, t1)                        A linear ramp of the given slope between two times.
+  random()                                   A uniform random number in [0, 1), resampled each step. Seed with `sim seed=…` (default 0, so runs are reproducible).
+  random_uniform(lo, hi)                     A uniform random number in [lo, hi), resampled each step.
+  random_normal(mean, sd)                    A normally-distributed random number with the given mean and standard deviation.
+  random_lognormal(median, sigma)            A positive, right-skewed draw: exp(ln(median) + sigma·normal). The shape of a delivery time, a project duration, an income — anything bounded below by zero with a long tail.
+  random_triangular(lo, mode, hi)            The three-point estimate — worst case, most likely, best case — as a distribution. What an expert judgement actually looks like when you have no data.
+  random_exponential(rate)                   A waiting time at a constant hazard rate; mean 1/rate. The gap between Poisson arrivals.
+  random_poisson(mean)                       A non-negative integer count with the given mean — arrivals in a period, failures in a month. Variance equals the mean, which is the point.
+  random_normal_truncated(mean, sd, lo, hi)  A normal that genuinely lives in [lo, hi]: the inverse CDF is evaluated on the truncated interval, so the shape inside is right. Clamping a normal instead piles probability on the two bounds — a different distribution with the same name.
 
 ### Stateful builtins — carry state across steps
   smooth(input, τ)               First-order exponential smoothing with time constant τ.
@@ -100,6 +106,7 @@ change() rate; everything else is recomputed every step.
   delay3(input, τ)               Third-order material delay (a more realistic pipeline lag).
   previous(X, init?)             X exactly one step ago (sample-and-hold on the time grid). Before the first step it is init, or X's initial value. Breaks an instantaneous dependency: a = previous(b), b = a + 1 is legal.
   delay_fixed(X, length, init?)  X exactly `length` time units ago — a pipeline delay, not an exponential lag (compare delay1/delay3). length is read once at t=start and rounded to whole steps (min 1). Before enough history exists it is init, or X's initial value.
+  initial(x)                     The value of x at t = start, held for the whole run — Vensim's INITIAL. Compiles to a stock with a zero rate, so it is computed once and never moves. Use it for "relative to where it began" (Pop / initial(Pop)) without duplicating the starting expression as a param.
 
 ## Gotchas an author must know
 

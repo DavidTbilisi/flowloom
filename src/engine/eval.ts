@@ -73,7 +73,7 @@ export function evalExpr(e: Expr, ctx: EvalCtx): number {
       // table lookup: `tableName(x)`
       const table = ctx.tables.get(e.name);
       if (table) {
-        return lookupTable(table.points, evalExpr(e.args[0]!, ctx), table.hold === true);
+        return lookupTable(table.points, evalExpr(e.args[0]!, ctx), table.hold === true, table.extrapolate === true);
       }
       // The tree-walker is used only for loop-polarity perturbation at the
       // operating point, where randomness should be deterministic — so each
@@ -81,6 +81,27 @@ export function evalExpr(e: Expr, ctx: EvalCtx): number {
       if (name === "random") return 0.5;
       if (name === "random_uniform") return (evalExpr(e.args[0]!, ctx) + evalExpr(e.args[1]!, ctx)) / 2;
       if (name === "random_normal") return evalExpr(e.args[0]!, ctx);
+      if (name === "random_lognormal") {
+        // E[lognormal] = median · e^{σ²/2}, not the median.
+        const sigma = evalExpr(e.args[1]!, ctx);
+        return evalExpr(e.args[0]!, ctx) * Math.exp((sigma * sigma) / 2);
+      }
+      if (name === "random_triangular") {
+        return (evalExpr(e.args[0]!, ctx) + evalExpr(e.args[1]!, ctx) + evalExpr(e.args[2]!, ctx)) / 3;
+      }
+      if (name === "random_exponential") {
+        const rate = evalExpr(e.args[0]!, ctx);
+        return rate > 0 ? 1 / rate : 0;
+      }
+      if (name === "random_poisson") return evalExpr(e.args[0]!, ctx);
+      if (name === "random_normal_truncated") {
+        // The mean of the truncated normal is not the mean of the normal; the
+        // midpoint of the interval is the honest stand-in when the interval bites,
+        // and the mean itself when it does not.
+        const mean = evalExpr(e.args[0]!, ctx);
+        const lo = evalExpr(e.args[2]!, ctx), hi = evalExpr(e.args[3]!, ctx);
+        return Math.min(hi, Math.max(lo, mean));
+      }
       const fn = BUILTINS[name];
       if (!fn) throw new EvalError(`unknown function '${e.name}'`);
       // IF short-circuits to avoid div-by-zero in the untaken branch.

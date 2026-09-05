@@ -1,7 +1,7 @@
 import type { Expr } from "../lang/types.js";
 import type { Compiled } from "./compile.js";
 import { lookupTable } from "./builtins.js";
-import { runif, rnorm, RANDOM_FNS, drawSlots } from "./rng.js";
+import { runif, rnorm, rlnorm, rtri, rexp, rpois, rtnorm, RANDOM_FNS, drawSlots } from "./rng.js";
 
 // ── Compiled evaluation plan (shared by the TS and WASM backends) ───────────
 // The tree-walking interpreter (eval.ts) re-reads a string-keyed scope object on
@@ -203,7 +203,8 @@ function compileWith(e: Expr, slots: Map<string, number>, plan: SimPlan): Fn {
         const x = compileWith(e.args[0]!, slots, plan);
         const pts = table.points;
         const hold = table.hold === true;
-        return (m) => lookupTable(pts, x(m), hold);
+        const extrapolate = table.extrapolate === true;
+        return (m) => lookupTable(pts, x(m), hold, extrapolate);
       }
       const name = e.name.toLowerCase();
       if (RANDOM_FNS.has(name)) return compileRandom(name, e, slots, plan);
@@ -219,10 +220,17 @@ function compileRandom(name: string, e: Expr & { kind: "call" }, slots: Map<stri
   const k = plan.drawIndex.get(e)!;
   const ss = plan.seedSlot, ps = plan.stepSlot;
   if (name === "random") return (m) => runif(m[ss]!, m[ps]!, k, 0, 1);
-  const lo = compileWith(e.args[0]!, slots, plan);
-  const hi = compileWith(e.args[1]!, slots, plan);
-  if (name === "random_uniform") return (m) => runif(m[ss]!, m[ps]!, k, lo(m), hi(m));
-  return (m) => rnorm(m[ss]!, m[ps]!, k, lo(m), hi(m));
+  const A = e.args.map((a) => compileWith(a, slots, plan));
+  const a0 = A[0]!, a1 = A[1]!, a2 = A[2]!, a3 = A[3]!;
+  switch (name) {
+    case "random_uniform": return (m) => runif(m[ss]!, m[ps]!, k, a0(m), a1(m));
+    case "random_lognormal": return (m) => rlnorm(m[ss]!, m[ps]!, k, a0(m), a1(m));
+    case "random_triangular": return (m) => rtri(m[ss]!, m[ps]!, k, a0(m), a1(m), a2(m));
+    case "random_exponential": return (m) => rexp(m[ss]!, m[ps]!, k, a0(m));
+    case "random_poisson": return (m) => rpois(m[ss]!, m[ps]!, k, a0(m));
+    case "random_normal_truncated": return (m) => rtnorm(m[ss]!, m[ps]!, k, a0(m), a1(m), a2(m), a3(m));
+    default: return (m) => rnorm(m[ss]!, m[ps]!, k, a0(m), a1(m));
+  }
 }
 
 /** Closures that replicate builtins.ts exactly, without per-call allocation. */
@@ -300,7 +308,7 @@ export interface RunResult {
 export function runIntegration(
   plan: SimPlan,
   backend: DerivBackend,
-  settings: { dt: number; to: number; start: number; method: "euler" | "rk4" | "map" },
+  settings: { dt: number; to: number; start: number; method: "euler" | "rk4" | "map"; savper?: number },
   /** Called after each step's first derivative evaluation, with the full scope
    *  vector (every state, var and internal slot at that instant). Used by the
    *  loop analyzer to read link signs along the actual trajectory. */
@@ -308,6 +316,14 @@ export function runIntegration(
 ): RunResult {
   const { dt, to, start, method } = settings;
   const steps = Math.max(1, Math.round((to - start) / dt));
+  // `savper` thins the *output*, never the integration: every step is still
+  // taken, and only every `every`-th is recorded. A long horizon at a small
+  // step used to mean one `number[]` entry per step per series (a 200k-sample
+  // stress model is 1.6 MB a series), which is the reason a stiff model —
+  // exactly the one that needs a small dt — was expensive to look at.
+  const every = settings.savper !== undefined && settings.savper > 0
+    ? Math.max(1, Math.round(settings.savper / dt))
+    : 1;
   const { mem, rates } = backend;
   const ns = plan.stateSlots.length;
 
@@ -361,11 +377,15 @@ export function runIntegration(
     for (let j = 0; j < ns; j++) k1[j] = rates[j]!;
     if (onStep) onStep(i, time, mem);
 
-    t.push(time);
-    for (let o = 0; o < plan.outSlots.length; o++) cols[o]!.push(mem[plan.outSlots[o]!]!);
-
     let bad = false;
     for (let j = 0; j < ns; j++) if (!Number.isFinite(getState(j))) { bad = true; break; }
+    // Record on the save grid — and always the first step, the last one, and the
+    // step a run halts on, so no thinning can hide where it ended or what it
+    // ended at.
+    if (i % every === 0 || i === steps || bad) {
+      t.push(time);
+      for (let o = 0; o < plan.outSlots.length; o++) cols[o]!.push(mem[plan.outSlots[o]!]!);
+    }
     if (bad) {
       note = `stopped at t=${time.toFixed(3)} — a stock went non-finite (try a smaller dt or check the model).`;
       break;

@@ -7,11 +7,14 @@
 // quoted. Same shape as compare.ts: clone, applyScenario, run once per scenario,
 // reduce with resolveMetric — plus the loop census for the loops:* metrics.
 
-import type { Model, ExpectDecl } from "../lang/types.js";
-import { simulateAsync } from "./simulator.js";
+import type { Model, ExpectDecl, Expr } from "../lang/types.js";
+import { freeVars, printExpr } from "../lang/index.js";
+import { simulateAsync, type SimResult } from "./simulator.js";
 import { applyScenario, BASE_SCENARIO } from "./overrides.js";
 import { resolveMetric } from "./summarize.js";
-import { analyzeLoops, type LoopReport } from "./loops.js";
+import { analyzeLoops, operatingPoint, type LoopReport } from "./loops.js";
+import { compile } from "./compile.js";
+import { evalExpr, type EvalCtx } from "./eval.js";
 
 export interface ExpectResult {
   expect: ExpectDecl;
@@ -27,6 +30,13 @@ export interface ExpectResult {
   note?: string;
   /** The metric could not be read (unknown series under this scenario, run error). */
   error?: string;
+  /** For an `always` claim: the first recorded step where it was false, with the
+   *  value of every name in the condition there — the "where it broke" a
+   *  reduction to one number can never give you. */
+  brokeAt?: { t: number; values: Array<{ name: string; value: number }> };
+  /** For an `always` claim: how many recorded steps it was false at, out of how
+   *  many were checked. */
+  broke?: { steps: number; of: number };
 }
 
 export interface ExpectReport {
@@ -99,6 +109,14 @@ export async function runExpects(model: Model, scenarios?: string[]): Promise<Ex
     let loops: LoopReport | undefined;
     for (const e of list) {
       if (!res) { results.push({ expect: e, scenario: name, actual: NaN, pass: false, error: runError }); continue; }
+      if (e.always) {
+        try {
+          results.push({ expect: e, scenario: name, ...checkAlways(m, res, e.always), ...(res.note ? { note: res.note } : {}) });
+        } catch (err) {
+          results.push({ expect: e, scenario: name, actual: NaN, pass: false, error: (err as Error).message });
+        }
+        continue;
+      }
       let actual: number;
       try {
         if (e.metric.startsWith("loops:")) {
@@ -120,6 +138,53 @@ export async function runExpects(model: Model, scenarios?: string[]): Promise<Ex
 
 /** One line per claim, the way the text wrote it. */
 export function formatExpect(e: ExpectDecl): string {
+  if (e.always) return `${e.scenario ?? BASE_SCENARIO} always ${printExpr(e.always)}`;
   const tol = e.tol ? ` ± ${e.tol.pct ? `${e.tol.value * 100}%` : e.tol.value}` : "";
   return `${e.scenario ?? BASE_SCENARIO} ${e.metric} ${e.op} ${e.value}${tol}`;
+}
+
+/**
+ * Check an `always` condition at every recorded step.
+ *
+ * The scope is built from the run's own output series plus the model's constants
+ * — everything a condition may name — so this reads exactly the numbers the plot
+ * and the CSV show, with no second integration. Note that it checks *recorded*
+ * steps: with `sim savper=`, that is the save grid, which is what "every step
+ * you can see" means and is worth knowing before writing a knife-edge claim.
+ */
+function checkAlways(model: Model, res: SimResult, expr: Expr): Pick<ExpectResult, "pass" | "actual" | "brokeAt" | "broke"> {
+  const names = [...freeVars(expr)].filter((n) => !["t", "time", "dt", "PI", "E"].includes(n));
+  const scope: Record<string, number> = { dt: res.dt };
+  // Constants (params, and anything else not emitted as a series) come from the
+  // operating point; they do not vary, so one reading is the whole story.
+  const constants = names.filter((n) => !res.series.has(n));
+  if (constants.length) {
+    const op = operatingPoint(model);
+    for (const n of constants) scope[n] = op[n] ?? NaN;
+  }
+  const ctx: EvalCtx = { scope, tables: compile(model).tables };
+  const cols = names.map((n) => [n, res.series.get(n)] as const);
+
+  let steps = 0;
+  let brokeAt: ExpectResult["brokeAt"];
+  for (let i = 0; i < res.t.length; i++) {
+    scope.t = res.t[i]!;
+    scope.time = scope.t;
+    for (const [n, col] of cols) if (col) scope[n] = col[i]!;
+    let ok: number;
+    try {
+      ok = evalExpr(expr, ctx);
+    } catch {
+      return { pass: false, actual: NaN };
+    }
+    if (ok !== 0 && Number.isFinite(ok)) continue;
+    steps++;
+    brokeAt ??= { t: res.t[i]!, values: names.map((n) => ({ name: n, value: scope[n]! })) };
+  }
+  return {
+    pass: steps === 0,
+    actual: steps,
+    ...(brokeAt ? { brokeAt } : {}),
+    broke: { steps, of: res.t.length },
+  };
 }

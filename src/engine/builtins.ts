@@ -79,13 +79,18 @@ export const ARITY: Record<string, [number, number]> = {
   random: [0, 0],
   random_uniform: [2, 2],
   random_normal: [2, 2],
+  random_lognormal: [2, 2],
+  random_triangular: [3, 3],
+  random_exponential: [1, 1],
+  random_poisson: [1, 1],
+  random_normal_truncated: [4, 4],
 };
 
 /** Names of the stateful builtins handled by the compiler: the delay/smooth
  *  family (rewritten into internal stocks) and the fixed-delay pair
  *  (`previous`, `delay_fixed` — sample-and-hold ring buffers owned by the
  *  integrator). Must agree with TIME_CROSSING in src/lang/expr.ts. */
-export const STATEFUL = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3", "previous", "delay_fixed"]);
+export const STATEFUL = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3", "previous", "delay_fixed", "initial"]);
 
 /** The fixed-delay subset of STATEFUL (see compile.ts / codegen.ts). */
 export const FIXED_DELAY = new Set(["previous", "delay_fixed"]);
@@ -93,10 +98,28 @@ export const FIXED_DELAY = new Set(["previous", "delay_fixed"]);
 /** Piecewise-linear interpolation of a graphical/lookup table; clamps at the
  *  ends. With `hold`, step-hold instead: the last point at or before x (a
  *  sampled series keeps its value between samples). */
-export function lookupTable(points: ReadonlyArray<readonly [number, number]>, x: number, hold = false): number {
+export function lookupTable(
+  points: ReadonlyArray<readonly [number, number]>,
+  x: number,
+  hold = false,
+  extrapolate = false,
+): number {
   const n = points.length;
-  if (x <= points[0]![0]) return points[0]![1];
-  if (x >= points[n - 1]![0]) return points[n - 1]![1];
+  // Past the ends a table clamps, which is the safe default: a curve fitted over
+  // an observed range says nothing beyond it, and a silent extrapolation is how
+  // a lookup produces a confident number nobody measured. `extrapolate` opts
+  // into continuing the slope of the end segment — never under `hold`, where
+  // there is no slope to continue.
+  if (x <= points[0]![0]) {
+    if (!extrapolate || hold || n < 2) return points[0]![1];
+    const [x0, y0] = points[0]!, [x1, y1] = points[1]!;
+    return y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+  }
+  if (x >= points[n - 1]![0]) {
+    if (!extrapolate || hold || n < 2) return points[n - 1]![1];
+    const [x0, y0] = points[n - 2]!, [x1, y1] = points[n - 1]!;
+    return y1 + ((x - x1) / (x1 - x0)) * (y1 - y0);
+  }
   // binary search for the bracketing segment
   let lo = 0;
   let hi = n - 1;

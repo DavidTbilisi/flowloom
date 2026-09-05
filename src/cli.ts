@@ -11,9 +11,11 @@
 //   flowloom check  model.flow
 //   flowloom compare model.flow --metric final:Cash,min:Cash
 //
-// `--set k=v` overrides a param, a stock's initial value, or a sim setting
-// (dt/to/start/method) before the run — which turns a model into a function you
-// can sweep from a shell loop. `--scenario NAME` applies a `scenario` line from
+// `--set k=v` overrides a param, a switch, one element of a subscripted name
+// (`Pop[North]=5`), a stock's initial value, a lookup table (set to another
+// table's name), or a sim setting (dt/to/start/seed/method/timeunit/savper)
+// before the run — which turns a model into a function you can sweep from a
+// shell loop. `--scenario NAME` applies a `scenario` line from
 // the text the same way (then any --set on top). Pass `-` as the path to read
 // the model on stdin.
 
@@ -36,6 +38,11 @@ import {
   formatExpect,
   diffModels,
   describeModel,
+  causesTree,
+  usesTree,
+  renderTree,
+  documentModel,
+  renderDocument,
   explainModel,
   summarizeRun,
   sweepParam,
@@ -49,6 +56,7 @@ import {
   dataLines,
   datasetFromModel,
   calibrate,
+  optimize,
   REFERENCE,
   type SimResult,
   type RunSummary,
@@ -61,6 +69,7 @@ import {
   type SolveOptions,
   type EnsembleResult,
   type CalibrateResult,
+  type OptimizeResult,
   type LoopReport,
   type CompareResult,
   type PolicyResult,
@@ -108,10 +117,15 @@ interface Args {
   seed?: number; // --seed N base seed for montecarlo
   data?: string; // --data FILE.csv for calibrate
   against: string[]; // --against Series=column mappings for calibrate
+  depth?: number; // --depth N for causes/uses
+  init: boolean; // --init: causes/uses — follow a stock's initial value too
+  bounds: string[]; // --bounds NAME=lo..hi for optimize
+  weights: string[]; // --weight Series=w for calibrate
+  restarts?: number; // --restarts N for optimize
 }
 
 function parseArgs(argv: string[]): Args {
-  const a: Args = { cmd: "", noLoops: false, basis: false, numerics: false, write: false, columns: [], linear: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [] };
+  const a: Args = { cmd: "", noLoops: false, basis: false, numerics: false, write: false, init: false, columns: [], linear: false, format: "table", plot: [], sets: [], scenarios: [], switches: [], cost: [], all: false, rows: 21, chart: false, params: [], frac: 0.1, against: [], bounds: [], weights: [] };
   const rest: string[] = [];
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
@@ -129,6 +143,8 @@ function parseArgs(argv: string[]): Args {
       case "--time": a.timeColumn = need(argv, ++i, arg); break;
       case "--unit": a.unit = need(argv, ++i, arg); break;
       case "--linear": a.linear = true; break;
+      case "--init": a.init = true; break;
+      case "--depth": a.depth = Math.max(1, Math.floor(Number(need(argv, ++i, arg)))); break;
       case "--plot": a.plot.push(...splitList(need(argv, ++i, arg))); break;
       case "-s":
       case "--set": a.sets.push(need(argv, ++i, arg)); break;
@@ -150,6 +166,9 @@ function parseArgs(argv: string[]): Args {
       case "--seed": a.seed = Number(need(argv, ++i, arg)); break;
       case "--data": a.data = need(argv, ++i, arg); break;
       case "--against": a.against.push(...splitList(need(argv, ++i, arg))); break;
+      case "--bounds": a.bounds.push(...splitList(need(argv, ++i, arg))); break;
+      case "--weight": a.weights.push(...splitList(need(argv, ++i, arg))); break;
+      case "--restarts": a.restarts = Math.max(0, Math.floor(Number(need(argv, ++i, arg)))); break;
       default:
         if (arg.startsWith("--plot=")) a.plot.push(...splitList(arg.slice(7)));
         else if (arg.startsWith("--set=")) a.sets.push(arg.slice(6));
@@ -171,6 +190,10 @@ function parseArgs(argv: string[]): Args {
         else if (arg.startsWith("--seed=")) a.seed = Number(arg.slice(7));
         else if (arg.startsWith("--data=")) a.data = arg.slice(7);
         else if (arg.startsWith("--against=")) a.against.push(...splitList(arg.slice(10)));
+        else if (arg.startsWith("--depth=")) a.depth = Math.max(1, Math.floor(Number(arg.slice(8))));
+        else if (arg.startsWith("--bounds=")) a.bounds.push(...splitList(arg.slice(9)));
+        else if (arg.startsWith("--weight=")) a.weights.push(...splitList(arg.slice(9)));
+        else if (arg.startsWith("--restarts=")) a.restarts = Math.max(0, Math.floor(Number(arg.slice(11))));
         else if (arg !== "-" && arg.startsWith("-")) die(`unknown flag: ${arg}`);
         else rest.push(arg); // positional, including "-" for stdin
     }
@@ -505,6 +528,28 @@ function cmdDescribe(args: Args): void {
 
 function cmdExplain(args: Args): void {
   out(explainModel(load(args)));
+}
+
+/**
+ * `causes` / `uses` — the two questions an unfamiliar model has to answer
+ * before it can be edited: what moved this, and what breaks if I change it.
+ * The forward half was available one level deep through `describe`; the reverse
+ * index existed only inside the loop finder, where nothing could read it.
+ */
+function cmdTrace(args: Args, dir: "causes" | "uses"): void {
+  const name = args.file2;
+  if (!name) die(`${dir} needs a name — e.g. \`flowloom ${dir} model.flow Cash\``);
+  const opts = { ...(args.depth !== undefined ? { depth: args.depth } : {}), init: args.init };
+  const tree = dir === "causes" ? causesTree(load(args), name!, opts) : usesTree(load(args), name!, opts);
+  if (args.format === "json") { out(JSON.stringify(tree, null, 2)); return; }
+  out(renderTree(tree));
+}
+
+/** `document` — every name, its definition, its causes and its readers. */
+function cmdDocument(args: Args): void {
+  const entries = documentModel(load(args));
+  if (args.format === "json") { out(JSON.stringify(entries, null, 2)); return; }
+  out(renderDocument(entries).replace(/\n$/, ""));
 }
 
 async function cmdSummary(args: Args): Promise<void> {
@@ -846,11 +891,67 @@ async function cmdCalibrate(args: Args): Promise<void> {
       if (!Object.keys(map).length) die("calibrating against the model's own data lines needs --against Series=dataName (e.g. --against N=obs)");
       dataset = datasetFromModel(model, Object.values(map));
     }
-    r = await calibrate(model, { params: args.params, dataset, ...(Object.keys(map).length ? { map } : {}) });
+    const weights: Record<string, number> = {};
+    for (const spec of args.weights) {
+      const [series, w] = spec.split("=");
+      if (!series || w === undefined || !Number.isFinite(Number(w))) die(`--weight expects Series=number, got "${spec}"`);
+      weights[series] = Number(w);
+    }
+    r = await calibrate(model, {
+      params: args.params,
+      dataset,
+      ...(Object.keys(map).length ? { map } : {}),
+      ...(Object.keys(weights).length ? { weights } : {}),
+    });
   } catch (e) {
     die((e as Error).message);
   }
   out(args.format === "json" ? JSON.stringify(r, null, 2) : renderCalibrate(r));
+}
+
+/**
+ * `optimize` — search continuous knobs for the settings that maximise (or
+ * minimise) a payoff metric. `solve` goal-seeks one knob to a target and
+ * `calibrate` fits knobs to data; neither answers "what settings do best".
+ */
+async function cmdOptimize(args: Args): Promise<void> {
+  const model = load(args);
+  if (!args.metric) die("optimize needs --metric SPEC (e.g. final:Cash, min:Runway)");
+  const bounds: Record<string, [number, number]> = {};
+  for (const spec of args.bounds) {
+    const m = spec.match(/^([^=]+)=(-?[\d.eE+-]+)\.\.(-?[\d.eE+-]+)$/);
+    if (!m) die(`--bounds expects NAME=lo..hi, got "${spec}"`);
+    bounds[m![1]!.trim()] = [Number(m![2]), Number(m![3])];
+  }
+  let r: OptimizeResult;
+  try {
+    r = await optimize(model, {
+      metric: args.metric,
+      ...(args.params.length ? { params: args.params } : {}),
+      ...(args.goal ? { goal: args.goal } : {}),
+      ...(Object.keys(bounds).length ? { bounds } : {}),
+      ...(args.frac !== 0.1 ? { frac: args.frac } : {}),
+      ...(args.restarts !== undefined ? { restarts: args.restarts } : {}),
+      ...(args.seed !== undefined ? { seed: args.seed } : {}),
+    });
+  } catch (e) {
+    die((e as Error).message);
+  }
+  if (args.format === "json") { out(JSON.stringify(r, null, 2)); return; }
+  out(renderOptimize(r!));
+}
+
+function renderOptimize(r: OptimizeResult): string {
+  const w = Math.max(...r.explored.map((e) => e.param.length));
+  const lines = [`optimize ${r.goal}:${r.metric}   base ${fmt(r.base)} → ${fmt(r.value)}  (${r.gain >= 0 ? "+" : ""}${fmt(r.gain)})`];
+  for (const e of r.explored) {
+    const at = r.atBound?.includes(e.param) ? "  ← at the edge of its range" : "";
+    lines.push(`  ${e.param.padEnd(w)}  ${fmt(r.params[e.param]!)}   in ${fmt(e.lo)}..${fmt(e.hi)}${e.declared ? " (declared)" : ""}${at}`);
+  }
+  lines.push(`  ${r.evals} evaluation${plural(r.evals)}${r.converged ? "" : ", did not converge"}${r.restarts?.length ? `, ${r.restarts.length} restart${plural(r.restarts.length)}` : ""}`);
+  if (r.atBound?.length) lines.push(`  note: ${r.atBound.join(", ")} sits on a bound — widen the range, or accept the corner as the answer`);
+  if (r.note) lines.push(`  note: ${r.note}`);
+  return lines.join("\n");
 }
 
 /**
@@ -979,6 +1080,16 @@ function renderExpects(r: ExpectReport, file: string): string {
       const pct = x.expect.value !== 0 ? ` (${(100 * x.off / Math.abs(x.expect.value)).toPrecision(2)} %)` : "";
       why = `  off by ${fmt(x.off)}${pct}${x.allowed ? `, allowed ${fmt(x.allowed)}` : " — add ± <tol> if that is acceptable"}`;
     }
+    // An `always` claim reports *where* it broke, which is the whole reason it
+    // exists — a reduction to one number can only say that it did.
+    if (x.expect.always && x.broke) {
+      const held = `held at ${x.broke.of - x.broke.steps}/${x.broke.of} steps`;
+      const at = x.brokeAt
+        ? `; first broke at t=${fmt(x.brokeAt.t)} with ${x.brokeAt.values.map((v) => `${v.name}=${fmt(v.value)}`).join(", ")}`
+        : "";
+      lines.push(`  ${x.pass ? "✓" : "✗"} ${claim}  ${held}${at}${x.note ? `  [${x.note}]` : ""}${x.expect.doc ? `   # ${x.expect.doc}` : ""}`);
+      continue;
+    }
     lines.push(`  ${x.pass ? "✓" : "✗"} ${claim}  ${Number.isFinite(x.actual) ? fmt(x.actual) : "—"}${why}${x.note ? `  [${x.note}]` : ""}${x.expect.doc ? `   # ${x.expect.doc}` : ""}`);
   }
   lines.push(`${file}: ${r.passed} passed, ${r.failed} failed  (${r.scenarios.length} run${r.scenarios.length === 1 ? "" : "s"})`);
@@ -987,7 +1098,7 @@ function renderExpects(r: ExpectReport, file: string): string {
 
 async function cmdTest(args: Args): Promise<void> {
   const model = load(args);
-  if (!model.expects.length) die("the model declares no `expect` lines — add e.g. `expect final:Cash > 0` or `expect recovery final:netWorth == 493370 ± 1%`");
+  if (!model.expects.length) die("the model declares no `expect` lines — add e.g. `expect final:Cash > 0`, `expect always Inventory >= 0`, or `expect recovery final:netWorth == 493370 ± 1%`");
   let r: ExpectReport;
   try { r = await runExpects(model, args.scenarios); } catch (e) { die((e as Error).message); }
   if (!r.results.length) die(`no expect line is under ${args.scenarios.map((x) => `'${x}'`).join(", ")}`);
@@ -1063,12 +1174,17 @@ usage:
   flowloom lint     <model.flow> [--json]    non-fatal warnings (unused params, dead vars, bad τ)
   flowloom describe <model.flow> [--json]    dump model structure (stocks/rates/vars/loops)
   flowloom explain  <model.flow>             plain-language summary of the model
+  flowloom causes   <model.flow> <name>      what feeds it, signed  [--depth N] [--init] [--json]
+  flowloom uses     <model.flow> <name>      what it feeds, signed  [--depth N] [--json]
+  flowloom document <model.flow> [--json]    every name: definition, causes, and who reads it
   flowloom summary  <model.flow> [--json]    classify each series' dynamics (no raw arrays)
   flowloom sweep    <model.flow> --param P --range A..B[/N] --metric SPEC [--json]
   flowloom sensitivity <model.flow> --metric SPEC [--param a,b] [--frac F] [--method ofat|morris|sobol] [--samples N] [--json]
   flowloom solve    <model.flow> --param P --metric SPEC --target N [--bracket A..B] [--json]
   flowloom montecarlo <model.flow> [--runs N] [--seed N] [--plot a,b] [--json]
-  flowloom calibrate <model.flow> --param a,b --data obs.csv [--against S=col] [--json]
+  flowloom calibrate <model.flow> --param a,b --data obs.csv [--against S=col] [--weight S=2] [--json]
+  flowloom optimize  <model.flow> --metric max:Profit --param a,b   best settings for a payoff
+                                  [--goal max|min] [--bounds a=1..9] [--restarts 3] [--json]
                                              or, with no --data, against the model's own 'data' lines: --against S=dataName
   flowloom data     <obs.csv> [--column a,b] [--time COL] [--unit U] [--linear]
                                              print the CSV as 'data NAME = (t, v) …' lines to paste into a model
@@ -1087,6 +1203,7 @@ usage:
   flowloom diff     <before.flow> <after.flow> [--scenario a,b] [--tol T] [--no-loops] [--json]
                                              did the edit change the numbers? every series under base + every
                                              shared scenario, plus the live-loop census; non-zero exit if so
+  flowloom optimize <model.flow> --metric max:Profit --param a,b  best settings for a payoff [--bounds a=1..9] [--restarts 3]
   flowloom leverage <model.flow> --metric SPEC [--json]
                                              the model's levers on Meadows' ladder (params, switches,
                                              scenarios tagged '# @rung N'), each measured on the metric
@@ -1101,7 +1218,9 @@ run options:
   --plot a,b,c             choose series (default: model's plot line, else stocks)
   --chart                  ascii sparklines under the table
   --rows N                 sampled rows in the table view (default 21)
-  --set k=v                override a param, stock init, or dt/to/start/method
+  --set k=v                override a param, a switch, one element (Pop[North]=5), a stock
+                           init, a table (set to another table), or a sim setting
+                           (dt/to/start/seed/method/timeunit/savper)
                            repeatable; applied before the run
   --scenario NAME          apply a 'scenario' line from the model first (then --set)
 
@@ -1118,6 +1237,8 @@ sweep / sensitivity options:
 examples:
   flowloom run examples/coffee-cooling.flow
   flowloom explain examples/sir-epidemic.flow
+  flowloom causes examples/sir-epidemic.flow infection
+  flowloom uses examples/sir-epidemic.flow beta --depth 2
   flowloom summary examples/predator-prey.flow
   flowloom sweep examples/logistic-growth.flow --param carrying --range 500..2000/7 --metric final:Population
   flowloom sensitivity examples/sir-epidemic.flow --metric max:I
@@ -1130,6 +1251,7 @@ examples:
   flowloom compare budget.flow --metric final:Cash,min:Cash
   flowloom policies budget.flow --metric min:Cash --target 0 --cost separate=2
   flowloom leverage budget.flow --metric min:Cash
+  flowloom optimize budget.flow --metric max:final:Cash --param pay,save --restarts 3
   flowloom test budget.flow
   flowloom data observed.csv --column income --unit GEL >> budget.flow
   flowloom diff budget-before.flow budget.flow
@@ -1149,12 +1271,16 @@ async function main(): Promise<void> {
     case "lint": cmdLint(args); break;
     case "describe": cmdDescribe(args); break;
     case "explain": cmdExplain(args); break;
+    case "causes": cmdTrace(args, "causes"); break;
+    case "uses": cmdTrace(args, "uses"); break;
+    case "document": case "doc": cmdDocument(args); break;
     case "summary": await cmdSummary(args); break;
     case "sweep": await cmdSweep(args); break;
     case "sensitivity": await cmdSensitivity(args); break;
     case "solve": await cmdSolve(args); break;
     case "montecarlo": await cmdMonteCarlo(args); break;
     case "calibrate": await cmdCalibrate(args); break;
+    case "optimize": await cmdOptimize(args); break;
     case "scenarios": cmdScenarios(args); break;
     case "compare": await cmdCompare(args); break;
     case "policies": await cmdPolicies(args); break;

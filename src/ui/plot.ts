@@ -12,7 +12,8 @@ export function colorFor(result: SimResult, name: string): string {
   return PALETTE[((i % PALETTE.length) + PALETTE.length) % PALETTE.length]!;
 }
 
-export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
+/** Set up the canvas for a redraw and hand back its 2D context and size. */
+function surface(canvas: HTMLCanvasElement): { g: CanvasRenderingContext2D; W: number; H: number } {
   const dpr = window.devicePixelRatio || 1;
   const W = canvas.clientWidth || 700;
   const H = 380;
@@ -21,6 +22,12 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
   const g = canvas.getContext("2d")!;
   g.scale(dpr, dpr);
   g.clearRect(0, 0, W, H);
+  return { g, W, H };
+}
+
+export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
+  if (store.phase) { drawPhase(canvas, store); return; }
+  const { g, W, H } = surface(canvas);
 
   const r = store.run.result;
   if (!r) return;
@@ -44,14 +51,29 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
   if (ov.data) for (const [name, col] of ov.data.columns) if (vis.includes(name)) for (const v of col) grow(v);
   if (!Number.isFinite(lo)) { lo = 0; hi = 1; }
   if (lo === hi) { hi = lo + 1; lo -= 1; }
+
+  // A log axis cannot show zero or a negative value. Rather than silently
+  // clipping half a series, the smallest *positive* sample sets the floor and
+  // the non-positive points break the line the way a non-finite one already
+  // does — visible as a gap, which is the honest rendering.
+  const log = store.logY;
+  if (log) {
+    let posLo = Infinity;
+    for (const n of vis) for (const v of r.series.get(n)!) if (v > 0 && v < posLo) posLo = v;
+    if (!Number.isFinite(posLo)) posLo = 1;
+    lo = posLo; if (hi <= lo) hi = lo * 10;
+  }
   // Frame the y-axis on *round* numbers (0, 250, 500…) rather than padded data
   // extremes — the difference between a chart that looks designed and one that
   // looks dumped. niceScale also gives us the gridline values for free.
-  const yScale = niceScale(lo, hi, 5);
+  const yScale = log ? logScale(lo, hi) : niceScale(lo, hi, 5);
   lo = yScale.lo; hi = yScale.hi;
 
   const sx = (t: number) => x0 + ((t - tMin) / (tMax - tMin || 1)) * (x1 - x0);
-  const sy = (v: number) => y0 - ((v - lo) / (hi - lo || 1)) * (y0 - y1);
+  const lg = (v: number) => Math.log10(v);
+  const syLin = (v: number) => y0 - ((v - lo) / (hi - lo || 1)) * (y0 - y1);
+  const syLog = (v: number) => (v > 0 ? y0 - ((lg(v) - lg(lo)) / (lg(hi) - lg(lo) || 1)) * (y0 - y1) : NaN);
+  const sy = log ? syLog : syLin;
 
   // chrome colours come from the active theme (so light/dark both look native)
   const cGrid = cssVar("--line"), cAxis = cssVar("--axis"), cLabel = cssVar("--dim"), cInk = cssVar("--ink");
@@ -63,7 +85,7 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
   for (const v of yScale.ticks) {
     const y = sy(v);
     if (y < y1 - 0.5 || y > y0 + 0.5) continue;
-    const zero = Math.abs(v) < (hi - lo) * 1e-9;
+    const zero = !log && Math.abs(v) < (hi - lo) * 1e-9;
     g.strokeStyle = zero ? cAxis : cGrid;
     g.globalAlpha = zero ? 0.9 : 0.4;
     g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
@@ -132,7 +154,9 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
   // round joins. The fill is what reads as "a real chart"; it's kept subtle
   // (and skipped when several series overlap so they don't muddy each other).
   g.lineJoin = "round"; g.lineCap = "round";
-  const fillBase = Math.max(y1, Math.min(y0, sy(0))); // fill down to the zero line (clamped)
+  // Fill down to the zero line (clamped). On a log axis zero is at −∞, so the
+  // bottom of the plot is the only sensible floor.
+  const fillBase = log ? y0 : Math.max(y1, Math.min(y0, sy(0)));
   const single = vis.length === 1;
   for (const n of vis) {
     const arr = r.series.get(n)!;
@@ -146,14 +170,15 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
       g.beginPath();
       let open = false;
       for (let i = 0; i < arr.length; i++) {
-        if (!Number.isFinite(arr[i]!)) continue;
-        const X = sx(T[i]!), Y = sy(arr[i]!);
+        const Y = sy(arr[i]!);
+        if (!Number.isFinite(Y)) continue;
+        const X = sx(T[i]!);
         if (!open) { g.moveTo(X, fillBase); g.lineTo(X, Y); open = true; } else g.lineTo(X, Y);
       }
       if (open) {
         // close back down to the baseline at the last finite x
         let lastX = x0;
-        for (let i = arr.length - 1; i >= 0; i--) { if (Number.isFinite(arr[i]!)) { lastX = sx(T[i]!); break; } }
+        for (let i = arr.length - 1; i >= 0; i--) { if (Number.isFinite(sy(arr[i]!))) { lastX = sx(T[i]!); break; } }
         g.lineTo(lastX, fillBase); g.closePath(); g.fill();
       }
     }
@@ -162,8 +187,9 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
     g.beginPath();
     let started = false;
     for (let i = 0; i < arr.length; i++) {
-      if (!Number.isFinite(arr[i]!)) { started = false; continue; }
-      const X = sx(T[i]!), Y = sy(arr[i]!);
+      const Y = sy(arr[i]!);
+      if (!Number.isFinite(Y)) { started = false; continue; }   // a gap, not a clip
+      const X = sx(T[i]!);
       if (!started) { g.moveTo(X, Y); started = true; } else g.lineTo(X, Y);
     }
     g.stroke();
@@ -177,10 +203,10 @@ export function drawPlot(canvas: HTMLCanvasElement, store: Store): void {
     g.beginPath(); g.moveTo(cx, y1); g.lineTo(cx, y0); g.stroke();
     g.globalAlpha = 1;
     for (const n of vis) {
-      const v = r.series.get(n)![fi]!;
-      if (!Number.isFinite(v)) continue;
+      const Y = sy(r.series.get(n)![fi]!);
+      if (!Number.isFinite(Y)) continue;
       g.fillStyle = colorFor(r, n);
-      g.beginPath(); g.arc(cx, sy(v), 3.5, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.arc(cx, Y, 3.5, 0, Math.PI * 2); g.fill();
     }
   }
 }
@@ -218,4 +244,128 @@ export function niceScale(lo: number, hi: number, maxTicks: number): { lo: numbe
     ticks.push(Math.abs(v) < step * 1e-9 ? 0 : v); // clean up −0 / float dust
   }
   return { lo: niceLo, hi: niceHi, ticks };
+}
+
+/**
+ * Decade ticks for a log axis, snapped outward to whole powers of ten.
+ *
+ * When the whole range sits inside two decades the 1-2-5 subdivisions are added
+ * as well, or a plot spanning 3 to 60 would carry exactly two labelled lines.
+ */
+export function logScale(lo: number, hi: number): { lo: number; hi: number; ticks: number[] } {
+  const l = Math.floor(Math.log10(Math.max(lo, Number.MIN_VALUE)));
+  const h = Math.ceil(Math.log10(Math.max(hi, Math.max(lo, Number.MIN_VALUE) * 10)));
+  const niceLo = Math.pow(10, l);
+  const niceHi = Math.pow(10, h);
+  const ticks: number[] = [];
+  const fine = h - l <= 2;
+  for (let e = l; e <= h; e++) {
+    const base = Math.pow(10, e);
+    ticks.push(base);
+    if (!fine || e === h) continue;
+    ticks.push(base * 2, base * 5);
+  }
+  return { lo: niceLo, hi: niceHi, ticks: ticks.filter((v) => v >= niceLo && v <= niceHi) };
+}
+
+/**
+ * Phase portrait: one series against another, with time as the path rather than
+ * an axis.
+ *
+ * This is the view that makes a limit cycle legible — predator/prey as a closed
+ * orbit instead of two wiggles that happen to be out of phase, a spiral that
+ * says "damped" at a glance, a trajectory that leaves the frame saying
+ * "runaway". The time series cannot show any of that no matter how it is
+ * scaled, which is why this is a mode rather than an option.
+ */
+function drawPhase(canvas: HTMLCanvasElement, store: Store): void {
+  const { g, W, H } = surface(canvas);
+  const r = store.run.result;
+  const pick = store.phase;
+  if (!r || !pick) return;
+  const xs = r.series.get(pick.x);
+  const ys = r.series.get(pick.y);
+  const cLabel = cssVar("--dim"), cAxis = cssVar("--axis"), cGrid = cssVar("--line"), cInk = cssVar("--ink");
+  if (!xs || !ys) {
+    g.fillStyle = cLabel; g.font = "12px ui-monospace, monospace";
+    g.fillText("pick two series to plot against each other", 20, 30);
+    return;
+  }
+
+  const pad = { l: 60, r: 16, t: 16, b: 34 };
+  const x0 = pad.l, x1 = W - pad.r, y0 = H - pad.b, y1 = pad.t;
+  const span = (a: number[]) => {
+    let lo = Infinity, hi = -Infinity;
+    for (const v of a) if (Number.isFinite(v)) { if (v < lo) lo = v; if (v > hi) hi = v; }
+    if (!Number.isFinite(lo)) return { lo: 0, hi: 1 };
+    return lo === hi ? { lo: lo - 1, hi: hi + 1 } : { lo, hi };
+  };
+  const xS = niceScale(span(xs).lo, span(xs).hi, 5);
+  const yS = niceScale(span(ys).lo, span(ys).hi, 5);
+  const sx = (v: number) => x0 + ((v - xS.lo) / (xS.hi - xS.lo || 1)) * (x1 - x0);
+  const sy = (v: number) => y0 - ((v - yS.lo) / (yS.hi - yS.lo || 1)) * (y0 - y1);
+
+  g.font = "11px ui-monospace, monospace";
+  g.lineWidth = 1;
+  g.textBaseline = "middle"; g.textAlign = "right";
+  for (const v of yS.ticks) {
+    const y = sy(v);
+    if (y < y1 - 0.5 || y > y0 + 0.5) continue;
+    g.strokeStyle = cGrid; g.globalAlpha = 0.4;
+    g.beginPath(); g.moveTo(x0, y); g.lineTo(x1, y); g.stroke();
+    g.globalAlpha = 1; g.fillStyle = cLabel; g.fillText(fmt(v), x0 - 8, y);
+  }
+  g.textBaseline = "alphabetic"; g.textAlign = "center";
+  for (const v of xS.ticks) {
+    const x = sx(v);
+    if (x < x0 - 0.5 || x > x1 + 0.5) continue;
+    g.strokeStyle = cGrid; g.globalAlpha = 0.4;
+    g.beginPath(); g.moveTo(x, y1); g.lineTo(x, y0); g.stroke();
+    g.globalAlpha = 1; g.fillStyle = cLabel; g.fillText(fmt(v), x, H - 20);
+  }
+  g.strokeStyle = cAxis; g.globalAlpha = 1;
+  g.beginPath(); g.moveTo(x0, y1); g.lineTo(x0, y0); g.lineTo(x1, y0); g.stroke();
+  g.fillStyle = cLabel;
+  g.fillText(pick.x, (x0 + x1) / 2, H - 6);
+  g.save();
+  g.translate(14, (y0 + y1) / 2); g.rotate(-Math.PI / 2);
+  g.fillText(pick.y, 0, 0);
+  g.restore();
+
+  // The trajectory, fading from faint at t=start to solid at the current frame,
+  // so the direction of travel is visible in a still picture.
+  const n = Math.min(xs.length, ys.length);
+  const upto = Math.min(n - 1, store.frame);
+  g.lineJoin = "round"; g.lineCap = "round"; g.lineWidth = 2;
+  const colX = colorFor(r, pick.y);
+  for (let i = 1; i <= upto; i++) {
+    if (![xs[i - 1], ys[i - 1], xs[i], ys[i]].every((v) => Number.isFinite(v!))) continue;
+    g.globalAlpha = 0.15 + 0.85 * (i / Math.max(1, upto));
+    g.strokeStyle = colX;
+    g.beginPath();
+    g.moveTo(sx(xs[i - 1]!), sy(ys[i - 1]!));
+    g.lineTo(sx(xs[i]!), sy(ys[i]!));
+    g.stroke();
+  }
+  // The rest of the run, faint — where the system is going.
+  g.globalAlpha = 0.12; g.strokeStyle = colX;
+  g.beginPath();
+  let started = false;
+  for (let i = upto; i < n; i++) {
+    if (!Number.isFinite(xs[i]!) || !Number.isFinite(ys[i]!)) { started = false; continue; }
+    const X = sx(xs[i]!), Y = sy(ys[i]!);
+    if (!started) { g.moveTo(X, Y); started = true; } else g.lineTo(X, Y);
+  }
+  g.stroke();
+  g.globalAlpha = 1;
+
+  // start marker and the moving head
+  if (Number.isFinite(xs[0]!) && Number.isFinite(ys[0]!)) {
+    g.strokeStyle = cLabel; g.fillStyle = cssVar("--panel"); g.lineWidth = 1.5;
+    g.beginPath(); g.arc(sx(xs[0]!), sy(ys[0]!), 3.5, 0, Math.PI * 2); g.fill(); g.stroke();
+  }
+  if (upto >= 0 && Number.isFinite(xs[upto]!) && Number.isFinite(ys[upto]!)) {
+    g.fillStyle = cInk;
+    g.beginPath(); g.arc(sx(xs[upto]!), sy(ys[upto]!), 4, 0, Math.PI * 2); g.fill();
+  }
 }

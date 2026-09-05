@@ -43,7 +43,8 @@ dynamics, and check the numbers. Validate, don't vibe.
   with `# @rung N` and **`leverage`** lays them out on Meadows' twelve leverage
   points, each measured. **`expect`** lines are the model's own tests — a claim
   (`expect recovery final:netWorth == 493370 ± 1%`, `expect loops:active == 9`)
-  kept in the text and checked by **`test`**; **`diff`** compares two versions of
+  kept in the text and checked by **`test`**, with `expect always Inventory <=
+  Capacity` for a claim about *every* step that names the step it broke on; **`diff`** compares two versions of
   a model series by series and loop by loop, so a refactor has a verdict.
   **`data`** lines put measured history *in* the model — step-held time series
   you can plot, feed into equations, calibrate against with no CSV at hand
@@ -107,8 +108,14 @@ dynamics, and check the numbers. Validate, don't vibe.
   diagram, loops, and table all re-simulate at once (Vensim's "SyntheSim", in the
   browser). The slider edits the *text*, so what you tuned is what's saved.
 - **Plots that look designed** — round-number axes, gradient area fills, and
-  hover-to-scrub the time cursor across every series.
+  hover-to-scrub the time cursor across every series. Toggle a **log y axis**
+  when the series span orders of magnitude, or switch to a **phase portrait**
+  (one series against another) — the view that shows a limit cycle as a closed
+  orbit rather than two wiggles.
 - **A data table and a time scrubber**, all synchronized to one clock.
+- **Work that can leave** — ⤓ CSV of the visible series, ⤓ PNG of the plot, ⤓ SVG
+  of the diagram, alongside the shareable link and `.flow` download. The working
+  text is autosaved and the models you have opened are one dropdown away.
 - **Learn-as-you-go** — a syntax-highlighted editor, a contextual-help bar that
   explains whatever the mouse is over, and a **Learn** button with a guided tour,
   interactive lessons, and example walkthroughs. See
@@ -140,12 +147,16 @@ npm i -g .                                   # installs `flowloom` + `flowloom-m
 flowloom run     model.flow --json           # simulate → all series as JSON
 flowloom explain model.flow                  # plain-language summary (stocks, knobs, loops)
 flowloom describe model.flow --json          # full structure (stocks/rates/vars/deps/loops)
+flowloom causes  model.flow infection        # what feeds it, signed (params included)
+flowloom uses    model.flow beta             # what it feeds — what breaks if I change this
+flowloom document model.flow                 # every name: definition, causes, and who reads it
 flowloom loops   model.flow --json           # feedback loops with R/B polarity
 flowloom check   model.flow                  # validate; non-zero exit + line/col diagnostics
 flowloom check   model.flow --numerics       # …and validate the *run*: does the answer survive dt/2?
 flowloom compare model.flow --metric final:Cash,min:Cash   # base vs every `scenario` line
 flowloom policies model.flow --metric min:Cash --target 0   # which moves, together, are worth it
 flowloom leverage model.flow --metric min:Cash              # the levers on Meadows' ladder (# @rung N tags)
+flowloom optimize model.flow --metric final:Cash --param price,spend  # the settings that do best
 flowloom test    model.flow                  # the model's own `expect` lines; non-zero exit on a failure
 flowloom diff    before.flow after.flow      # did the edit change the numbers or the live loops?
 flowloom run     model.flow --scenario recovery            # run one scenario (then --set on top)
@@ -159,7 +170,9 @@ flowloom reference --json                     # the language + builtins catalog
   canonical catalog (`npm run gen:llms`), so it never drifts.
 - **MCP server:** `flowloom-mcp` exposes the engine to Claude Code / Claude Desktop
   as tools — `flow_run`, `flow_check`, `flow_loops`, `flow_describe`, `flow_explain`,
-  `flow_compare`, `flow_policies`, `flow_leverage`, `flow_test`, `flow_diff`, `flow_examples`, … — plus a `flow://reference` resource carrying the
+  `flow_causes`/`flow_uses`/`flow_document` (the dependency index, forwards and back),
+  `flow_compare`, `flow_policies`, `flow_leverage`, `flow_test`, `flow_diff`, `flow_bundle`,
+  `flow_data`, `flow_scenarios`, `flow_reference`, `flow_examples`, … — plus a `flow://reference` resource carrying the
   guide. Each tool takes the model as text (plus optional `set` / `scenario` what-ifs). Register it as a stdio MCP server pointing at
   `dist-cli/mcp.js` (build with `npm run build:cli`).
 
@@ -280,7 +293,8 @@ flow draining = drainCurve(Water)
 ### Randomness (seeded, reproducible)
 
 ```flow
-flow gain = Balance * (ret + random_normal(0, vol))   # also random(), random_uniform(lo,hi)
+flow gain = Balance * (ret + random_normal(0, vol))   # also uniform, lognormal, triangular,
+                                                     # exponential, Poisson, truncated normal
 sim dt=1 to=60 seed=1                                  # same seed → identical run every time
 ```
 
@@ -307,7 +321,11 @@ The `[unit]` annotation never changes the numbers, but where you supply it,
 `exp`/`ln`/`sin`, or a `change(stock)` whose units aren't the stock's-per-time.
 Un-annotated names are *unknown* (not dimensionless), so checking only fires where
 you've annotated enough to make the claim. Set the time unit with
-`sim timeunit=month`.
+`sim timeunit=month`. Unit tokens stay free-form (`widgets`, `GEL`), but the
+standard ones are known — SI bases and prefixes, the time family, `person` =
+`people` — so `people/hour` and `person/day` are one dimension. Reduction is
+dimensional only: a model that mixes hours and days is *told* it needs a
+conversion constant, never quietly rescaled.
 
 ### Simulation settings and `plot`
 
@@ -318,7 +336,9 @@ plot S I R                            # method: rk4 (default, accurate), euler, 
 
 The toolbar's dt / to / method controls rewrite this exact line, so the text
 always reflects what ran. `plot` only sets which series start visible — it's
-cosmetic.
+cosmetic. Add `savper=1` to record one sample per time unit rather than one per
+step — the model still integrates at `dt`, so a small step on a long horizon
+stops meaning a 200,000-point array per series.
 
 ### A complete model
 
@@ -374,7 +394,8 @@ canonical source so they never drift.)
 - [x] compiled (slot-based) evaluator + a generated **WASM** backend for large
       models, run off-thread in a Web Worker
 - [x] units checking (dimensional analysis) from the `[unit]` annotations
-- [x] seeded randomness (`random`/`random_uniform`/`random_normal`) + Monte Carlo bands
+- [x] seeded randomness (uniform, normal, lognormal, triangular, exponential,
+      Poisson, truncated normal) + Monte Carlo bands
 - [x] data import + calibration (fit params to an observed CSV by normalised-RMSE)
 - [x] studio plot overlays: Monte Carlo bands, observed-data overlay, model comparison, in-app calibrate
 - [x] a `flowloom` CLI (`flowloom run model.flow --csv`) sharing this engine

@@ -15,7 +15,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { VERSION } from "./version.js";
-import { parseModel, printModel, ModelError, type Model } from "./lang/index.js";
+import { parseModel, printModel, ModelError, resolveIncludes, hasIncludes, type Model } from "./lang/index.js";
 import {
   simulateAsync,
   analyzeLoops,
@@ -38,8 +38,14 @@ import {
   solveParam,
   monteCarlo,
   parseDataset,
+  dataLines,
   datasetFromModel,
+  causesTree,
+  usesTree,
+  renderTree,
+  documentModel,
   calibrate,
+  optimize,
   REFERENCE,
   type EnsembleResult,
 } from "./engine/index.js";
@@ -189,8 +195,8 @@ export const handlers = {
   },
 
   async flow_calibrate(
-    { model, params, data, map, set, scenario }:
-      { model: string; params: string[]; data?: string; map?: Record<string, string>; set?: string[]; scenario?: string },
+    { model, params, data, map, weights, set, scenario }:
+      { model: string; params: string[]; data?: string; map?: Record<string, string>; weights?: Record<string, number>; set?: string[]; scenario?: string },
   ): Promise<ToolResult> {
     const m = loadModel(model, set, scenario);
     let dataset;
@@ -199,7 +205,7 @@ export const handlers = {
       if (!map || !Object.keys(map).length) throw new Error("without `data` text, calibrate fits against the model's own `data` lines — pass map: { modelSeries: dataName }");
       dataset = datasetFromModel(m, Object.values(map));
     }
-    const r = await calibrate(m, { params, dataset, ...(map ? { map } : {}) });
+    const r = await calibrate(m, { params, dataset, ...(map ? { map } : {}), ...(weights ? { weights } : {}) });
     return text(r);
   },
 
@@ -221,6 +227,78 @@ export const handlers = {
 
   flow_describe({ model, set, scenario }: { model: string; set?: string[]; scenario?: string }): ToolResult {
     return text(describeModel(loadModel(model, set, scenario)));
+  },
+
+  async flow_optimize(
+    { model, metric, params, goal, bounds, restarts, set, scenario }:
+      { model: string; metric: string; params?: string[]; goal?: "max" | "min"; bounds?: Record<string, [number, number]>; restarts?: number; set?: string[]; scenario?: string },
+  ): Promise<ToolResult> {
+    return text(await optimize(loadModel(model, set, scenario), {
+      metric,
+      ...(params?.length ? { params } : {}),
+      ...(goal ? { goal } : {}),
+      ...(bounds && Object.keys(bounds).length ? { bounds } : {}),
+      ...(restarts !== undefined ? { restarts } : {}),
+    }));
+  },
+
+  flow_causes({ model, name, depth, init }: { model: string; name: string; depth?: number; init?: boolean }): ToolResult {
+    const m = parseModel(model);
+    const opts = { ...(depth !== undefined ? { depth } : {}), ...(init !== undefined ? { init } : {}) };
+    return text({ tree: causesTree(m, name, opts), rendered: renderTree(causesTree(m, name, opts)) });
+  },
+
+  flow_uses({ model, name, depth }: { model: string; name: string; depth?: number }): ToolResult {
+    const m = parseModel(model);
+    const opts = depth !== undefined ? { depth } : {};
+    return text({ tree: usesTree(m, name, opts), rendered: renderTree(usesTree(m, name, opts)) });
+  },
+
+  flow_document({ model }: { model: string }): ToolResult {
+    return text({ entries: documentModel(parseModel(model)) });
+  },
+
+  flow_scenarios({ model }: { model: string }): ToolResult {
+    const m = parseModel(model);
+    return text({
+      scenarios: [...m.scenarios.values()].map((sc) => ({
+        name: sc.name,
+        sets: sc.sets.map((x) => ({ key: x.key, value: x.value })),
+        ...(sc.doc ? { doc: sc.doc } : {}),
+        ...(sc.rung !== undefined ? { rung: sc.rung } : {}),
+      })),
+    });
+  },
+
+  flow_data({ csv, columns, timeColumn, unit, linear }: { csv: string; columns?: string[]; timeColumn?: string; unit?: string; linear?: boolean }): ToolResult {
+    const ds = parseDataset(csv, timeColumn ? { timeColumn } : {});
+    const lines = dataLines(ds, { columns: columns ?? [], ...(unit ? { unit } : {}), linear: linear === true });
+    return text({ lines, columns: ds.columns, rows: ds.t.length });
+  },
+
+  // The include reader is injected rather than reaching for the filesystem: the
+  // server is text-in/text-out everywhere else, and an agent that holds the
+  // parts already has them in hand.
+  flow_bundle({ model, parts }: { model: string; parts?: Record<string, string> }): ToolResult {
+    if (!hasIncludes(model)) return text({ bundled: model.trimEnd(), inlined: 0 });
+    const have = parts ?? {};
+    const used: string[] = [];
+    const bundled = resolveIncludes(model, {
+      read: (path) => {
+        const hit = have[path] ?? have[path.replace(/^\.\//, "")];
+        if (hit === undefined) {
+          throw new Error(`no text supplied for include "${path}" — pass it in \`parts\` (have: ${Object.keys(have).join(", ") || "nothing"})`);
+        }
+        used.push(path);
+        return hit;
+      },
+    });
+    parseModel(bundled); // surface errors against the bundled line numbers
+    return text({ bundled: bundled.trimEnd(), inlined: used.length, parts: used });
+  },
+
+  flow_reference({ format }: { format?: "markdown" | "json" }): ToolResult {
+    return format === "json" ? text(REFERENCE) : text(referenceGuide());
   },
 
   flow_explain({ model, set, scenario }: { model: string; set?: string[]; scenario?: string }): ToolResult {
@@ -351,18 +429,21 @@ The authoring loop:
 1. flow_check — parse + lint cheaply. Do this after every edit; it returns {line, col, message} diagnostics with a "did you mean" / recovery hint, so fix those before running. Add numerics:true before you quote a number from a model to anyone: the integrator is fixed-step, so a converged-looking run can still be wrong, and this re-runs at half the step to say whether the answer actually holds (it also flags a branch on a stock under rk4, a random draw whose variance scales with dt, and a time constant the grid cannot resolve). Costs a couple of extra runs.
 2. flow_run (raw time series) or, better, flow_summary (a classified per-series read: start/final, min/max, a behaviour label like s-shaped/decay/oscillation, settle time) — prefer flow_summary unless you need the raw arrays.
 3. flow_explain (plain-language structure) / flow_describe (JSON structure) / flow_loops (R/B feedback loops read along the run; with a metric, ranked by knockout; basis:true for the shortest independent loop set — the rank-many loops every other loop is built from) — to understand an existing model before changing it.
+4. Before you EDIT a name you did not write: flow_uses tells you everything that reads it (what your change will move), flow_causes tells you what feeds it (why it is where it is), and flow_document does both for every name at once. Signed, so the tree says which direction each edge pushes.
 
-Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (uncertainty bands — samples every 'param … ± tol' / 'in lo..hi' once per run, plus the RNG seed; if no param declares a range the bands on a deterministic model are flat and the result says so), flow_calibrate (fit params to observed data — CSV text, or the model's own 'data' lines), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
+Analysis: flow_sweep (response curve of one knob), flow_sensitivity (rank knobs; a 'switch' is tested off→on), flow_solve (goal-seek a knob to a target), flow_montecarlo (uncertainty bands — samples every 'param … ± tol' / 'in lo..hi' once per run, plus the RNG seed; if no param declares a range the bands on a deterministic model are flat and the result says so), flow_calibrate (fit params to observed data — CSV text, or the model's own 'data' lines; per-series weights when one series has 500 observations and another 5), flow_optimize (the settings that maximise or minimise a payoff metric — a bounded LOCAL search, so pass restarts and read the note), flow_compare (base vs each 'scenario' line, one row per scenario), flow_policies (every on/off combination of the switches: best, cheapest-to-target, Shapley contribution per switch), flow_leverage (the model's levers on Meadows' twelve leverage points, via '# @rung N' tags), flow_test (the model's own 'expect' lines — pass/fail per claim), flow_diff (before vs after an edit: every series under every shared scenario plus the live-loop census — run it after any refactor). Most tools accept "set" overrides ("key=value") and a "scenario" name to try a what-if WITHOUT rewriting the text.
 
 Discrete-period models (monthly, yearly): use 'sim method=map dt=1' (stock(t+dt) = stock(t) + change(t); change() is a per-step increment in the stock's own units, so no x dt bookkeeping), previous(X) for last step's value, delay_fixed(X, n) for a pipeline lag of exactly n periods (delay1/delay3 are exponential lags, not pipelines).
 
-Multi-file models: 'include "part.flow" as ns' composes models from parts, but MCP tools take ONE text — resolve first with the CLI ('flowloom bundle main.flow') and pass the bundled text; the parser's error says the same if an include line slips through.
+Multi-file models: 'include "part.flow" as ns' composes models from parts, but every other tool takes ONE text — flatten it with flow_bundle first, passing each part's text in "parts" (the server never reads your filesystem); the parser's error says the same if an include line slips through.
+
+Also: flow_reference (the language guide, for clients that do not read resources), flow_scenarios (what policy experiments the text already declares), flow_data (a CSV of observations into 'data' lines you can paste into the model).
 
 Gotchas: every referenced name must be defined and a model needs ≥1 stock; a stock changes ONLY through its change()/d() rate; if(cond,a,b) evaluates BOTH branches (guard the operand, e.g. x/max(y,1e-9), not the branch). Start from flow_examples if you want a known-good template.`;
 
 // ── server wiring ────────────────────────────────────────────────────────────
 const modelArg = z.string().describe("The .flow model as text (the canonical representation).");
-const setArg = z.array(z.string()).optional().describe('Overrides as "key=value": a param, a switch (on/off), a stock init, or dt/to/start/method. Applied before the run (after any scenario).');
+const setArg = z.array(z.string()).optional().describe('Overrides as "key=value": a param, a switch (on/off), one element of a subscripted name (Pop[North]=5), a stock init, a lookup table (set to the name of another table), or a sim setting (dt/to/start/seed/method/timeunit/savper). Applied before the run (after any scenario).');
 const scenarioArg = z.string().optional().describe("Name of a `scenario` line in the model to apply before the run (\"base\" or omitted = the model as written).");
 const metricArg = z
   .string()
@@ -486,12 +567,13 @@ export function buildServer(): McpServer {
     {
       title: "Calibrate to data",
       description:
-        "Fit model params to an observed time series (CSV/TSV text) by minimising normalised RMSE (derivative-free Nelder–Mead). Returns the fitted params, the starting values, and the achieved fit per series.",
+        "Fit model params to an observed time series (CSV/TSV text) by minimising normalised RMSE (bounded, derivative-free Nelder–Mead — a param's declared `± / in` range is a box the fit may not leave). Returns the fitted params, the starting values, the achieved fit per series, and any param sitting on a bound.",
       inputSchema: {
         model: modelArg,
         params: z.array(z.string()).describe("Params (or stock inits) to fit."),
         data: z.string().optional().describe("Observed data as CSV/TSV text: a header row, one time column (t/time or the first), then named series columns. Omit to fit against the model's own `data` lines (then `map` names which: { modelSeries: dataName })."),
         map: z.record(z.string(), z.string()).optional().describe('Model series → dataset column, e.g. {"Infected":"I"}. Defaults to columns whose name matches a series.'),
+        weights: z.record(z.string(), z.number()).optional().describe('Per-series weight in the summed residual (default 1 each). The residual sums NORMALISED RMSEs, so a 5-observation series counts as much as a 500-observation one until you say otherwise, e.g. {"Infected": 3}.'),
         set: setArg,
         scenario: scenarioArg,
       },
@@ -563,6 +645,113 @@ export function buildServer(): McpServer {
     "flow_describe",
     { title: "Describe structure", description: "Dump the model's structure as JSON: stocks, rates, vars (with deps), tables, settings, and the loop summary.", inputSchema: { model: modelArg, set: setArg, scenario: scenarioArg } },
     guard(handlers.flow_describe),
+  );
+
+  server.registerTool(
+    "flow_optimize",
+    {
+      title: "Optimise a payoff",
+      description: "Search continuous knobs for the settings that maximise (or minimise) a metric. flow_solve goal-seeks ONE knob to a target and flow_calibrate fits knobs to data; this is the \"what settings do best\" question neither answers. Bounded Nelder–Mead: a knob's declared `± / in` range is the search box and is never widened, and a knob without one gets ±50% of its base value. It is a LOCAL search — pass restarts and read the note, because a model with competing loops has local optima. Switches are excluded (they are discrete: flow_policies enumerates those exactly).",
+      inputSchema: {
+        model: modelArg,
+        metric: metricArg,
+        params: z.array(z.string()).optional().describe("Knobs to vary (default: every non-const, non-switch param)."),
+        goal: z.enum(["max", "min"]).optional().describe("Whether a bigger metric is better (default max)."),
+        bounds: z.record(z.string(), z.tuple([z.number(), z.number()])).optional().describe('Per-knob [lo, hi], overriding whatever the model declares, e.g. {"price": [1, 40]}.'),
+        restarts: z.number().optional().describe("Extra searches from spread starting points (default 0). The spread of their answers is the evidence about local optima."),
+        set: setArg,
+        scenario: scenarioArg,
+      },
+    },
+    guard(handlers.flow_optimize),
+  );
+
+  server.registerTool(
+    "flow_causes",
+    {
+      title: "Causes tree",
+      description: "What feeds a name, recursively and signed (+ raises it, − lowers it, ? unread). Params are included — they are the levers — and internal delay stocks are not, so the tree shows what the author wrote. On a subscripted model, ask for an element (\"Pop[North]\") to get real signs; the bare vector name gives structure with \"?\".",
+      inputSchema: {
+        model: modelArg,
+        name: z.string().describe("The stock, flow, aux, param or table to trace back from."),
+        depth: z.number().optional().describe("Levels to expand (default 3)."),
+        init: z.boolean().optional().describe("Follow a stock's initial value as well as its rate (default false — at t>0 the init is history)."),
+      },
+    },
+    guard(handlers.flow_causes),
+  );
+
+  server.registerTool(
+    "flow_uses",
+    {
+      title: "Uses tree",
+      description: "What a name feeds, recursively and signed — the reverse dependency index, i.e. \"what breaks if I change this?\". Read it before editing an unfamiliar model.",
+      inputSchema: {
+        model: modelArg,
+        name: z.string().describe("The stock, flow, aux, param or table to trace forward from."),
+        depth: z.number().optional().describe("Levels to expand (default 3)."),
+      },
+    },
+    guard(handlers.flow_uses),
+  );
+
+  server.registerTool(
+    "flow_document",
+    {
+      title: "Document the model",
+      description: "Every name with its definition, its unit and doc comment, its direct causes and — the part describe never showed — everything that reads it. The whole-model orientation pass.",
+      inputSchema: { model: modelArg },
+    },
+    guard(handlers.flow_document),
+  );
+
+  server.registerTool(
+    "flow_scenarios",
+    {
+      title: "List scenarios",
+      description: "The model's `scenario` lines: name, bindings, doc and @rung tag. Use it to find out what policy experiments the text already declares before inventing new ones (then flow_compare runs them).",
+      inputSchema: { model: modelArg },
+    },
+    guard(handlers.flow_scenarios),
+  );
+
+  server.registerTool(
+    "flow_data",
+    {
+      title: "CSV → data lines",
+      description: "Turn a CSV/TSV of observations into `data NAME = (t,v) …` lines to paste into a model. Measured history then lives in the text like everything else, and `rmse:<model>:<data>` can score the fit.",
+      inputSchema: {
+        csv: z.string().describe("The CSV/TSV text."),
+        columns: z.array(z.string()).optional().describe("Columns to emit (default: every non-time column)."),
+        timeColumn: z.string().optional().describe("Name of the time column (default: the first, or one called t/time/date)."),
+        unit: z.string().optional().describe("Unit annotation to put on each emitted line."),
+        linear: z.boolean().optional().describe("Interpolate linearly between samples instead of step-holding (default false)."),
+      },
+    },
+    guard(handlers.flow_data),
+  );
+
+  server.registerTool(
+    "flow_bundle",
+    {
+      title: "Inline includes",
+      description: "Flatten `include \"part.flow\" as ns` lines into one self-contained model text, then parse it to check the result. Supply each part's text in `parts` keyed by the path as written — the server never reads your filesystem.",
+      inputSchema: {
+        model: modelArg,
+        parts: z.record(z.string(), z.string()).optional().describe('Included files by path, e.g. {"parts/income.flow": "param wage = 10\\n…"}.'),
+      },
+    },
+    guard(handlers.flow_bundle),
+  );
+
+  server.registerTool(
+    "flow_reference",
+    {
+      title: ".flow language reference",
+      description: "The one-page grammar + builtins guide, as a tool for clients that don't read resources. Same content as the flow://reference resource. Read it before writing or editing a model.",
+      inputSchema: { format: z.enum(["markdown", "json"]).optional().describe("markdown (default) or the JSON catalog with signatures and arities.") },
+    },
+    guard(handlers.flow_reference),
   );
 
   server.registerTool(

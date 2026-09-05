@@ -49,6 +49,35 @@ where you've annotated enough to make the claim. Set the time unit with
 never warn on their own (the way a modeller reads them); under `*` and `/` a
 literal is a pure scalar.
 
+**The vocabulary.** Unit tokens are free-form — `widgets`, `GEL`, `customers`
+are their own dimensions and always will be — but the ones with a standard
+meaning are known: SI base and derived units (`m`, `kg`, `s`, `W`, `N`, `J`,
+`Hz`, `Pa`, `V`, `L`), SI prefixes on them (`km`, `MW`, `ms`, `kilometer`), the
+time family (`second` … `century`, plus `hr`/`wk`/`yr`), lengths and masses in
+both systems, and the irregulars that matter (`person` = `people`, `foot` =
+`feet`). They reduce to base dimensions, so `people/hour` and `person/day` check
+against each other and against `sim timeunit=month` instead of being three
+unrelated dimensions. A known token always wins over a prefix reading: `min` is
+a minute, not a milli-inch.
+
+Plurals fold **model-locally**: `widgets` collapses onto `widget` only if the
+model writes both, which is exactly when the two spellings must mean one thing —
+a blanket `-s` rule would turn `mass` into `mas`.
+
+Reduction is dimensional, never numeric. flowloom has never rescaled a number
+for an annotation and does not start here, so a model that measures one
+dimension at two scales gets told:
+
+```
+this model measures hour in hour and day — the same dimension at different
+scales, so the units check out but the arithmetic does not: 1 day = 24 hour.
+flowloom never rescales a number for an annotation; make the conversion
+explicit, e.g. `const perDay [hour/day] = 24`.
+```
+
+Diagnostics speak your vocabulary, not SI: a model in months is told its rate
+should be `people/month`, not `person/s`.
+
 ### Stocks and rates — the engine
 
 A stock is the running integral of its net flow:
@@ -213,6 +242,37 @@ params that feed it) and bumps them by at least one `dt`; the row is labelled
 `(±1)`. A knob whose bump leaves the metric exactly unchanged is marked *flat* —
 usually a threshold not crossed at ±10 %; `sweep` it over a wider range.
 
+### Optimising a payoff
+
+`sweep` traces one knob, `solve` goal-seeks one knob to a target, and
+`calibrate` fits knobs to data. `optimize` is the fourth question — *what
+settings make the model do best?*
+
+```console
+$ flowloom optimize model.flow --metric final:Cash --param price,spend --restarts 3
+optimize max:final:Cash   base 9360 → 16800  (+7440)
+  price  24.999969   in 1..40 (declared)
+  spend  30          in 0..30 (declared)  ← at the edge of its range
+  196 evaluations, 2 restarts
+  note: spend sits on a bound — widen the range, or accept the corner as the answer
+```
+
+It is the same bounded Nelder–Mead `calibrate` uses, with a metric for an
+objective instead of a residual. Two things it will not pretend:
+
+- **The search is local.** A model with competing loops has local optima, and
+  the answer is the best point *found*, not the best there is. `--restarts N`
+  runs it again from spread starting points; when they disagree, the result says
+  so rather than presenting one of them as the truth.
+- **A range is not decoration.** A knob's declared `± / in` range is the search
+  box and is never widened — the same rule global sensitivity follows. A knob
+  with no range gets ±50 % of its base value, and a knob whose answer lands on a
+  bound is named, because that is a fact about the range rather than the model.
+
+Switches are excluded: they are discrete, and [`policies`](#switches) already
+enumerates every combination exactly rather than searching over it. MCP:
+`flow_optimize`.
+
 ### Scenarios
 
 ```flow
@@ -222,10 +282,11 @@ scenario recovery separate=on pay=9000 Cash=5000    # the plan after the raise
 
 A `scenario` is a named set of overrides that lives **in the model text** — a
 policy experiment is a first-class artefact, not shell history. Each binding may
-target a `param`, a `switch` (`on`/`off`), a stock's initial value, or a sim
-setting (`dt`/`to`/`start`/`seed`/`method`); the parser checks every key and value
-so a typo is a located error in the editor. `base` is reserved for the model as
-written. Scenarios are applied on top of the base text when chosen:
+target a `param`, a `switch` (`on`/`off`), a stock's initial value, a `table`
+(set to the name of another table — a graphical function is often the policy
+itself), or a sim setting (`dt`/`to`/`start`/`seed`/`method`/`timeunit`/`savper`);
+the parser checks every key and value so a typo is a located error in the editor. `base` is reserved for
+the model as written. Scenarios are applied on top of the base text when chosen:
 
 - CLI: `flowloom run model.flow --scenario recovery` (then any `--set` on top);
   `flowloom scenarios model.flow` lists them; `flowloom compare model.flow
@@ -274,6 +335,34 @@ Run them: `flowloom test model.flow` (one simulation per scenario, a line per
 claim, non-zero exit on any failure — so a model can sit in CI); `flow_test` over
 MCP; `describe`/`explain` list them.
 
+#### `always` — a claim about every step
+
+A metric reduces a whole run to one number, which is the wrong shape for "this
+must never happen". `min:Inventory >= 0` gets close, but it cannot compare two
+series, cannot state an implication, and — when it fails — cannot tell you
+*where*.
+
+```flow
+expect always Inventory >= 0                       # a bound
+expect always Inventory <= Capacity                # two series
+expect always !(ship < demand) || ship == Inventory  # an implication: a -> b is !a || b
+expect lean always Cash >= 0                       # under a named scenario
+```
+
+The condition is an ordinary model expression, evaluated at **every recorded
+step**; it holds when it is non-zero (true) at all of them. A failure reports the
+step it first broke on and the value of every name in the condition there:
+
+```console
+✗ base always ship == demand   held at 8/13 steps; first broke at t=8 with ship=4, demand=12
+```
+
+Names are checked at parse time, so a typo is a located error rather than a
+run-time surprise, and `Pop[North]` is lowered to the run's own `Pop.North` (a
+bare subscripted name is an error — the condition is checked one series at a
+time). "Recorded" is literal: with `sim savper=`, the save grid is what gets
+checked, which is worth knowing before writing a knife-edge claim.
+
 ### Data series
 
 ```flow
@@ -296,6 +385,12 @@ The file bridge runs both ways without the model ever referencing a file:
   params against the model's **own** data lines; same over MCP.
 - The metric `rmse:<series>:<data>` measures the fit over every step of the run,
   so `expect rmse:N:obs < 5` keeps a calibration honest after later edits.
+- `--weight Series=N` (MCP `weights`) sets each series' share of the residual.
+  The residual sums *normalised* RMSEs, so a 5-observation series counts as much
+  as a 500-observation one until you say otherwise. The weights are explicit
+  rather than derived from the counts, because "trust the long series more" is a
+  judgement about the data, not a fact about it — and the reported per-series
+  fit stays unweighted, since it is a fit rather than a score.
 
 ### Tables (graphical functions)
 
@@ -305,7 +400,27 @@ flow draining = drainCurve(Water)
 ```
 
 `x` values must strictly increase. Lookups interpolate linearly between
-breakpoints and clamp to the end values outside the defined range.
+breakpoints and **clamp** to the end values outside the defined range. Two
+trailing modifiers change that:
+
+```flow
+table demandCurve = (0,100) (10,60) (20,20) extrapolate   # continue the slope past the ends
+table taxBand     = (0,0) (20000,0.2) (50000,0.4) hold    # step, don't interpolate
+```
+
+`hold` makes the value at `x` the last point at or before it — a step function,
+the same rule a [`data`](#data-series) line gets. It was previously reachable
+only by writing a `data` line.
+
+A table can be swapped whole by a scenario or `--set`, since the curve is often
+the policy: `scenario aggressive response=steepResponse` keeps every call site
+reading `response(x)` and gives it the other table's shape.
+
+`extrapolate` continues the slope of the end segment beyond the ends rather than
+flattening. Clamping stays the default deliberately: a curve fitted over an
+observed range says nothing outside it, and a silent extrapolation is how a
+lookup produces a confident number nobody measured. The two modifiers are
+mutually exclusive — a step-held table has no slope to continue.
 
 ## Expressions
 
@@ -350,6 +465,46 @@ Drive a model over time:
 | `pulse(t0, width)` | `1` during `[t0, t0+width)`, else `0`. |
 | `ramp(slope, t0, t1)` | `0` before `t0`; a line of the given slope between `t0` and `t1`; frozen after. |
 
+### Randomness
+
+Every `random*()` is a pure hash of `(seed, step, draw-index)` — a *counter-based*
+PRNG, not a stream with hidden state. So the value is identical across RK4's four
+sub-stages (the integrated vector field stays well-defined), bit-identical across
+all three backends, and reproducible: `sim seed=N` fixes a run, and the default
+seed `0` means an unseeded model is reproducible too.
+
+| Call | Distribution |
+|---|---|
+| `random()` | Uniform on `[0, 1)`. |
+| `random_uniform(lo, hi)` | Uniform on `[lo, hi)`. |
+| `random_normal(mean, sd)` | Gaussian. |
+| `random_lognormal(median, sigma)` | Positive and right-skewed — a delivery time, a project duration, an income. Note the mean is `median · e^{σ²/2}`, above the median. |
+| `random_triangular(lo, mode, hi)` | The three-point estimate (worst / most likely / best) as a distribution — what an expert judgement looks like with no data behind it. |
+| `random_exponential(rate)` | A waiting time at a constant hazard rate; mean `1/rate`. |
+| `random_poisson(mean)` | A non-negative integer count; variance equals the mean, which is the point. |
+| `random_normal_truncated(mean, sd, lo, hi)` | A normal that genuinely lives in `[lo, hi]`. |
+
+That last one is not `clamp(random_normal(…), lo, hi)`. Clamping piles all the
+tail's probability onto the two bounds — a different distribution wearing the
+same name. The inverse CDF is evaluated on the truncated interval instead, so
+the shape *inside* the interval is right.
+
+Every sampler uses a **fixed** number of uniform draws (inverse CDF, never
+rejection sampling). That is a hard requirement rather than a preference: a call
+site is assigned its draw indices once at compile time, so a sampler whose draw
+count depended on the value it happened to produce would collide with the next
+call site's indices and quietly correlate two supposedly independent streams.
+
+Two things to keep in mind when a `random*()` sits inside a rate: the draw is
+resampled once per step and is **not** scaled by `dt`, so `change(X) =
+random_normal(0, sd)` has `Var(X) ∝ dt` — halving the step halves the variance,
+which means the *process* changes with `dt`. `check --numerics` flags exactly
+that. And for parameter uncertainty you almost always want
+[`param x = 0.03 ± 0.01`](#-tol--in-lohi--how-well-a-knob-is-known) instead,
+which samples once per *run* rather than every step. Pink (1/f) noise is not
+provided: it needs state, so build it from a stock driven by a white-noise
+source.
+
 ### Delays and smoothing (stateful)
 
 These carry state across time. flowloom compiles each into internal stocks, so
@@ -363,6 +518,21 @@ feedback-loop detection.
 | `smooth3(input, τ)` | Third-order (cascaded) smoothing. |
 | `delay1(input, τ)` | First-order material delay. |
 | `delay3(input, τ)` | Third-order material delay (smoother pipeline). |
+| `initial(x)` | The value of `x` at `t = start`, held for the whole run. |
+
+`initial()` is Vensim's INITIAL. It compiles to a stock with a zero rate — which
+is exactly what an initial value is — so it is computed once by the same pass
+that resolves every other initial value, and then nothing moves it:
+
+```flow
+aux relativeGrowth = Population / initial(Population)   # 1.0 at the start, by construction
+```
+
+Without it, "where this began" had to be duplicated as a `param`, which then
+silently disagreed with the stock the next time the stock's initial value was
+edited. Because it reads `start` and nothing after, it breaks an algebraic loop
+the way a delay does — and an initial value that is genuinely circular is caught
+where every other one is, by the initialisation failing to settle.
 
 ```flow
 flow receiving = delay3(orders, leadTime)   # orders arrive after a delay
@@ -468,9 +638,29 @@ The axis must be a dimension of the array, and whatever you don't collapse has t
 be supplied by the surrounding declaration's subscripts (`sum(Trade, to)` leaves
 `from`, so it belongs on a `[from]` result).
 
+A `change()` may name the stock's dimensions — `change(Population[region])` —
+and they are **checked**: the axes must be the stock's own, in the stock's own
+order, because a rate is elementwise over the whole stock. `change(Pop[Sooth])`
+and `change(Trade[to, from])` are located errors, not silently the un-indexed
+stock.
+
+Elements are addressable everywhere a name is:
+
+```flow
+expect final:Population[North] > 1200      # one element's series
+```
+
+```console
+$ flowloom run model.flow --set Population[North]=500   # one element's value
+$ flowloom causes model.flow 'Population[North]'        # one element's causes
+```
+
+An `expect` on the bare vector is an error (it is not one series), and both
+`Population[North]` and the lowered spelling `Population.North` are accepted.
+
 Covered today: multi-dimensional subscripts, elementwise equations, single-element
-indexing, per-element values, full and partial/axis `sum`. Other reducers
-(`mean`/`min`/`max`) are planned.
+indexing, per-element values, per-element overrides, full and partial/axis `sum`.
+Other reducers (`mean`/`min`/`max`) are planned.
 
 ## Composing models (`include`)
 
@@ -518,6 +708,26 @@ sim dt=0.1 to=50 start=0 method=rk4   # method: rk4 | euler | map
   [Discrete periods](#discrete-periods-previous-delay_fixed).
 - `timeunit` — the name of the time unit for units checking (e.g. `month`).
 - `seed` — the RNG seed for `random*()` (default `0`, so runs are reproducible).
+- `savper` — how often to **record** a sample, in time units (default: every
+  step). The model still integrates at `dt`; this only thins the output.
+
+```flow
+sim dt=0.001 to=200 method=rk4 savper=1     # 200,001 steps, 201 samples
+```
+
+`savper` is what makes a small step affordable to look at. Recording every step
+of a long horizon is one array entry per step per series — the 200k-step stress
+model holds 200,000 samples a series — and it compounds with a stiff model,
+which is exactly the one that needs a small `dt`. The samples kept are
+bit-identical to the un-thinned run: this is a save period, not a bigger step.
+The first sample, the last one, and the step a run halts on are always kept, so
+no thinning can hide where a run ended or what it ended at. A period that is not
+a whole multiple of `dt` is rounded (with a warning), and one finer than `dt` is
+a warning too — output cannot be finer than the step.
+
+Every one of these is bindable by `--set`, a scenario line, or MCP `set` —
+including `timeunit`, so a scenario can re-frame a model from weeks to months
+without editing the `sim` line.
 
 The toolbar's dt / to / method controls rewrite this exact line, so the text
 always reflects what ran.
@@ -653,6 +863,45 @@ of its edge signs:
 Polarity is read at `t = start`; nonlinear models can flip a loop's polarity as
 they evolve (e.g. logistic growth is reinforcing while small and balancing near
 its ceiling — the same single structural loop).
+
+## Tracing: what feeds this, what does this feed
+
+Loops answer "what is this system doing"; tracing answers the two questions you
+have *before* editing an unfamiliar model:
+
+```console
+$ flowloom causes model.flow infection
+infection  [flow]
+├─ + beta  [param]
+├─ + S  [stock]
+│  └─ − infection  [flow] ↺
+├─ + I  [stock]
+│  ├─ + infection  [flow] ↺
+│  └─ − recovery  [flow]
+│     ├─ + gamma  [param]
+│     └─ + I  [stock] ↺
+└─ − N  [param]
+
+$ flowloom uses model.flow beta        # what breaks if I change this
+$ flowloom document model.flow         # every name: definition, causes, readers
+```
+
+`+` / `−` is the sign of the edge, read the same way loop polarity is (central
+difference at the operating point), and `↺` closes a branch that has come back
+to a name already open above it — the loop is real, and `loops` is where it gets
+named. `(+N more)` marks what `--depth` (default 3) cut off.
+
+Two deliberate differences from the loop graph: **params are included**, because
+"what determines the infection rate" is answered by `beta` as much as by `S` and
+a causes tree that hides the knobs hides the levers; and **internal names are
+not** — `smooth(X, tau)` becomes a hidden stock when compiled, but the author
+wrote `X` and `tau`, so that is what the tree shows. A stock's causes are what
+its `change()` reads; add `--init` to follow its initial value too.
+
+On a subscripted model, ask for an element (`causes model.flow 'Pop[North]'`) to
+trace the lowered model with real signs; the bare vector name gives the
+structure with `?` signs, since `births[region]` has no value until it is
+lowered. MCP: `flow_causes`, `flow_uses`, `flow_document`.
 
 ## Errors the parser will give you
 

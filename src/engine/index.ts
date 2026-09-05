@@ -30,6 +30,7 @@ export { lintModel } from "./lint.js";
 export { checkNumerics, type NumericsReport, type NumericsSeries, type NumericsAdvisory, type NumericsOptions, type AdvisoryKind } from "./numerics.js";
 export {
   parseUnit,
+  unitScale,
   inferDim,
   checkUnits,
   buildUnitEnv,
@@ -52,6 +53,8 @@ export { u01, n01, runif, rnorm, RANDOM_FNS } from "./rng.js";
 export { parseDataset, type Dataset, type ParseDatasetOptions } from "./dataset.js";
 export { interpAt, rmse, nrmse } from "./fit.js";
 export { calibrate, type CalibrateOptions, type CalibrateResult } from "./calibrate.js";
+export { optimize, type OptimizeOptions, type OptimizeResult } from "./optimize.js";
+export { minimize, type SimplexOptions, type SimplexResult } from "./simplex.js";
 export { globalSensitivity, type GsaResult, type GsaRow, type GsaOptions } from "./global-sensitivity.js";
 export { applyOverride, applyScenario, BASE_SCENARIO } from "./overrides.js";
 export { compareScenarios, type CompareResult, type CompareRow } from "./compare.js";
@@ -62,4 +65,5 @@ export { runExpects, judge, loopMetric, formatExpect, type ExpectReport, type Ex
 export { diffModels, type DiffOptions, type DiffResult, type ScenarioDiff, type SeriesDiff, type StructureDiff, type LoopCensus } from "./diff.js";
 export { timeGrainParams, knobParams } from "./grain.js";
 export { paramRanges, type ParamRange } from "./uncertainty.js";
+export { causesTree, usesTree, renderTree, documentModel, renderDocument, type TraceNode, type TraceOptions, type DocEntry, type NodeKind } from "./trace.js";
 export { leverageLadder, MEADOWS_RUNGS, type LeverageResult, type LadderRung, type Lever } from "./leverage.js";

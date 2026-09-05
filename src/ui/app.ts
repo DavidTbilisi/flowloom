@@ -9,8 +9,8 @@ import {
 } from "./model-build.js";
 import { parseModel, printExpr, type Model, type Expr } from "../lang/index.js";
 import { simulate, parseDataset, calibrate, compareScenarios, checkNumerics, RANDOM_FNS, MEADOWS_RUNGS, type NumericsReport } from "../engine/index.js";
-import { draftFlow, getStoredKey, setStoredKey } from "./ai-draft.js";
-import { initTheme, applyTheme, currentTheme } from "./theme.js";
+import { draftFlow, getStoredKey, setStoredKey, getStoredModel, setStoredModel, MODELS } from "./ai-draft.js";
+import { initTheme, applyTheme, currentTheme, cssVar, onThemeChange } from "./theme.js";
 
 /** The numerics verdict as the status lines the error panel shows. One line for
  *  the verdict, one per advisory — the advisories are the part a refinement
@@ -46,7 +46,8 @@ function modelUsesRandom(model: Model): boolean {
   );
 }
 import { renderHelp } from "./help.js";
-import { readHash, writeHash, shareUrl, downloadFlow, enableDropLoad } from "./persist.js";
+import { readHash, writeHash, shareUrl, downloadFlow, download, enableDropLoad, resultCsv, downloadCanvasPng, svgMarkup, modelSlug,
+  saveAutosave, readAutosave, pushRecent, readRecents, clearRecents, type Recent } from "./persist.js";
 import { mountEditor } from "./editor.js";
 import { mountStatusBar } from "./statusbar.js";
 import { startTour, type TourCtx, type Tour } from "./tour.js";
@@ -111,6 +112,12 @@ export function mountApp(root: HTMLElement): Store {
       if (act === "fit") diagram.fit();
       else if (act === "in") diagram.zoomBy(1.3);
       else if (act === "out") diagram.zoomBy(1 / 1.3);
+      else if (act === "svg") {
+        // diagram.ts already resolves its colours to literals, so the export
+        // only has to carry the background it was drawn against.
+        const markup = svgMarkup($<SVGSVGElement>("#diagram"), cssVar("--bg"));
+        download(new Blob([markup], { type: "image/svg+xml" }), `${modelSlug(store.source)}-diagram.svg`);
+      }
     };
   });
 
@@ -279,6 +286,7 @@ export function mountApp(root: HTMLElement): Store {
     store.build(src.value);
     reflectSettings();
     writeHash(src.value);
+    saveAutosave(src.value);
   }
   function scheduleRebuild() {
     window.clearTimeout(buildTimer);
@@ -359,9 +367,46 @@ export function mountApp(root: HTMLElement): Store {
   };
   enableDropLoad($<HTMLElement>(".editor-wrap"), (text) => { editor.setValue(text); rebuild(); resetHistory(); });
 
+  // ── recents ──
+  // The URL hash carries a *shared* model, so a link survives; a plain reload of
+  // a tab nobody shared did not, and there was no history at all. `openModel` is
+  // the one path that adopts a different model, so it is where a recent is
+  // recorded — an editing session stays one entry rather than eight snapshots.
+  const recentSel = $<HTMLSelectElement>("#recent");
+
+  function renderRecents() {
+    const list: Recent[] = readRecents();
+    recentSel.innerHTML = `<option value="">recent…</option>`
+      + list.map((r, i) => `<option value="${i}">${escapeHtml(r.name)}</option>`).join("")
+      + (list.length ? `<option value="clear">— clear list —</option>` : "");
+    recentSel.hidden = list.length === 0;
+    (recentSel.previousElementSibling as HTMLElement | null)?.toggleAttribute("hidden", list.length === 0);
+  }
+
+  /** Adopt a different model: record where we were, then switch. */
+  function openModel(text: string, exampleName = "") {
+    pushRecent(src.value);   // where we were, as it stands now — edits included
+    editor.setValue(text);
+    rebuild();
+    store.setFrame(store.frameCount - 1);
+    resetHistory();
+    pushRecent(text);        // …and where we now are, at the top
+    exampleSel.value = exampleName;
+    renderRecents();
+  }
+
+  recentSel.onchange = () => {
+    const v = recentSel.value;
+    recentSel.value = "";
+    if (!v) return;
+    if (v === "clear") { clearRecents(); renderRecents(); return; }
+    const r = readRecents()[Number(v)];
+    if (r) openModel(r.source);
+  };
+
   exampleSel.onchange = () => {
     const ex = EXAMPLES.find((e) => e.name === exampleSel.value);
-    if (ex) { editor.setValue(ex.source); rebuild(); store.setFrame(store.frameCount - 1); resetHistory(); }
+    if (ex) openModel(ex.source, ex.name);
   };
 
   // toolbar settings rewrite the canonical `sim` line so the text stays the source of truth
@@ -376,6 +421,17 @@ export function mountApp(root: HTMLElement): Store {
   // tabs
   root.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((b) => {
     b.onclick = () => store.setTab(b.dataset.tab as Tab);
+    b.onkeydown = (e) => {
+      const step = e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : e.key === "Home" ? -Infinity : e.key === "End" ? Infinity : 0;
+      if (!step) return;
+      e.preventDefault();
+      const tabs = [...root.querySelectorAll<HTMLButtonElement>(".tabs button")];
+      const here = tabs.indexOf(b);
+      const to = step === -Infinity ? 0 : step === Infinity ? tabs.length - 1
+        : (here + step + tabs.length) % tabs.length;
+      store.setTab(tabs[to]!.dataset.tab as Tab);
+      tabs[to]!.focus();
+    };
   });
 
   // ── plot overlays: Monte Carlo bands, observed data, comparison, calibration ──
@@ -792,6 +848,7 @@ export function mountApp(root: HTMLElement): Store {
   const aiKeyEl = $<HTMLInputElement>("#aiKey");
   const aiMsg = $<HTMLElement>("#aiMsg");
   const aiGo = $<HTMLButtonElement>("#aiGo");
+  const aiModelEl = $<HTMLSelectElement>("#aiModel");
   aiKeyEl.value = getStoredKey();
 
   function toggleAiPanel(show?: boolean) {
@@ -801,25 +858,56 @@ export function mountApp(root: HTMLElement): Store {
   $<HTMLButtonElement>("#ai").onclick = () => toggleAiPanel();
   $<HTMLButtonElement>("#aiClose").onclick = () => toggleAiPanel(false);
 
+  // Populate the model picker from the one list that knows the ids.
+  for (const m of MODELS) {
+    const opt = document.createElement("option");
+    opt.value = m.id; opt.textContent = m.label;
+    aiModelEl.append(opt);
+  }
+  aiModelEl.value = getStoredModel();
+  aiModelEl.onchange = () => setStoredModel(aiModelEl.value);
+
+  let aiAbort: AbortController | undefined;
+
   async function runAiDraft() {
+    if (aiAbort) { aiAbort.abort(); return; }   // the button doubles as Cancel
     const prompt = aiPromptEl.value.trim();
     const key = aiKeyEl.value.trim();
     if (!prompt) { aiMsg.textContent = "describe a system first"; return; }
     if (!key) { aiMsg.textContent = "paste your Anthropic API key"; aiKeyEl.focus(); return; }
     setStoredKey(key);
-    aiGo.disabled = true; aiMsg.textContent = "drafting…";
+    aiAbort = new AbortController();
+    aiGo.textContent = "Cancel";
+    aiGo.classList.add("cancel");
+    aiMsg.textContent = "drafting…";
+    let lines = 0;
     try {
-      const flow = await draftFlow(prompt, key);
+      const flow = await draftFlow(prompt, {
+        apiKey: key,
+        model: aiModelEl.value,
+        signal: aiAbort.signal,
+        onThinking: (on) => { if (on) aiMsg.textContent = "thinking…"; },
+        // Progress, not the text itself: adopting a half-written model would
+        // put the editor into a parse error on every keystroke of the stream.
+        onChunk: (_chunk, whole) => {
+          const n = whole.split("\n").length;
+          if (n === lines) return;
+          lines = n;
+          aiMsg.textContent = `drafting… ${n} line${n === 1 ? "" : "s"}`;
+        },
+      });
       parseModel(flow); // verify it's a real model before adopting it; throws on garbage
       commit(flow);     // undoable — replaces the editor text and runs it
       store.setFrame(store.frameCount - 1);
       toggleAiPanel(false);
       aiPromptEl.value = "";
+      aiMsg.textContent = "";
     } catch (e) {
-      aiMsg.textContent = (e as Error).message;
+      aiMsg.textContent = (e as Error).name === "AbortError" ? "cancelled" : (e as Error).message;
     } finally {
-      aiGo.disabled = false;
-      if (aiMsg.textContent === "drafting…") aiMsg.textContent = "";
+      aiAbort = undefined;
+      aiGo.textContent = "Generate →";
+      aiGo.classList.remove("cancel");
     }
   }
   aiGo.onclick = runAiDraft;
@@ -831,13 +919,19 @@ export function mountApp(root: HTMLElement): Store {
   const themeBtn = $<HTMLButtonElement>("#theme");
   const reflectTheme = () => { themeBtn.textContent = currentTheme() === "light" ? "☀️" : "🌙"; };
   reflectTheme();
-  themeBtn.onclick = () => {
-    applyTheme(currentTheme() === "light" ? "dark" : "light");
+  const repaintTheme = () => {
     reflectTheme();
     // the CSS repaints itself; the canvas/SVG layers must be told to repaint
     drawPlot(plotCanvas, store);
     diagram.render(store);
   };
+  themeBtn.onclick = () => {
+    applyTheme(currentTheme() === "light" ? "dark" : "light");
+    repaintTheme();
+  };
+  // Until the user picks a side, the app follows the system — including a
+  // machine that switches at sunrise while the tab is open.
+  onThemeChange(repaintTheme);
 
   function renderLoopChips() {
     const run = store.run;
@@ -1011,18 +1105,74 @@ export function mountApp(root: HTMLElement): Store {
   // result lands or the computing flag flips — not on every tab switch.
   let lastResult: object | undefined;
   let lastComputing: boolean | undefined;
+  // ── plot scales and the phase portrait ──
+  // A model whose series span orders of magnitude is unreadable on one linear
+  // axis, and a limit cycle is invisible on a time plot however it is scaled.
+  const logYEl = $<HTMLInputElement>("#logY");
+  const phaseXEl = $<HTMLSelectElement>("#phaseX");
+  const phaseYEl = $<HTMLSelectElement>("#phaseY");
+  logYEl.onchange = () => store.setLogY(logYEl.checked);
+
+  const applyPhase = () => {
+    const x = phaseXEl.value, y = phaseYEl.value;
+    store.setPhase(x && y ? { x, y } : null);
+  };
+  phaseXEl.onchange = applyPhase;
+  phaseYEl.onchange = applyPhase;
+
+  /** Repopulate the phase pickers from the current run, keeping any live choice. */
+  function refreshPhasePickers() {
+    const names = store.run.result?.names ?? [];
+    for (const [el, blank] of [[phaseXEl, "— time —"], [phaseYEl, "—"]] as const) {
+      const keep = el.value;
+      el.innerHTML = `<option value="">${blank}</option>` +
+        names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");
+      if (names.includes(keep)) el.value = keep;
+    }
+    // The store drops a phase pair whose series an edit removed; mirror that.
+    if (!store.phase) { phaseXEl.value = ""; phaseYEl.value = ""; }
+    logYEl.checked = store.logY;
+  }
+
+  // ── exporting the results ──
+  // The model text could always leave (download, link, clipboard); the numbers
+  // and the pictures could not, which is a dead end at exactly the point the
+  // work becomes worth showing someone.
+  $<HTMLButtonElement>("#csvBtn").onclick = () => {
+    const r = store.run.result;
+    if (!r) { ovMsg.textContent = "export: run a model first"; return; }
+    // The visible series, in the run's own order — the same columns the plot
+    // shows, so the file matches the picture it came from.
+    const names = r.names.filter((n) => store.visible.has(n));
+    const csv = resultCsv(r.t, r.series, names.length ? names : r.names);
+    download(new Blob([csv], { type: "text/csv" }), `${modelSlug(store.source)}.csv`);
+  };
+  $<HTMLButtonElement>("#pngBtn").onclick = () => {
+    void downloadCanvasPng($<HTMLCanvasElement>("#plot"), `${modelSlug(store.source)}-plot.png`)
+      .catch((e: Error) => { ovMsg.textContent = `export: ${e.message}`; });
+  };
+
   const busyEl = $<HTMLElement>("#busy");
+  // Terminating the worker is the only way to stop a synchronous integration
+  // loop; the store owns that, so the button is a one-liner.
+  $<HTMLButtonElement>("#cancelRun").onclick = () => store.cancel();
   store.subscribe(() => {
     if (store.run.result !== lastResult || store.computing !== lastComputing) {
       lastResult = store.run.result;
       lastComputing = store.computing;
       busyEl.hidden = !store.computing;
       renderStructure();
+      refreshPhasePickers();
       syncFrameUI();
     }
-    root.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((b) =>
-      b.classList.toggle("active", b.dataset.tab === store.tab),
-    );
+    root.querySelectorAll<HTMLButtonElement>(".tabs button").forEach((b) => {
+      const on = b.dataset.tab === store.tab;
+      b.classList.toggle("active", on);
+      // A tablist is one tab stop: arrow keys move between tabs, Tab leaves the
+      // list. That only works if exactly one button is focusable at a time.
+      b.setAttribute("aria-selected", String(on));
+      b.tabIndex = on ? 0 : -1;
+    });
     root.querySelectorAll<HTMLElement>(".view").forEach((v) =>
       v.classList.toggle("hidden", v.id !== "view-" + store.tab),
     );
@@ -1079,13 +1229,20 @@ export function mountApp(root: HTMLElement): Store {
     if (store.tab === "diagram") diagram.render(store);
   });
 
-  // boot — a model in the URL hash (a shared link) wins over the default example
+  // boot — precedence is deliberate: a shared link is a request for *that*
+  // model, and beats what this browser was last doing; the autosave beats the
+  // default example, so a reload of a tab nobody shared does not lose the work.
   const shared = readHash();
-  editor.setValue(shared ?? DEFAULT_EXAMPLE.source);
-  exampleSel.value = shared ? "" : DEFAULT_EXAMPLE.name;
+  const restored = shared ? null : readAutosave();
+  editor.setValue(shared ?? restored ?? DEFAULT_EXAMPLE.source);
+  exampleSel.value = shared || restored ? "" : DEFAULT_EXAMPLE.name;
   rebuild();
   resetHistory();
   store.setTab("plot");
+  // The model we opened with is the first recent; later ones are recorded when
+  // a *different* model is loaded, so an editing session stays one entry.
+  pushRecent(src.value);
+  renderRecents();
 
   // first visit (and not arriving via a shared link): offer the tour once
   try {
@@ -1101,11 +1258,11 @@ export function mountApp(root: HTMLElement): Store {
 // ── transport widget ─────────────────────────────────────────────────────────
 function buildTransport(el: HTMLElement, store: Store) {
   el.innerHTML = `
-    <button class="tbtn" data-act="start" title="to start">⏮</button>
-    <button class="tbtn" data-act="play" title="play/pause">▶</button>
-    <button class="tbtn" data-act="end" title="to end">⏭</button>
-    <input type="range" min="0" max="1" step="1" value="0" />
-    <span class="clock">t = 0</span>`;
+    <button class="tbtn" data-act="start" title="to start" aria-label="jump to the start of the run">⏮</button>
+    <button class="tbtn" data-act="play" title="play/pause" aria-label="play or pause the run">▶</button>
+    <button class="tbtn" data-act="end" title="to end" aria-label="jump to the end of the run">⏭</button>
+    <input type="range" min="0" max="1" step="1" value="0" aria-label="step through the run" />
+    <span class="clock" role="status" aria-live="off">t = 0</span>`;
   const slider = el.querySelector("input") as HTMLInputElement;
   const clock = el.querySelector(".clock")!;
   const playBtn = el.querySelector('[data-act="play"]') as HTMLButtonElement;
@@ -1149,9 +1306,11 @@ const SHELL = `
   <h1><b>flow</b>loom</h1>
   <span class="tag">think in systems — as text, with AI · stocks · flows · loops, simulated</span>
   <span class="spacer"></span>
-  <button id="theme" class="ghost" title="toggle light / dark theme">🌙</button>
+  <button id="theme" class="ghost" title="toggle light / dark theme" aria-label="toggle light or dark theme">🌙</button>
   <label class="tag" for="example">example</label>
   <select id="example" data-help="ui:example"></select>
+  <label class="tag" for="recent">recent</label>
+  <select id="recent" data-help="ui:recent" title="models you had open in this browser"></select>
   <div class="learn-wrap">
     <button id="learn" class="ghost" data-help="ui:learn">？ Learn</button>
     <div id="learnMenu" class="learn-menu"></div>
@@ -1169,32 +1328,32 @@ const SHELL = `
       <button id="numerics" class="ghost" title="do these numbers survive a smaller dt?" data-help="ui:numerics">⚖ Check&nbsp;numbers</button>
       <button id="copy" class="ghost" title="copy model text" data-help="ui:copy">⧉ Copy</button>
       <button id="share" class="ghost" title="copy a shareable link" data-help="ui:share">🔗 Share</button>
-      <button id="download" class="ghost" title="download .flow" data-help="ui:download">⤓</button>
-      <button id="open" class="ghost" title="open a .flow file" data-help="ui:open">📂</button>
+      <button id="download" class="ghost" title="download .flow" aria-label="download the model as a .flow file" data-help="ui:download">⤓</button>
+      <button id="open" class="ghost" title="open a .flow file" aria-label="open a .flow file" data-help="ui:open">📂</button>
       <input id="fileInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />
     </div>
-    <div class="editor-wrap"><textarea id="src" spellcheck="false"></textarea>
+    <div class="editor-wrap"><textarea id="src" spellcheck="false" aria-label="model source — the canonical .flow text"></textarea>
       <div class="ai-panel" id="aiPanel" hidden>
-        <div class="ai-head"><span class="ai-title">✨ Draft a model with AI</span><button class="ai-x" id="aiClose" title="close">✕</button></div>
+        <div class="ai-head"><span class="ai-title">✨ Draft a model with AI</span><button class="ai-x" id="aiClose" title="close" aria-label="close the AI draft panel">✕</button></div>
         <textarea id="aiPrompt" rows="3" spellcheck="false" placeholder="Describe a system in plain English… e.g. “a coffee shop where word-of-mouth drives growth but limited seating caps it”"></textarea>
         <input id="aiKey" type="password" spellcheck="false" placeholder="Anthropic API key (sk-ant-…)" autocomplete="off" />
-        <div class="ai-row"><span class="ai-msg" id="aiMsg"></span><span class="spacer"></span><button class="primary" id="aiGo">Generate →</button></div>
+        <div class="ai-row"><select id="aiModel" class="ai-model" title="which Claude model writes the draft" aria-label="AI model"></select><span class="ai-msg" id="aiMsg" role="status"></span><span class="spacer"></span><button class="primary" id="aiGo">Generate →</button></div>
         <div class="ai-foot">Your key is stored only in this browser and sent only to Anthropic. The model the AI writes is parsed, checked, and run right here — so you see exactly what it built.</div>
       </div>
     </div>
-    <div id="err" class="err"></div>
+    <div id="err" class="err" role="alert" aria-live="assertive"></div>
   </section>
   <section class="right">
-    <div id="busy" class="busy" hidden><span class="spin"></span> simulating large model in a worker…</div>
-    <div class="tabs">
-      <button data-tab="plot" class="active" data-help="ui:tab-plot">Plot</button>
-      <button data-tab="diagram" data-help="ui:tab-diagram">Diagram</button>
-      <button data-tab="loops" data-help="ui:tab-loops">Loops</button>
-      <button data-tab="table" data-help="ui:tab-table">Table</button>
-      <button data-tab="help" data-help="ui:tab-help">Format</button>
+    <div id="busy" class="busy" hidden role="status" aria-live="polite"><span class="spin"></span> simulating large model in a worker… <button id="cancelRun" class="ghost cancel-run" title="stop this run">Cancel</button></div>
+    <div class="tabs" role="tablist" aria-label="views">
+      <button data-tab="plot" class="active" role="tab" id="tab-plot" aria-controls="view-plot" aria-selected="true" data-help="ui:tab-plot">Plot</button>
+      <button data-tab="diagram" role="tab" id="tab-diagram" aria-controls="view-diagram" aria-selected="false" tabindex="-1" data-help="ui:tab-diagram">Diagram</button>
+      <button data-tab="loops" role="tab" id="tab-loops" aria-controls="view-loops" aria-selected="false" tabindex="-1" data-help="ui:tab-loops">Loops</button>
+      <button data-tab="table" role="tab" id="tab-table" aria-controls="view-table" aria-selected="false" tabindex="-1" data-help="ui:tab-table">Table</button>
+      <button data-tab="help" role="tab" id="tab-help" aria-controls="view-help" aria-selected="false" tabindex="-1" data-help="ui:tab-help">Format</button>
     </div>
-    <div class="view" id="view-plot">
-      <canvas id="plot" height="380"></canvas>
+    <div class="view" id="view-plot" role="tabpanel" aria-labelledby="tab-plot" tabindex="0">
+      <canvas id="plot" height="380" role="img" aria-label="plot of the series over time"></canvas>
       <div class="transport" id="transport-plot" data-help="ui:transport"></div>
       <div class="legend" id="legend"></div>
       <div class="plot-ctrls" id="plotCtrls">
@@ -1208,15 +1367,22 @@ const SHELL = `
         </label>
         <button id="scTableBtn" class="ghost" title="base vs every scenario, on the visible series" data-help="ui:scenario-table" hidden>▤ Scenarios table</button>
         <button id="clearOvBtn" class="ghost" title="remove all overlays" data-help="ui:clear-overlays" hidden>✕ overlays</button>
+        <label class="logy" data-help="ui:logy"><input type="checkbox" id="logY" /> log y</label>
+        <label class="phase-pick" data-help="ui:phase">◌ Phase
+          <select id="phaseX" title="x axis (— for the time series)"></select>
+          <select id="phaseY" title="y axis"></select>
+        </label>
+        <button id="csvBtn" class="ghost" title="download the visible series as CSV" data-help="ui:export-csv">⤓ CSV</button>
+        <button id="pngBtn" class="ghost" title="download the plot as a PNG" data-help="ui:export-png">⤓ PNG</button>
         <span id="calParams" class="cal-params" data-help="ui:calibrate" hidden></span>
-        <span id="ovMsg" class="ov-msg"></span>
+        <span id="ovMsg" class="ov-msg" role="status" aria-live="polite"></span>
         <input id="dataInput" type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" style="display:none" />
         <input id="cmpInput" type="file" accept=".flow,.txt,text/plain" style="display:none" />
       </div>
       <div class="sctable" id="scTable" hidden></div>
       <div class="tune" id="tuneWrap" hidden></div>
     </div>
-    <div class="view hidden" id="view-diagram">
+    <div class="view hidden" id="view-diagram" role="tabpanel" aria-labelledby="tab-diagram" tabindex="0">
       <p class="hint">Causal graph from the model's equations. <b style="color:var(--accent)">Boxes</b> are stocks (filling to their level),
         <b>pills</b> are flows/aux; <span style="color:var(--green)">green</span> links push the same direction,
         <span style="color:var(--red)">red</span> the opposite. <b>Scroll to zoom · drag to pan.</b></p>
@@ -1228,16 +1394,17 @@ const SHELL = `
         <span class="bsep"></span>
         <button data-tool="select" class="tool active">Select</button>
         <button data-tool="connect" class="tool">Connect</button>
-        <button id="signToggle" class="sign" title="sign of the wired flow">＋</button>
+        <button id="signToggle" class="sign" title="sign of the wired flow" aria-label="sign of the wired flow">＋</button>
         <span class="build-hint" id="buildHint">Click a node to edit it.</span>
       </div>
       <div class="canvas-wrap">
-        <svg id="diagram" height="460"></svg>
+        <svg id="diagram" height="460" role="img" aria-label="causal diagram of the stocks, flows and links"></svg>
         <div class="canvas-ctrls">
-          <button data-cv="edit" title="toggle edit mode">✎ Edit</button>
-          <button data-cv="fit" title="fit graph to view">⊡ Fit</button>
-          <button data-cv="in" title="zoom in">＋</button>
-          <button data-cv="out" title="zoom out">－</button>
+          <button data-cv="edit" title="toggle edit mode" aria-label="toggle diagram edit mode">✎ Edit</button>
+          <button data-cv="fit" title="fit graph to view" aria-label="fit the graph to the view">⊡ Fit</button>
+          <button data-cv="in" title="zoom in" aria-label="zoom in">＋</button>
+          <button data-cv="out" title="zoom out" aria-label="zoom out">－</button>
+          <button data-cv="svg" title="download the diagram as an SVG" aria-label="download the diagram as an SVG">⤓ SVG</button>
           <span class="zoomlbl">100%</span>
         </div>
         <div class="build-pop" id="buildPop" hidden>
@@ -1255,17 +1422,17 @@ const SHELL = `
       <div class="transport" id="transport-diagram" data-help="ui:transport"></div>
       <div class="loopchips" id="loopChips"></div>
     </div>
-    <div class="view hidden" id="view-loops">
+    <div class="view hidden" id="view-loops" role="tabpanel" aria-labelledby="tab-loops" tabindex="0">
       <p class="hint">Feedback loops, each labeled <b style="color:var(--green)">R</b> reinforcing or
         <b style="color:var(--warn)">B</b> balancing. Polarity is the product of link signs, read at every sampled point of the run —
         a gated loop engages when its gate opens (“from t=…”), a loop that changes sign is marked R~B, and loops whose links never move are listed as inactive.</p>
       <div id="loopsWrap"></div>
     </div>
-    <div class="view hidden" id="view-table">
+    <div class="view hidden" id="view-table" role="tabpanel" aria-labelledby="tab-table" tabindex="0">
       <p class="hint">Series sampled across the run. The highlighted row tracks the playback cursor.</p>
       <div id="tableWrap"></div>
     </div>
-    <div class="view hidden" id="view-help"><div id="helpWrap"></div></div>
+    <div class="view hidden" id="view-help" role="tabpanel" aria-labelledby="tab-help" tabindex="0"><div id="helpWrap"></div></div>
   </section>
 </main>
 <footer id="statusbar"></footer>`;

@@ -23,7 +23,7 @@ export interface ModelDescription {
   /** Measured inputs (`data` lines): points and the rule between them. */
   data: Array<{ name: string; points: number; from: number; to: number; hold: boolean; unit?: string; doc?: string }>;
   /** The model's own claims (`expect` lines): scenario (base = the model), metric, comparison, value, tolerance. */
-  expects: Array<{ scenario: string; metric: string; op: string; value: number; tol?: { value: number; pct: boolean }; doc?: string }>;
+  expects: Array<{ scenario: string; metric: string; op: string; value: number; tol?: { value: number; pct: boolean }; doc?: string; always?: string }>;
   /** True when the model is a causal-loop sketch: links, no stock to integrate. */
   qualitative: boolean;
   settings: Model["settings"];
@@ -90,7 +90,7 @@ export function describeModel(model: Model): ModelDescription {
       const tb = model.tables.get(`${v.name}#data`)!;
       return { name: v.name, points: tb.points.length, from: tb.points[0]![0], to: tb.points[tb.points.length - 1]![0], hold: tb.hold === true, ...(v.unit ? { unit: v.unit } : {}), ...(v.doc ? { doc: v.doc } : {}) };
     }),
-    expects: model.expects.map((e) => ({ scenario: e.scenario ?? "base", metric: e.metric, op: e.op, value: e.value, ...(e.tol ? { tol: e.tol } : {}), ...(e.doc ? { doc: e.doc } : {}) })),
+    expects: model.expects.map((e) => ({ scenario: e.scenario ?? "base", metric: e.metric, op: e.op, value: e.value, ...(e.tol ? { tol: e.tol } : {}), ...(e.doc ? { doc: e.doc } : {}), ...(e.always ? { always: printExpr(e.always) } : {}) })),
     qualitative: model.stocks.length === 0 && model.links.length > 0,
     settings: model.settings,
     plot: model.plot,

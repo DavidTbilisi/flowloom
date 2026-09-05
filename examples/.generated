@@ -1,0 +1,14 @@
+# written by npm run gen:examples — do not edit
+logistic-growth.flow
+predator-prey.flow
+sir-epidemic.flow
+coffee-cooling.flow
+compound-savings.flow
+inventory-delay.flow
+bathtub-lookup.flow
+cashflow-escaping-the-rat-race.flow
+noisy-savings-stochastic.flow
+regions-array-subscripts.flow
+calibration-demo.flow
+family-budget-meadows-ladder.flow
+causal-loop-sketch-no-equations.flow

@@ -170,11 +170,30 @@ function rewriteExpr(e: Expr, ctx: RewriteCtx, recur: (e: Expr) => Expr): Expr {
           return makeFixed("prev", args[0]!, null, args[1], ctx);
         case "delay_fixed":
           return makeFixed("fixed", args[0]!, args[1]!, args[2], ctx);
+        case "initial":
+          return makeInitial(args[0]!, internal, fresh);
         default:
           return { ...e, args };
       }
     }
   }
+}
+
+/**
+ * `initial(expr)` — the value of `expr` at `t = start`, held for the whole run.
+ *
+ * A stock with a zero rate is exactly that, which is why this is a compile-time
+ * rewrite like every other stateful builtin rather than a special case in the
+ * integrator: the value is computed once by `initStateInto` (which already
+ * resolves an initial value that depends on other initial values), and then
+ * nothing moves it. Vensim's INITIAL / ACTIVE INITIAL, and the way to write "the
+ * starting population" or "the price when the policy began" without duplicating
+ * the expression as a param.
+ */
+function makeInitial(expr: Expr, internal: StateVar[], fresh: () => string): Expr {
+  const name = fresh();
+  internal.push({ name, isInternal: true, initExpr: expr, rateExpr: num(0) });
+  return id(name);
 }
 
 // First-order exponential smooth: dS/dt = (input - S)/τ, output = S.

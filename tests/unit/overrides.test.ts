@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { parseModel } from "../../src/lang/index.js";
-import { applyOverride, simulate } from "../../src/engine/index.js";
+import { parseModel, SETTING_KEYS } from "../../src/lang/index.js";
+import { applyOverride, applyScenario, simulate } from "../../src/engine/index.js";
 
 // CONTRACT: `--set k=v` (CLI) / `set` (MCP) rebinds a param, a stock init, or a
 // sim setting on the parsed Model via a constant-folded AST edit — an agent's
@@ -67,7 +67,10 @@ describe("applyOverride: errors teach the fix", () => {
   });
 
   it("an unknown key with no near match still gets a recovery pointer", () => {
-    expect(() => applyOverride(model(), "Popultion=50")).toThrow(/named "Popultion" \(overridable: params, stock inits, and dt\/to\/start\/seed\/method\)/);
+    // Derived from SETTING_KEYS rather than spelled out: adding a settable key
+    // is a language change, not a reason for this test to rot.
+    expect(() => applyOverride(model(), "Popultion=50"))
+      .toThrow(`no param, stock, or sim setting named "Popultion" (overridable: params, stock inits, and ${SETTING_KEYS.join("/")})`);
   });
 
   it("a genuinely non-numeric value for a real param is reported as such", () => {
@@ -76,5 +79,71 @@ describe("applyOverride: errors teach the fix", () => {
 
   it("an invalid method value is rejected with the allowed set", () => {
     expect(() => applyOverride(model(), "method=heun")).toThrow(/method must be euler, rk4 or map/);
+  });
+});
+
+describe("timeunit is overridable", () => {
+  // It changes no arithmetic — only what the units checker reads `/time` as —
+  // but a scenario that reframes a model from weeks to months has to say so,
+  // and `timeunit` was the one sim setting missing from SETTING_KEYS.
+  const src = "stock Cash [usd] = 0\nchange(Cash) = 1\nsim dt=1 to=2 timeunit=week";
+
+  it("rebinds the setting", () => {
+    const m = parseModel(src);
+    expect(m.settings.timeunit).toBe("week");
+    expect(applyOverride(m, "timeunit=month")).toEqual([]);
+    expect(m.settings.timeunit).toBe("month");
+  });
+
+  it("a scenario can set it", () => {
+    const m = parseModel(`${src}\nscenario monthly timeunit=month`);
+    applyScenario(m, "monthly");
+    expect(m.settings.timeunit).toBe("month");
+  });
+
+  it("rejects an empty name", () => {
+    expect(() => applyOverride(parseModel(src), "timeunit=")).toThrow(/timeunit must be a name/);
+  });
+});
+
+describe("swapping a lookup table", () => {
+  // A graphical function is often the *policy* — a response curve, a tax
+  // schedule, a dose–effect shape — so "what if the curve were steeper" is a
+  // scenario, and the alternative belongs in the text beside the original.
+  const src = `table response = (0,0) (10,10) (20,20)
+table steep = (0,0) (10,25) (20,60)
+stock Out = 0
+param drive = 10
+change(Out) = response(drive)
+scenario aggressive response=steep
+sim dt=1 to=3 method=euler
+plot Out`;
+
+  const final = (m: ReturnType<typeof parseModel>) => simulate(m).series.get("Out")!.at(-1)!;
+
+  it("takes the other table's shape and keeps the name", () => {
+    const m = parseModel(src);
+    expect(final(m)).toBe(30);          // 3 steps × response(10) = 10
+    expect(applyOverride(m, "response=steep")).toEqual([]);
+    expect(final(m)).toBe(75);          // 3 steps × steep(10) = 25
+    expect(m.tables.get("response")!.name).toBe("response"); // call sites unchanged
+  });
+
+  it("works through a scenario line", () => {
+    const m = parseModel(src);
+    applyScenario(m, "aggressive");
+    expect(final(m)).toBe(75);
+  });
+
+  it("only accepts another table", () => {
+    expect(() => applyOverride(parseModel(src), "response=3"))
+      .toThrow(/"response" is a lookup table, so it can only be set to another table/);
+    expect(() => applyOverride(parseModel(src), "response=steap"))
+      .toThrow(/did you mean "steep"/);
+  });
+
+  it("checks the scenario binding at parse time", () => {
+    expect(() => parseModel(src.replace("response=steep", "response=flat")))
+      .toThrow(/'response' is a lookup table.*have: steep/s);
   });
 });

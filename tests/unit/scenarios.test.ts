@@ -82,7 +82,7 @@ describe("scenario", () => {
 
   it("validates every key and value at parse time", () => {
     const base = `stock S = 0\nparam k = 1\nswitch on1 = on\nchange(S) = k\n`;
-    expect(() => parseModel(base + "scenario a kk=2")).toThrow(/no param, switch, stock, or sim setting named 'kk' — did you mean 'k'/);
+    expect(() => parseModel(base + "scenario a kk=2")).toThrow(/no param, switch, stock, table, or sim setting named 'kk' — did you mean 'k'/);
     expect(() => parseModel(base + "scenario a on1=0.5")).toThrow(/switch 'on1' must be on or off/);
     expect(() => parseModel(base + "scenario a k=fast")).toThrow(/'k' must be a number/);
     expect(() => parseModel(base + "scenario a method=leapfrog")).toThrow(/method must be euler, rk4 or map/);

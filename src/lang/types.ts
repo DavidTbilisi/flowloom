@@ -72,6 +72,10 @@ export interface RateDecl {
   /** Stock this is the derivative of. */
   target: string;
   expr: Expr;
+  /** Subscripts written on the target, `change(Pop[region])`. Kept so they can
+   *  be checked against the stock's own dimensions — writing the wrong dimension
+   *  name, or the right ones in the wrong order, used to parse and be discarded. */
+  subs?: string[];
   loc: Loc;
 }
 
@@ -162,6 +166,15 @@ export interface LinkDecl {
 export interface ExpectDecl {
   /** Scenario to apply first; undefined = the base model. */
   scenario?: string;
+  /**
+   * `expect always <expr>` — a claim about *every* recorded step rather than a
+   * reduction of the run to one number. `min:Inventory >= 0` can say a stock
+   * never goes negative; nothing could say `Inventory <= Capacity` (two series),
+   * state an implication, or report *where* a claim first broke. When this is
+   * set, `metric` holds the printed expression as a label and `op`/`value` are
+   * the fixed "is true (1)" shape.
+   */
+  always?: Expr;
   metric: string;
   op: "<" | "<=" | ">" | ">=" | "==";
   value: number;
@@ -178,6 +191,10 @@ export interface TableDecl {
   /** Step-hold instead of piecewise-linear: the value at x is the last point at
    *  or before x (a sampled series holds between samples). */
   hold?: true;
+  /** Continue the slope of the end segment past the ends instead of clamping.
+   *  Off by default — a curve says nothing outside the range it was fitted over,
+   *  and clamping is the honest answer there. */
+  extrapolate?: true;
   loc: Loc;
 }
 
@@ -190,6 +207,11 @@ export interface SimSettings {
   timeunit?: string;
   /** RNG seed for random*() builtins. Defaults to 0 ⇒ runs are reproducible. */
   seed?: number;
+  /** How often to *record* a sample, in time units (Vensim's SAVEPER). The model
+   *  still integrates at `dt` — this only thins the output, which is what makes
+   *  a small step affordable on a long horizon. Defaults to `dt` (record every
+   *  step). Rounded to a whole number of steps, minimum one. */
+  savper?: number;
   /** Where the `sim` line sits, so a settings-level diagnostic can point at it. */
   loc?: Loc;
 }

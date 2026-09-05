@@ -168,9 +168,13 @@ export function freeVars(e: Expr, out: Set<string> = new Set()): Set<string> {
       freeVars(e.right, out);
       break;
     case "call":
-      // function name is not a free variable; its args may be. sum()'s trailing
-      // arguments are axis (dimension) labels, not value references — skip them.
-      if (e.name.toLowerCase() === "sum") {
+      // The function name is not a free variable; its args may be. sum()/mean()
+      // are only ever array reducers, so their trailing arguments are axis
+      // (dimension) labels rather than value references — skip them. min()/max()
+      // also have a scalar meaning, so their args are always walked; a dim name
+      // that surfaces from one is a declared name, and validateSubscripts is
+      // where a dimension used as a value is caught.
+      if (e.name.toLowerCase() === "sum" || e.name.toLowerCase() === "mean") {
         if (e.args[0]) freeVars(e.args[0], out);
       } else {
         for (const a of e.args) freeVars(a, out);
@@ -183,13 +187,16 @@ export function freeVars(e: Expr, out: Set<string> = new Set()): Set<string> {
 /**
  * Builtins whose first argument is read *across a time boundary*: the value they
  * return at step i depends on the argument at earlier steps only, never on its
- * value at step i. They are therefore legitimate ways to break an algebraic loop
+ * value at step i. `initial()` is the extreme case — it reads step 0 and nothing
+ * after — so it breaks an algebraic loop the same way a delay does, and a
+ * genuinely circular *initial* value is caught where every other one is, by
+ * `initStateInto` failing to settle. They are therefore legitimate ways to break an algebraic loop
  * (`a = smooth(b, τ)`, `b = a + 1` is fine — that's what a delay is for), so the
  * parser's instantaneous-dependency sort must not see through them. Mirrors the
  * engine's STATEFUL set (compile.ts rewrites these); kept here so src/lang stays
  * engine-free.
  */
-export const TIME_CROSSING = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3", "previous", "delay_fixed"]);
+export const TIME_CROSSING = new Set(["smooth", "smoothi", "smooth3", "delay1", "delay3", "previous", "delay_fixed", "initial"]);
 
 /** Names an expression depends on *instantaneously* (this step). Like freeVars,
  *  but the first argument of a time-crossing builtin is skipped — its other

@@ -9,6 +9,7 @@
 // can pin it in Node.
 
 import { BUILTINS, STATEFUL } from "../engine/index.js";
+import { REDUCERS } from "../lang/index.js";
 
 export type TokKind =
   | "keyword"
@@ -53,8 +54,13 @@ export const KEYWORDS = new Set([
 /** Engine-provided constants / clock identifiers a user can't redefine. */
 export const CONSTS = new Set(["PI", "E", "t", "time", "dt"]);
 
-/** Every builtin function name (stateless + the stateful delay/smooth family). */
-export const FUNCTIONS = new Set([...Object.keys(BUILTINS), ...STATEFUL]);
+/**
+ * Every builtin function name: stateless, the stateful delay/smooth family, and
+ * the array reducers — which live in scalarize rather than BUILTINS because they
+ * are lowered before anything evaluates, and were therefore the one group of
+ * callables the editor and the TextMate grammar never coloured.
+ */
+export const FUNCTIONS = new Set([...Object.keys(BUILTINS), ...STATEFUL, ...REDUCERS]);
 
 const isIdentStart = (c: string) => /[A-Za-z_]/.test(c);
 const isIdentPart = (c: string) => /[A-Za-z0-9_]/.test(c);

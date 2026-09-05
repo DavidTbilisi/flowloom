@@ -3,7 +3,7 @@ import { parseModel } from "../../src/lang/index.js";
 import { compile, buildPlan, tsBackend, runPlan, simulate, simulateAsync, worthWasm } from "../../src/engine/index.js";
 import { createWasmBackend, wasmAvailable } from "../../src/engine/wasm/backend.js";
 import { compileWasm } from "../../src/engine/wasm/codegen.js";
-import { buildModule, OP, uLEB, f64Bytes } from "../../src/engine/wasm/encoder.js";
+import { buildModule, OP, uLEB, f64Bytes, IMPORTS } from "../../src/engine/wasm/encoder.js";
 import { EXAMPLES } from "../../src/examples/index.js";
 
 // The WASM backend must reproduce the TS backend's numbers. The TS backend is
@@ -27,9 +27,9 @@ describe("WASM encoder", () => {
     ];
     const mod = new WebAssembly.Module(buildModule(body, 1) as BufferSource);
     const noop = () => 0;
-    const e = Object.fromEntries(
-      ["sin", "cos", "tan", "exp", "ln", "log10", "sign", "round", "pow", "rem", "step", "pulse", "ramp", "lookup", "runif", "rnorm"].map((n) => [n, noop]),
-    );
+    // Derived from IMPORTS rather than spelled out: adding a helper (a new
+    // distribution, say) must not leave this test asserting an old ABI.
+    const e = Object.fromEntries(IMPORTS.map((n) => [n, noop]));
     const inst = new WebAssembly.Instance(mod, { e });
     const mem = new Float64Array((inst.exports.memory as WebAssembly.Memory).buffer);
     (inst.exports.deriv as (t: number) => void)(21);

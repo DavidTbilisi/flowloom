@@ -62,7 +62,8 @@ function varLine(v: VarDecl): string {
 }
 
 function tableLine(t: TableDecl): string {
-  return `table ${t.name} = ${t.points.map(([x, y]) => `(${x}, ${y})`).join(" ")}`;
+  const how = `${t.hold ? " hold" : ""}${t.extrapolate ? " extrapolate" : ""}`;
+  return `table ${t.name} = ${t.points.map(([x, y]) => `(${x}, ${y})`).join(" ")}${how}`;
 }
 
 /**
@@ -87,6 +88,7 @@ function simLine(m: Model): string {
   bits.push(`method=${s.method}`);
   if (s.timeunit) bits.push(`timeunit=${s.timeunit}`);
   if (s.seed !== undefined) bits.push(`seed=${s.seed}`);
+  if (s.savper !== undefined) bits.push(`savper=${s.savper}`);
   return `sim ${bits.join(" ")}`;
 }
 
@@ -131,8 +133,13 @@ export function printModel(model: Model, source?: string): string {
     add(sc.loc.line, `scenario ${sc.name} ${sc.sets.map((b) => `${b.key}=${b.value}`).join(" ")}${comment(sc.doc, sc.rung)}`);
   }
   for (const e of model.expects) {
+    const scope = e.scenario ? `${e.scenario} ` : "";
+    if (e.always) {
+      add(e.loc.line, `expect ${scope}always ${printExpr(e.always)}${comment(e.doc, undefined)}`);
+      continue;
+    }
     const tol = e.tol ? ` ± ${e.tol.pct ? `${clean(e.tol.value * 100)}%` : e.tol.value}` : "";
-    add(e.loc.line, `expect ${e.scenario ? `${e.scenario} ` : ""}${e.metric} ${e.op} ${e.value}${tol}${comment(e.doc, undefined)}`);
+    add(e.loc.line, `expect ${scope}${e.metric} ${e.op} ${e.value}${tol}${comment(e.doc, undefined)}`);
   }
 
   if (source) lines.push(...sourceComments(source, model));

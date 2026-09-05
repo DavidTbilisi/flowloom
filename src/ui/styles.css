@@ -202,6 +202,13 @@ canvas { width: 100%; display: block; background: var(--panel); border: 1px soli
 .ai-panel .ai-row .spacer { flex: 1; }
 .ai-panel .ai-msg { color: var(--warn); font: 12px var(--mono); min-height: 16px; }
 .ai-panel .ai-foot { color: var(--dim); font-size: 11px; line-height: 1.45; }
+.ai-panel .ai-model {
+  width: auto; flex: 0 0 auto; font: 11px var(--mono); background: var(--editor-bg);
+  color: var(--dim); border: 1px solid var(--line); border-radius: 4px; padding: 2px 4px;
+}
+/* Generate doubles as Cancel while a draft is streaming. */
+.ai-panel #aiGo.cancel { background: var(--warn); border-color: var(--warn); }
+.busy .cancel-run { margin-left: 8px; padding: 1px 8px; font-size: 11px; }
 
 /* ── loops: inactive + flipping ───────────────────────────────────────── */
 .loopnote { color: var(--dim); font-size: 11px; }
@@ -417,3 +424,47 @@ a { color: var(--accent); }
 .tour-nav { display: flex; gap: 8px; justify-content: flex-end; }
 .tour-nav button { padding: 5px 14px; }
 .tour-next.waiting { opacity: .5; cursor: default; }
+
+/* ── Responsive: the shell was a fixed two-column grid ─────────────────────
+   `minmax(340px, 40%) 1fr` gives a 375px phone about 35px of right pane, which
+   is not a narrow layout — it is an unusable one. Below 900px the two panes
+   stack instead, editor first (the text is canonical, so it is the thing you
+   came for) with the views under it. Nothing is hidden; the same controls wrap.  */
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; grid-template-rows: minmax(220px, 45vh) 1fr; }
+  .left { border-right: 0; border-bottom: 1px solid var(--line); }
+  header { flex-wrap: wrap; row-gap: 4px; }
+  header .tag { display: none; }              /* the tagline is the first thing to go */
+  .toolbar { padding: 6px 8px; gap: 6px; }
+  .view { padding: 8px; }
+}
+
+@media (max-width: 560px) {
+  /* Labels on the toolbar's number inputs cost more than they explain at this
+     width; the inputs keep their title/aria-label. */
+  .toolbar label { font-size: 11px; }
+  .toolbar input[type=number] { width: 48px; }
+  .plot-ctrls { gap: 6px; }
+  .canvas-ctrls { flex-wrap: wrap; }
+}
+
+/* ── Motion ────────────────────────────────────────────────────────────────
+   The animated diagram and the playback clock are the point of the app, so
+   this does not try to stop them — it removes the *decorative* motion (the busy
+   spinner, panel transitions) that a reader who asked for less of it did not
+   ask for. The transport controls remain the way to run the animation by hand. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .busy .spin { border-top-color: var(--accent); }  /* a static ring, still visible */
+}
+
+/* log-y toggle and phase-portrait pickers, in the plot control row */
+.plot-ctrls .logy { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); cursor: pointer; }
+.plot-ctrls .logy input { margin: 0; }
+.plot-ctrls .phase-pick { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--dim); }
+.plot-ctrls .phase-pick select { max-width: 120px; font-size: 11px; }

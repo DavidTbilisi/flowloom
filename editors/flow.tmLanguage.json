@@ -27,7 +27,7 @@
     },
     {
       "name": "support.function.flow",
-      "match": "\\b(delay_fixed|previous|smoothi|smooth3|smooth|delay1|delay3|log10|floor|round|clamp|pulse|sqrt|ceil|sign|step|ramp|min|max|abs|exp|log|pow|sin|cos|tan|ln|if)(?=\\s*\\()"
+      "match": "\\b(delay_fixed|previous|smoothi|smooth3|initial|smooth|delay1|delay3|log10|floor|round|clamp|pulse|sqrt|ceil|sign|step|ramp|mean|min|max|abs|exp|log|pow|sin|cos|tan|sum|ln|if)(?=\\s*\\()"
     },
     {
       "name": "constant.language.flow",

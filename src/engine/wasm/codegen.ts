@@ -22,6 +22,7 @@ export interface WasmProgram {
   tablePoints: ReadonlyArray<readonly [number, number]>[];
   /** Per table id: step-hold (a `data` series) rather than interpolate. */
   tableHold: boolean[];
+  tableExtrapolate: boolean[];
   /** f64 slots in the scope vector + rates region (for memory sizing). */
   totalSlots: number;
   scopeSlots: number;
@@ -32,6 +33,7 @@ export function compileWasm(plan: SimPlan): WasmProgram {
   const tableIds = new Map<string, number>();
   const tablePoints: ReadonlyArray<readonly [number, number]>[] = [];
   const tableHold: boolean[] = [];
+  const tableExtrapolate: boolean[] = [];
   const tableId = (name: string): number => {
     let id = tableIds.get(name);
     if (id === undefined) {
@@ -40,6 +42,7 @@ export function compileWasm(plan: SimPlan): WasmProgram {
       const t = plan.compiled.tables.get(name)!;
       tablePoints.push(t.points);
       tableHold.push(t.hold === true);
+      tableExtrapolate.push(t.extrapolate === true);
     }
     return id;
   };
@@ -62,11 +65,22 @@ export function compileWasm(plan: SimPlan): WasmProgram {
     out.push(OP.f64_const, ...f64Bytes(k));
     if (nm === "random") {
       out.push(OP.f64_const, ...f64Bytes(0), OP.f64_const, ...f64Bytes(1), OP.call, ...uLEB(FUNC.runif!));
-    } else {
-      emit(e.args[0]!);
-      emit(e.args[1]!);
-      out.push(OP.call, ...uLEB(nm === "random_uniform" ? FUNC.runif! : FUNC.rnorm!));
+      return;
     }
+    // The helper is the very same rng.ts function the TS backend calls, so the
+    // arguments are pushed in the same order and the numbers match by
+    // construction rather than by a second implementation agreeing.
+    const helper: Record<string, string> = {
+      random_uniform: "runif",
+      random_normal: "rnorm",
+      random_lognormal: "rlnorm",
+      random_triangular: "rtri",
+      random_exponential: "rexp",
+      random_poisson: "rpois",
+      random_normal_truncated: "rtnorm",
+    };
+    for (const a of e.args) emit(a);
+    out.push(OP.call, ...uLEB(FUNC[helper[nm]!]!));
   };
 
   // emit code that leaves the value of `e` on the stack
@@ -148,7 +162,7 @@ export function compileWasm(plan: SimPlan): WasmProgram {
 
   const totalSlots = plan.size + plan.rateExprs.length;
   const pages = Math.max(1, Math.ceil((totalSlots * 8) / 65536));
-  return { bytes: buildModule(out, pages), tablePoints, tableHold, totalSlots, scopeSlots: plan.size };
+  return { bytes: buildModule(out, pages), tablePoints, tableHold, tableExtrapolate, totalSlots, scopeSlots: plan.size };
 }
 
 const NATIVE_UNARY: Record<string, number> = {

@@ -24,6 +24,9 @@ export interface SimResult {
   varNames: string[];
   dt: number;
   method: "euler" | "rk4" | "map";
+  /** Time between recorded samples, when `sim savper=` thinned the output. The
+   *  run still integrated at `dt`; absent means every step was kept. */
+  savper?: number;
   /** Set if the run halted early (e.g. a stock went non-finite). */
   note?: string;
   /** Stocks declared `>= 0` whose floor engaged: their outflow was truncated
@@ -100,6 +103,7 @@ export function runPlan(
     varNames: plan.varNames,
     dt,
     method,
+    ...(model.settings.savper !== undefined ? { savper: Math.max(1, Math.round(model.settings.savper / dt)) * dt } : {}),
     ...(note ? { note } : {}),
     ...(out.clamped ? { clamped: out.clamped } : {}),
   };
