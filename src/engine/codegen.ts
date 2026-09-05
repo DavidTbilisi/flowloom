@@ -47,6 +47,10 @@ export interface SimPlan {
   /** Output series names and the scope slot to read each from. */
   outNames: string[];
   outSlots: number[];
+  /** Indices into `stateSlots` of the stocks declared `>= 0`. The integrator
+   *  holds these at zero after each step; every backend shares runIntegration,
+   *  so the floor cannot drift between TS and WASM. */
+  flooredStates: number[];
   /** Names of the user stocks (subset of outNames, first). */
   stockNames: string[];
   varNames: string[];
@@ -126,6 +130,7 @@ export function buildPlan(c: Compiled): SimPlan {
     initExprs: c.state.map((s) => s.initExpr),
     outNames,
     outSlots,
+    flooredStates: c.state.flatMap((st, j) => (st.nonNegative ? [j] : [])),
     stockNames,
     varNames,
     compiled: c,
@@ -286,6 +291,10 @@ export interface RunResult {
   t: number[];
   series: Map<string, number[]>;
   note?: string;
+  /** Stocks declared `>= 0` whose floor actually engaged during the run — the
+   *  outflow was truncated there, so what left the stock is less than what the
+   *  rate asked for. Lint reports it; the modeller should know. */
+  clamped?: string[];
 }
 
 export function runIntegration(
@@ -313,6 +322,22 @@ export function runIntegration(
   const setState = (j: number, v: number) => { mem[plan.stateSlots[j]!] = v; };
   const getState = (j: number) => mem[plan.stateSlots[j]!]!;
 
+  // Stocks declared `>= 0` are physical quantities: an outflow cannot drain them
+  // past empty. We hold the *integrated* value at the floor after each completed
+  // step, which is what Vensim and Stella do — not a constrained integration.
+  // The difference matters and is not hidden: when the floor engages, less left
+  // the stock than the rate asked for, so mass is not conserved across that
+  // step. `clamped` records it and lint says so. RK4's sub-stages are left
+  // alone; clamping mid-stage would corrupt the weighted average rather than
+  // bound it.
+  const floors = plan.flooredStates;
+  const clampedAt = new Set<string>();
+  const applyFloors = () => {
+    for (const j of floors) {
+      if (getState(j) < 0) { setState(j, 0); clampedAt.add(plan.stockNames[j] ?? `state#${j}`); }
+    }
+  };
+
   // Fixed delays: one ring buffer per call site, `m` steps long. Before step i
   // the output slot is set to the input sampled at step i−m (or the init value
   // while i < m); after the step's first derivative evaluation the fresh input is
@@ -320,6 +345,10 @@ export function runIntegration(
   // sampled quantity on the time grid, not a continuous one (Vensim's DELAY
   // FIXED has the same semantics). Lengths are read once, at t=start.
   const fixed = fixedBuffers(plan, mem, dt);
+
+  // An initial value below the declared floor is clamped too, and recorded —
+  // otherwise t=start would report a value the stock is not allowed to hold.
+  if (floors.length) applyFloors();
 
   for (let i = 0; i <= steps; i++) {
     const time = start + i * dt;
@@ -365,9 +394,10 @@ export function runIntegration(
       for (let j = 0; j < ns; j++)
         setState(j, base[j]! + (dt / 6) * (k1[j]! + 2 * k2[j]! + 2 * k3[j]! + k4[j]!));
     }
+    if (floors.length) applyFloors();
   }
 
-  return { t, series, note };
+  return { t, series, note, ...(clampedAt.size ? { clamped: [...clampedAt] } : {}) };
 }
 
 interface FixedBuffer { out: number; in: number; m: number; init: number; buf: Float64Array }

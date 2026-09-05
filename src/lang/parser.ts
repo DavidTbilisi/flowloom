@@ -10,6 +10,7 @@ import {
   type ScenarioSet,
   type LinkDecl,
   type VarKind,
+  type RangeDecl,
   type SimSettings,
   type Diagnostic,
   type Loc,
@@ -74,7 +75,10 @@ export const SETTING_KEYS = ["dt", "to", "start", "seed", "method"] as const;
 const NAME = String.raw`[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*`;
 const RE = {
   dim: new RegExp(String.raw`^dim\s+(${NAME})\s*=\s*(.+)$`),
-  stock: new RegExp(String.raw`^stock\s+(${NAME})\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$`),
+  // `stock NAME [unit] >= 0 = init` — the optional floor sits between the unit
+  // and the `=`, where it reads as a property of the stock rather than of its
+  // initial value. Only `>= 0` is accepted (see parseFloor).
+  stock: new RegExp(String.raw`^stock\s+(${NAME})\s*(?:\[([^\]]*)\])?\s*(>=\s*[^=]+?)?\s*=\s*(.+)$`),
   rate: new RegExp(String.raw`^(?:change|d)\(\s*(${NAME})\s*(?:\[\s*[A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*\s*\])?\s*\)\s*=\s*(.+)$`),
   var: new RegExp(String.raw`^(flow|aux|param|const|switch)\s+(${NAME})\s*(?:\[([^\]]*)\])?\s*=\s*(.+)$`),
   table: new RegExp(String.raw`^table\s+(${NAME})\s*=\s*(.+)$`),
@@ -236,11 +240,12 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
       if (m.dims.has(name!)) push(m, "error", loc, `dim ${name} is defined twice`);
       m.dims.set(name!, { name: name!, elements, loc });
     } else if ((mt = line.match(RE.stock))) {
-      const [, name, unit, expr] = mt;
+      const [, name, unit, floor, expr] = mt;
       claim(m, name!, loc);
       const exprs = splitTopLevel(expr!).map((p) => parseExpr(p, lineNo));
       const s: StockDecl = { name: name!, initExpr: exprs[0]!, unit: unit?.trim(), doc, loc };
       if (exprs.length > 1) s.elemExprs = exprs;
+      if (floor !== undefined && parseFloor(m, floor, name!, loc)) s.nonNegative = true;
       m.stocks.push(s);
     } else if ((mt = line.match(RE.rate))) {
       const [, name, expr] = mt;
@@ -269,10 +274,12 @@ function parseLine(m: Raw, line: string, doc: string | undefined, lineNo: number
         return;
       }
       const kind: VarKind = kw === "const" ? "param" : (kw as VarKind);
-      const exprs = splitTopLevel(expr!).map((p) => parseExpr(p, lineNo));
+      const { body, range } = splitRange(m, kw!, name!, expr!, loc);
+      const exprs = splitTopLevel(body).map((p) => parseExpr(p, lineNo));
       const tag = extractRung(doc, m, loc);
       const v: VarDecl = { name: name!, kind, expr: exprs[0]!, unit: unit?.trim(), doc: tag.doc, loc };
       if (kw === "const") v.constant = true;
+      if (range) v.range = range;
       if (tag.rung !== undefined) v.rung = tag.rung;
       if (exprs.length > 1) v.elemExprs = exprs;
       m.vars.push(v);
@@ -363,7 +370,65 @@ function parseTable(name: string, body: string, loc: Loc): TableDecl {
   return { name, points, loc };
 }
 
+/** `± tol`, `± pct%`, or `in lo..hi` — the clause that says how well a knob is
+ *  known. Both spellings of ± (`±`, `+/-`) are shapes the expression grammar
+ *  cannot produce, which is what makes splitting them off unambiguous; `+-`
+ *  deliberately is *not* accepted, because `5 +- 1` is already a valid
+ *  expression meaning 4, and silently changing that would be worse than asking
+ *  for one more character. */
+const RANGE = /^(.*?)\s*(?:(±|\+\/-)\s*(\S+)|\bin\s+(-?[\d.]+(?:[eE][+-]?\d+)?)\s*\.\.\s*(-?[\d.]+(?:[eE][+-]?\d+)?))\s*$/;
+/** `5 +- 1` parses as 5 + (−1). Almost nobody means that; say so once. */
+const AMBIGUOUS_PM = /^\s*-?[\d.]+(?:[eE][+-]?\d+)?\s+\+-\s*-?[\d.]+/;
+
+/**
+ * Split a trailing range clause off a declaration's right-hand side.
+ *
+ * A range is a property of a *knob*: how well the number is known. It is
+ * meaningless on a computed value, contradictory on a `const` (declared not to
+ * be a knob) and impossible on a two-state `switch`, so each of those is an
+ * error naming what to do instead.
+ */
+function splitRange(m: Raw, kw: string, name: string, rhs: string, loc: Loc): { body: string; range?: RangeDecl } {
+  const mt = rhs.match(RANGE);
+  if (!mt) {
+    if (AMBIGUOUS_PM.test(rhs)) push(m, "warning", loc, `${kw} ${name}: '+-' is subtraction here (a plain expression), not a range — write '±' or '+/-' if you meant "give or take"`);
+    return { body: rhs };
+  }
+  const [, body, pm, tolTok, loTok, hiTok] = mt;
+  if (kw !== "param") {
+    const why = kw === "const" ? "a const is declared *not* to be a knob — use `param` if it should vary" : kw === "switch" ? "a switch is two-state; its uncertainty is which state, which `policies` already enumerates" : `a range says how well a knob is known, and ${name} is computed from other values`;
+    push(m, "error", loc, `${kw} ${name}: a range belongs on a param — ${why}`);
+    return { body: body! };
+  }
+  if (pm !== undefined) {
+    const pct = tolTok!.endsWith("%");
+    const v = Number(pct ? tolTok!.slice(0, -1) : tolTok);
+    if (!Number.isFinite(v) || v < 0) { push(m, "error", loc, `param ${name}: a tolerance must be a non-negative number, got '${tolTok}'`); return { body: body! }; }
+    return { body: body!, range: { kind: "tol", value: pct ? v / 100 : v, pct } };
+  }
+  const lo = Number(loTok), hi = Number(hiTok);
+  if (!(lo < hi)) { push(m, "error", loc, `param ${name}: a range needs lo < hi, got '${loTok}..${hiTok}'`); return { body: body! }; }
+  return { body: body!, range: { kind: "bounds", lo, hi } };
+}
+
+/**
+ * `stock X >= 0 = …` — the only floor the language accepts.
+ *
+ * Zero is the bound that means something: it is what makes a stock a physical
+ * quantity (an inventory, a workforce, a queue) rather than a signed number. A
+ * floor at any other level is a policy, not a property, and belongs in the
+ * outflow where the reader can see it — so we reject it with that advice rather
+ * than growing a general constraint system nothing else in the engine models.
+ */
+function parseFloor(m: Raw, clause: string, name: string, loc: Loc): boolean {
+  const rhs = clause.replace(/^>=\s*/, "").trim();
+  if (rhs === "0") return true;
+  push(m, "error", loc, `stock ${name}: only '>= 0' is supported (a stock that cannot go negative), got '>= ${rhs}' — for any other floor, gate the outflow instead, e.g. max(0, ${name} - ${rhs})`);
+  return false;
+}
+
 function parseSim(m: Raw, body: string, loc: Loc): void {
+  m.settings.loc = loc;
   for (const tok of body.split(/\s+/)) {
     const [k, v] = tok.split("=");
     if (v === undefined) continue;

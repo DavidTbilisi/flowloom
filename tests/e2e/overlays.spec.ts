@@ -24,6 +24,27 @@ test("Monte Carlo shades percentile bands over the plot", async ({ page }) => {
   await page.waitForFunction(() => !(window as any).flowloom.overlay.bands);
 });
 
+test("Monte Carlo bands a deterministic model from its declared ranges", async ({ page }) => {
+  // The case that used to be a no-op: no random*() anywhere, so before declared
+  // ranges every run was identical and the band had zero width.
+  await page.locator("#src").fill(
+    "stock Pop = 10\nparam rate = 0.1 ± 0.05\nflow g = rate * Pop\nchange(Pop) = g\nsim dt=1 to=20\nplot Pop",
+  );
+  await page.locator("#run").click();
+  await page.waitForFunction(() => (window as any).flowloom.run.ok === true);
+
+  await page.locator("#mcRuns").fill("40");
+  await page.locator("#mcBtn").click();
+  await page.waitForFunction(() => !!(window as any).flowloom.overlay.bands);
+
+  const spread = await page.evaluate(() => {
+    const b = (window as any).flowloom.overlay.bands;
+    return { sampled: b.sampled.map((p: { name: string }) => p.name), width: b.bands.get("Pop").p95.at(-1) - b.bands.get("Pop").p05.at(-1) };
+  });
+  expect(spread.sampled).toEqual(["rate"]);
+  expect(spread.width).toBeGreaterThan(0);
+});
+
 test("loading data enables calibrate, which fits params and writes them back", async ({ page }) => {
   await page.locator("#src").fill("stock Pop = 10\nparam rate = 0.2\nflow g = rate*Pop\nchange(Pop) = g\nsim dt=1 to=10\nplot Pop");
   await page.locator("#run").click();

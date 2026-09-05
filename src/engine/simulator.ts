@@ -26,6 +26,10 @@ export interface SimResult {
   method: "euler" | "rk4" | "map";
   /** Set if the run halted early (e.g. a stock went non-finite). */
   note?: string;
+  /** Stocks declared `>= 0` whose floor engaged: their outflow was truncated
+   *  there, so less left the stock than its rate asked for. Not an error — it is
+   *  what the declaration means — but the reader should know where it bit. */
+  clamped?: string[];
 }
 
 /** Synchronous simulation via the compiled-TS backend. */
@@ -97,6 +101,7 @@ export function runPlan(
     dt,
     method,
     ...(note ? { note } : {}),
+    ...(out.clamped ? { clamped: out.clamped } : {}),
   };
 }
 

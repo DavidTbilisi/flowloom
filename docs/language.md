@@ -22,7 +22,7 @@ stock Population [people] = 5      # the starting headcount
 
 | Form | Meaning |
 |---|---|
-| `stock NAME [unit] = EXPR` | An **accumulator** (an integral). `EXPR` is its value at `start`. |
+| `stock NAME [unit] [>= 0] = EXPR` | An **accumulator** (an integral). `EXPR` is its value at `start`; `>= 0` marks a quantity that cannot go negative. |
 | `d(NAME) = EXPR` | The **net rate of change** of a stock — literally `dNAME/dt`. This is what gets integrated. |
 | `flow NAME [unit] = EXPR` | A named rate. Identical to `aux` but drawn as a flow on the diagram. |
 | `aux NAME [unit] = EXPR` | An instantaneous computed value (a "converter"/variable). |
@@ -68,6 +68,40 @@ flow draining = 0.1 * Water
 change(Water) = inflow - draining     # net rate: in minus out
 ```
 
+#### `>= 0` — a stock that cannot go negative
+
+A stock is **signed** by default, and that is usually right: cash goes into
+debt, a net position crosses zero, a temperature difference changes sign. But an
+inventory, a workforce, or a queue cannot — and nothing stops an outflow from
+draining one past empty, because `change()` says how fast to drain, not whether
+there is anything left.
+
+Declare the floor and the integrator holds the stock at zero:
+
+```flow
+stock Inventory [units] >= 0 = 100
+param orders = 30
+param restock = 10
+change(Inventory) = restock - orders   # without `>= 0`, this reaches −300
+```
+
+Only `>= 0` is accepted. Zero is the bound that means something — it is what
+makes a stock a physical quantity rather than a signed number. A floor at any
+other level is a *policy*, not a property, and belongs in the outflow where a
+reader can see it (`max(0, X - 5)`).
+
+The floor bounds the **integrated value** after each completed step, which is
+what Vensim and Stella do. It is not a constrained integration, and the
+difference is real: holding the stock at zero *truncates the outflow*, so from
+that moment less leaves the stock than `change()` asked for — and if that
+outflow fills another stock, that one receives more than existed. `lint` reports
+where a floor engaged for exactly this reason. When the balance matters, gate
+the outflow yourself:
+
+```flow
+flow shipping = min(orders, Inventory / dt)   # never ship more than is on hand
+```
+
 ### Variables: `flow`, `aux`, `param`
 
 All three are computed each time the derivative is sampled. They differ only in
@@ -79,6 +113,40 @@ role and diagram appearance:
   `sensitivity` does not rank "months per year" as your most powerful lever.
 - `aux` — an intermediate calculation.
 - `flow` — an `aux` that represents a rate; drawn as a flow valve.
+
+#### `± tol` / `in lo..hi` — how well a knob is known
+
+A param can carry the range you'd actually defend:
+
+```flow
+param birthRate = 0.03 ± 0.01        # give or take
+param mortality = 0.01 ± 20%         # a percentage of the value itself
+param carrying  = 1000 in 800..1400  # explicit bounds
+```
+
+The number still runs as written — the range changes nothing about the base run.
+It is read by the three tools that need to know how far a knob can move:
+
+| tool | what the range does |
+|---|---|
+| `montecarlo` | samples the param **once per run**, so a model with no `random*()` still gets real percentile bands. Without a declared range only the RNG seed varies, and on a deterministic model every run is identical — the bands are flat and say so. |
+| `sensitivity --method morris\|sobol` | explores the declared interval instead of an invented ±10% box, so the index answers the question you asked. |
+| `calibrate` | is not allowed to fit outside it, and reports any param that fitted **to** the edge — the data wanting to go further than you called plausible is a finding, not a detail. |
+
+Sampling once per run is the point, and it is not the same as
+`param x = random_normal(0.03, 0.01)`: that resamples every step, which is noise
+*inside* the model, not uncertainty about a constant.
+
+Write `±` or `+/-`. **`+-` is not accepted**, because `5 +- 1` is already a valid
+expression meaning 4 — silently changing what that means would be worse than
+asking for one more character; the parser warns if you write it.
+
+A range belongs on a `param`. On a `const` it contradicts the declaration (a
+const is *not* a knob), on a `switch` the uncertainty is which state — which
+`policies` already enumerates — and on an `aux`/`flow` there is nothing to be
+uncertain about, since the value is computed. Each of those is an error naming
+the alternative. `lint` also flags a param whose own value sits outside the range
+it declares.
 
 Variables may reference stocks, params, and each other — but **not in an
 algebraic loop** (a flow cannot instantaneously depend on itself). Route genuine
@@ -479,6 +547,45 @@ equation-level names adds an edge the equations don't carry yet (lint flags a
 link that merely duplicates an equation dependency), and a param named in a link
 becomes a node. Declared links can't be cut by `loops --metric` (there is no
 equation to freeze), so they are listed as skipped there.
+
+## Canonical form (`fmt`) and importing (`import`)
+
+The text is the model, so there is a canonical way to write it:
+
+```bash
+flowloom fmt model.flow            # print it; non-zero exit if it wasn't already formatted
+flowloom fmt model.flow --write    # rewrite it in place
+```
+
+`fmt` normalises *spelling and spacing* — one space around `=`, `on`/`off` for a
+switch, a `data` line back in one piece, trailing comments lined up — and leaves
+the **shape of your file alone**: declarations stay in the order you wrote them,
+and blank lines between groups are kept. That order is not cosmetic; it fixes the
+output series order, and therefore plot colours and CSV columns.
+
+Run it on a model an AI just wrote, and `diff` becomes a list of real changes
+instead of a list of whitespace.
+
+`# @pos` layout comments (what the visual builder writes when you drag a node)
+are carried through, so formatting never costs you a diagram you arranged by
+hand. Positions for names the model no longer declares are dropped — the tidy-up
+a rename or a delete wants.
+
+Models from other tools come in through XMILE — the OASIS interchange format
+Stella writes as `.stmx`:
+
+```bash
+flowloom import model.stmx > model.flow
+```
+
+Stocks with their in/outflows become `stock` + `change()`, a bare-number `aux`
+becomes a `param` (so it gets a slider and shows up in sensitivity), a `<gf>`
+becomes a `table`, `IF/THEN/ELSE` becomes `if(…)`, and `non_negative` becomes
+`>= 0`. Anything that could not come across — arrays flattened, macros skipped, a
+function with no flowloom equivalent — is **reported on stderr, never dropped
+silently**, and the partial translation is still returned so you can finish it.
+XMILE's default integration is Euler, so run `check --numerics` before trusting
+the numbers.
 
 ## Checking an edit (`diff`)
 

@@ -59,6 +59,23 @@ dynamics, and check the numbers. Validate, don't vibe.
   is a map, not an ODE; `sim method=map` steps `stock += change` with no `× dt`). Expressions compile
   to slots in a reused typed array (no `eval`), and **very large models run in a
   Web Worker with a generated WebAssembly backend** so the UI never blocks.
+- **Uncertainty you can declare** — `param birthRate = 0.03 ± 0.01` (or `in
+  800..1400`) says how well a knob is known, once, in the text. Monte Carlo
+  samples it **once per run** so a model with no `random*()` finally gets real
+  percentile bands; global sensitivity explores that interval instead of an
+  invented ±10% box; and calibration is not allowed to fit outside it — and tells
+  you when the data wanted to.
+- **Numbers you can check** — the integrator is fixed-step, so a run that looks
+  settled can still be wrong. `check --numerics` re-simulates at half the step
+  and tells you whether the answer actually moved, suggests a `dt` where it stops
+  moving, and distinguishes *converging slowly* from *diverging* from *a
+  discontinuity moving with the grid*. It also carries the three things a
+  refinement alone would misread: a branch that turns on a stock under RK4
+  (which RK4 integrates straight through), a `random*()` draw feeding a
+  `change()` (whose variance scales with `dt`), and a time constant the grid
+  cannot resolve. Stocks that are physical quantities take `>= 0`, so an outflow
+  can't drain an inventory past empty — and `lint` says where the floor bit,
+  because holding the stock truncates the flow.
 - **Automatic feedback-loop analysis** — a signed influence graph finds every
   loop and labels it **R** (reinforcing) or **B** (balancing), with the signs
   read **along the run**: a gated loop gets its polarity when the gate opens, a
@@ -73,6 +90,13 @@ dynamics, and check the numbers. Validate, don't vibe.
   with its R/B badge. **Scroll to zoom, drag to pan, Fit to frame** — large
   models lay out on a scalable grid (and degrade to a navigable dot-map) so even
   a thousand-node graph stays explorable.
+- **Text you can move in and out** — `flowloom fmt` reprints a model canonically
+  (your order and grouping kept, spelling and spacing normalised), which is what
+  turns `diff` into a list of real changes instead of a list of whitespace; and
+  `flowloom import model.stmx` reads **XMILE**, so a model that already exists in
+  Stella doesn't have to be retyped — anything that didn't survive is reported,
+  never dropped in silence. A generated TextMate grammar
+  ([`editors/`](editors/)) highlights `.flow` outside the studio.
 - **Draft a model with AI** — describe a system in plain English (*"a coffee
   shop where word-of-mouth drives growth but limited seating caps it"*) and
   Claude writes the `.flow`. It's then **parsed, checked, and run** by the same
@@ -118,12 +142,15 @@ flowloom explain model.flow                  # plain-language summary (stocks, k
 flowloom describe model.flow --json          # full structure (stocks/rates/vars/deps/loops)
 flowloom loops   model.flow --json           # feedback loops with R/B polarity
 flowloom check   model.flow                  # validate; non-zero exit + line/col diagnostics
+flowloom check   model.flow --numerics       # …and validate the *run*: does the answer survive dt/2?
 flowloom compare model.flow --metric final:Cash,min:Cash   # base vs every `scenario` line
 flowloom policies model.flow --metric min:Cash --target 0   # which moves, together, are worth it
 flowloom leverage model.flow --metric min:Cash              # the levers on Meadows' ladder (# @rung N tags)
 flowloom test    model.flow                  # the model's own `expect` lines; non-zero exit on a failure
 flowloom diff    before.flow after.flow      # did the edit change the numbers or the live loops?
 flowloom run     model.flow --scenario recovery            # run one scenario (then --set on top)
+flowloom fmt     model.flow --write           # reprint canonically (order kept); non-zero exit if it wasn't
+flowloom import  model.stmx > model.flow     # bring in an XMILE model from Stella and friends
 flowloom reference --json                     # the language + builtins catalog
 ```
 
@@ -160,7 +187,7 @@ can paste into the editor.
 
 | line | meaning |
 |---|---|
-| `stock NAME [unit] = EXPR` | an accumulator (an integral); `EXPR` is its value at `start` |
+| `stock NAME [unit] [>= 0] = EXPR` | an accumulator (an integral); `EXPR` is its value at `start`. `>= 0` floors a quantity that can't go negative |
 | `change(NAME) = EXPR` / `d(NAME) = EXPR` | the net rate of change of a stock — `dNAME/dt`. **The engine.** |
 | `flow NAME [unit] = EXPR` | a named rate; drawn as a flow valve |
 | `aux NAME [unit] = EXPR` | an instantaneous computed value (a "converter") |
@@ -356,6 +383,15 @@ canonical source so they never drift.)
 - [x] **in-app AI draft** — prose → `.flow`, parsed and run on the spot (BYO key)
 - [x] **live parameter sliders** — drag a knob, the whole model re-simulates
 - [x] designed plots — round-number axes, gradient fills, hover-to-scrub
+- [x] **numerical integrity** — `check --numerics` (dt-refinement + discontinuity,
+      dt-scaled-noise and time-constant advisories), in the CLI, MCP and studio
+- [x] **non-negative stocks** (`stock X >= 0 = …`) with a lint report where the
+      floor engages
+- [x] **declared uncertainty** (`param x = 0.03 ± 0.01`) driving Monte Carlo,
+      global sensitivity and bounded calibration from one line of text
+- [x] **a canonical printer** — `flowloom fmt`, an **XMILE (`.stmx`) importer**,
+      and a generated TextMate grammar so `.flow` highlights outside the studio
+- [x] CI that gates: PR checks running typecheck, unit, the CLI/MCP build and e2e
 
 The original single-file prototype is preserved at
 [`reference/flowloom-v1.html`](reference/flowloom-v1.html).

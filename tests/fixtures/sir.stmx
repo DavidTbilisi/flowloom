@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xmile version="1.0" xmlns="http://docs.oasis-open.org/xmile/ns/XMILE/v1.0">
+  <header><vendor>isee systems</vendor><name>SIR</name></header>
+  <sim_specs method="RK4" time_units="Days">
+    <start>0</start><stop>120</stop><dt>0.25</dt>
+  </sim_specs>
+  <model>
+    <variables>
+      <stock name="Susceptible">
+        <eqn>999</eqn>
+        <outflow>Infection</outflow>
+        <units>people</units>
+        <doc>Everyone who can still catch it</doc>
+      </stock>
+      <stock name="Infected">
+        <eqn>1</eqn>
+        <inflow>Infection</inflow>
+        <outflow>Recovery</outflow>
+        <units>people</units>
+        <non_negative/>
+      </stock>
+      <stock name="Recovered"><eqn>0</eqn><inflow>Recovery</inflow><units>people</units></stock>
+      <flow name="Infection">
+        <eqn>Beta * Susceptible * Infected / Total Population</eqn>
+      </flow>
+      <flow name="Recovery"><eqn>Gamma * Infected</eqn></flow>
+      <aux name="Beta"><eqn>0.4</eqn><doc>Infections per contact</doc></aux>
+      <aux name="Gamma"><eqn>0.1</eqn></aux>
+      <aux name="Total Population"><eqn>Susceptible + Infected + Recovered</eqn></aux>
+      <aux name="Contact Rate"><eqn>IF Infected &gt; 100 THEN 0.2 ELSE 0.4</eqn></aux>
+      <gf name="Seasonality">
+        <xpts>0,30,60,90</xpts>
+        <ypts>1,1.4,1,0.7</ypts>
+      </gf>
+    </variables>
+  </model>
+</xmile>

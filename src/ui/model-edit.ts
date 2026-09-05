@@ -23,14 +23,21 @@ export function setSimSetting(source: string, key: string, value: string): strin
 export function setParamValue(source: string, name: string, value: number): string {
   const lines = source.split(/\r?\n/);
   // `param NAME [unit]? = …` / `const …` / `switch NAME = …` / `stock NAME [unit]? = …`
-  const re = new RegExp(`^(\\s*(param|const|switch|stock)\\s+${name}\\s*(?:\\[[^\\]]*\\]\\s*)?=\\s*)(.*)$`);
+  // `(?:>=\s*0\s*)?` keeps a `stock X >= 0 = …` floor on the left of the split,
+  // so a slider or a calibration write-back preserves the declared floor.
+  const re = new RegExp(`^(\\s*(param|const|switch|stock)\\s+${name}\\s*(?:\\[[^\\]]*\\]\\s*)?(?:>=\\s*0\\s*)?=\\s*)(.*)$`);
   for (let i = 0; i < lines.length; i++) {
     const m = lines[i]!.match(re);
     if (m) {
-      // keep any trailing `# doc` comment on the line
-      const comment = m[3]!.match(/\s+#.*$/)?.[0] ?? "";
+      // Everything after the value has to survive being rewritten: the trailing
+      // `# doc` comment, and a declared range (`± 0.01`, `in 800..1400`). The
+      // range is what Monte Carlo, global sensitivity and calibrate all read —
+      // and calibrate writes through here, so erasing it would mean the one
+      // analysis that honours the bounds is also the one that deletes them.
+      const tail = m[3]!.match(/(\s*(?:±|\+\/-)\s*\S+|\s+in\s+\S+\s*\.\.\s*\S+)?(\s+#.*)?$/);
+      const suffix = `${tail?.[1] ?? ""}${tail?.[2] ?? ""}`;
       const text = m[2] === "switch" ? (value ? "on" : "off") : round(value);
-      lines[i] = `${m[1]}${text}${comment}`;
+      lines[i] = `${m[1]}${text}${suffix}`;
       break;
     }
   }

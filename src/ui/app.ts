@@ -8,9 +8,29 @@ import {
   renameSymbol, deleteSymbol, uniqueName, referencesTo, readLayout, setLayoutPos,
 } from "./model-build.js";
 import { parseModel, printExpr, type Model, type Expr } from "../lang/index.js";
-import { simulate, parseDataset, calibrate, compareScenarios, RANDOM_FNS, MEADOWS_RUNGS } from "../engine/index.js";
+import { simulate, parseDataset, calibrate, compareScenarios, checkNumerics, RANDOM_FNS, MEADOWS_RUNGS, type NumericsReport } from "../engine/index.js";
 import { draftFlow, getStoredKey, setStoredKey } from "./ai-draft.js";
 import { initTheme, applyTheme, currentTheme } from "./theme.js";
+
+/** The numerics verdict as the status lines the error panel shows. One line for
+ *  the verdict, one per advisory — the advisories are the part a refinement
+ *  alone can't tell you, so they show even when the run converged. */
+function numericsLines(r: NumericsReport): string {
+  const pct = (v: number) => (Number.isFinite(v) ? `${(v * 100).toPrecision(3)}%` : "non-finite");
+  const lines: string[] = [];
+  if (r.refinedDt === undefined) {
+    lines.push(`⚖ ${r.notes[0] ?? "nothing to refine"}`);
+  } else if (r.converged) {
+    lines.push(`⚖ the numbers hold: halving dt to ${r.refinedDt} moved ${r.worst ? `${r.worst.name} by ${pct(r.worst.nrmse)}` : "nothing"}`);
+  } else {
+    lines.push(`⚖ the numbers move: halving dt to ${r.refinedDt} changed ${r.worst ? `${r.worst.name} by ${pct(r.worst.nrmse)}` : "the run"}`);
+    if (r.suggestedDt !== undefined) lines.push(`   try dt=${r.suggestedDt} — the answer stops moving there`);
+    else if (r.notes.length) lines.push(`   ${r.notes[r.notes.length - 1]}`);
+  }
+  if (r.methodAgreement && !r.methodAgreement.converged) lines.push("   rk4 gives a different answer at this same dt — euler's step is too large");
+  for (const a of r.advisories) lines.push(`   ⚠ line ${a.loc?.line ?? "?"}: ${a.message}`);
+  return lines.join("\n");
+}
 
 /** Does any equation call a random*() builtin? (drives the Monte Carlo hint) */
 function modelUsesRandom(model: Model): boolean {
@@ -49,6 +69,10 @@ export function mountApp(root: HTMLElement): Store {
   const toInput = $<HTMLInputElement>("#to");
   const methodSel = $<HTMLSelectElement>("#method");
   const errEl = $<HTMLDivElement>("#err");
+  // The numerics verdict belongs to the text it was computed for — tag it with
+  // that source rather than clearing it on every rebuild, so an edit that
+  // doesn't change the model text keeps the answer.
+  let numerics: { source: string; report: NumericsReport } | null = null;
   const plotCanvas = $<HTMLCanvasElement>("#plot");
   const legendEl = $<HTMLDivElement>("#legend");
   const diagramSvg = $<SVGSVGElement>("#diagram");
@@ -390,9 +414,15 @@ export function mountApp(root: HTMLElement): Store {
     const ov = store.overlay;
     clearOvBtn.hidden = !(ov.bands || ov.data || ov.compare);
     calBtn.disabled = !ov.data || !store.run.ok;
-    const flat = ov.bands && store.run.model && !modelUsesRandom(store.run.model);
+    // A band is only meaningful if something varied. Say what did — and when
+    // nothing did, say that too, so a flat band never reads as certainty.
+    const sampled = ov.bands?.sampled ?? [];
+    const flat = ov.bands && sampled.length === 0 && store.run.model && !modelUsesRandom(store.run.model);
     const bits: string[] = [];
-    if (ov.bands) bits.push(`${ov.bands.runs} runs${flat ? " · flat (no random())" : ""}`);
+    if (ov.bands) {
+      const varied = sampled.length ? ` · varying ${sampled.map((p) => p.name).join(", ")}` : flat ? " · flat (nothing declared uncertain)" : "";
+      bits.push(`${ov.bands.runs} runs${varied}`);
+    }
     if (ov.data) bits.push(`data: ${[...ov.data.columns.keys()].join(", ")}`);
     if (ov.compare) bits.push(ov.compare.label === "base" ? `dashed: base (scenario ${store.scenario})` : "comparing");
     ovMsg.textContent = bits.join(" · ");
@@ -560,11 +590,45 @@ export function mountApp(root: HTMLElement): Store {
     else if (b.dataset.kind === "walk") launch(WALKTHROUGHS[Number(b.dataset.i)]!.tour);
   };
 
+  // ── numerics: does the run survive a smaller step? ──
+  // The one check that validates the numbers rather than the text. It costs a
+  // few extra simulations, so it is a button, not part of every rebuild — and
+  // like the scenarios table it declines a model too big to re-run on the main
+  // thread, pointing at the CLI instead.
+  const numericsBtn = $<HTMLButtonElement>("#numerics");
+  numericsBtn.onclick = async () => {
+    const model = store.run.ok ? store.run.model : undefined;
+    if (!model) return;
+    const steps = Math.max(1, Math.round((model.settings.to - model.settings.start) / model.settings.dt));
+    if (model.stocks.length >= 120 || model.stocks.length * steps >= 2_000_000) {
+      numerics = null;
+      errEl.className = "err show warn";
+      errEl.textContent = "⚖ this model is too large to re-run on the main thread — use `flowloom check model.flow --numerics`";
+      return;
+    }
+    numericsBtn.disabled = true;
+    const label = numericsBtn.textContent;
+    numericsBtn.textContent = "checking…";
+    try {
+      numerics = { source: store.source, report: await checkNumerics(model) };
+      renderStructure();
+    } catch (e) {
+      numerics = null;
+      errEl.className = "err show warn";
+      errEl.textContent = `⚖ numerics: ${(e as Error).message}`;
+    } finally {
+      numericsBtn.disabled = false;
+      numericsBtn.textContent = label;
+    }
+  };
+
   // ── render: structural (on rebuild) ──
   function renderStructure() {
     // error / warnings panel
     const run = store.run;
     errEl.className = "err";
+    errEl.textContent = ""; // the panel is rebuilt from scratch — never let a
+                            // previous run's text survive behind `display:none`
     if (!run.ok && run.error) {
       errEl.className = "err show error";
       errEl.textContent = "✗ " + run.error;
@@ -577,6 +641,13 @@ export function mountApp(root: HTMLElement): Store {
         errEl.className = "err show warn";
         errEl.textContent = warns.map((w) => `⚠ line ${w.loc.line}: ${w.message}`).join("\n");
       }
+    }
+    if (numerics && numerics.source === store.source) {
+      const clean = numerics.report.converged && numerics.report.advisories.length === 0;
+      const lines = numericsLines(numerics.report);
+      // Don't downgrade a real error the run already reported.
+      if (!errEl.classList.contains("error")) errEl.className = `err show ${clean ? "ok" : "warn"}`;
+      errEl.textContent = errEl.textContent ? `${errEl.textContent}\n${lines}` : lines;
     }
 
     diagram.highlight = null;
@@ -1095,6 +1166,7 @@ const SHELL = `
       <label data-help="ui:to">to</label><input id="to" type="number" step="1" value="50" data-help="ui:to" />
       <label data-help="ui:method">method</label>
       <select id="method" data-help="ui:method"><option value="rk4">RK4</option><option value="euler">Euler</option><option value="map">Map</option></select>
+      <button id="numerics" class="ghost" title="do these numbers survive a smaller dt?" data-help="ui:numerics">⚖ Check&nbsp;numbers</button>
       <button id="copy" class="ghost" title="copy model text" data-help="ui:copy">⧉ Copy</button>
       <button id="share" class="ghost" title="copy a shareable link" data-help="ui:share">🔗 Share</button>
       <button id="download" class="ghost" title="download .flow" data-help="ui:download">⤓</button>

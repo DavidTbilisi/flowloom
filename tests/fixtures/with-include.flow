@@ -1,0 +1,4 @@
+include "sir-part.flow" as a
+stock Total = 0
+change(Total) = a.Box
+sim dt=1 to=5

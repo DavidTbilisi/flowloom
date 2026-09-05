@@ -28,6 +28,8 @@ export interface StateVar {
   rateExpr: Expr | null;
   /** User-facing kind for series labelling. */
   unit?: string | undefined;
+  /** Declared `>= 0` (user stocks only): the integrator floors it at zero. */
+  nonNegative?: boolean;
 }
 
 export interface CompiledVar {
@@ -102,6 +104,7 @@ export function compile(inModel: Model): Compiled {
     initExpr: rewrite(s.initExpr),
     rateExpr: model.rates.has(s.name) ? rewrite(model.rates.get(s.name)!.expr) : null,
     unit: s.unit,
+    ...(s.nonNegative ? { nonNegative: true } : {}),
   }));
 
   // The samplers go after every user var: a fixed delay's input may depend on

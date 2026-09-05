@@ -114,3 +114,26 @@ describe("round-trip invariant across all built-in examples", () => {
     });
   }
 });
+
+describe("setParamValue keeps everything after the value", () => {
+  // Calibrate writes through here. If a write-back erased the declared range,
+  // the one analysis that honours the bounds would also be the one that deletes
+  // them — and the next Monte Carlo / sensitivity / calibrate run would silently
+  // lose them.
+  it("keeps a ± tolerance, explicit bounds, a percentage, and the comment", () => {
+    expect(setParamValue("param rate [1/yr] = 0.03 ± 0.01   # birth rate", "rate", 0.05))
+      .toBe("param rate [1/yr] = 0.05 ± 0.01   # birth rate");
+    expect(setParamValue("param k = 1000 in 800..1400", "k", 900)).toBe("param k = 900 in 800..1400");
+    expect(setParamValue("param p = 4 ± 25%   # pct", "p", 6)).toBe("param p = 6 ± 25%   # pct");
+  });
+
+  it("still keeps a stock's floor and a switch's on/off spelling", () => {
+    expect(setParamValue("stock S [u] >= 0 = 5", "S", 9)).toBe("stock S [u] >= 0 = 9");
+    expect(setParamValue("switch go = off   # a toggle", "go", 1)).toBe("switch go = on   # a toggle");
+  });
+
+  it("leaves a plain declaration exactly as it was, apart from the value", () => {
+    expect(setParamValue("param plain = 1   # nothing special", "plain", 2)).toBe("param plain = 2   # nothing special");
+  });
+});
+

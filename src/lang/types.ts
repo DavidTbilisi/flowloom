@@ -60,6 +60,10 @@ export interface StockDecl {
   unit?: string;
   /** Subscript dimensions this stock is declared over (e.g. ["region"]), if any. */
   dims?: string[];
+  /** Declared `>= 0`: the stock is a physical quantity that cannot go below
+   *  zero, so the integrator holds it at the floor instead of letting an
+   *  outflow drain past empty. Off by default — most stocks are signed. */
+  nonNegative?: boolean;
   doc?: string;
   loc: Loc;
 }
@@ -70,6 +74,17 @@ export interface RateDecl {
   expr: Expr;
   loc: Loc;
 }
+
+/**
+ * A declared plausible range for a knob.
+ *
+ * `tol` is stored rather than resolved because a param's value need not be a
+ * literal (`param x = base * 2 ± 10%`); the bounds are worked out against the
+ * operating point when a consumer asks (see engine/uncertainty.ts).
+ */
+export type RangeDecl =
+  | { kind: "tol"; value: number; pct: boolean }
+  | { kind: "bounds"; lo: number; hi: number };
 
 export interface VarDecl {
   name: string;
@@ -97,6 +112,11 @@ export interface VarDecl {
   data?: true;
   /** Meadows leverage-point rung (12 … 1) from a `@rung N` tag in the doc comment. */
   rung?: number;
+  /** How well this knob is known: `± tol`, `± pct%`, or explicit `in lo..hi`.
+   *  One declaration, three readers — the Monte Carlo ensemble samples it once
+   *  per run, global sensitivity uses it instead of a made-up ±frac box, and
+   *  calibration is not allowed to fit outside it. Params only. */
+  range?: RangeDecl;
   doc?: string;
   loc: Loc;
 }
@@ -170,6 +190,8 @@ export interface SimSettings {
   timeunit?: string;
   /** RNG seed for random*() builtins. Defaults to 0 ⇒ runs are reproducible. */
   seed?: number;
+  /** Where the `sim` line sits, so a settings-level diagnostic can point at it. */
+  loc?: Loc;
 }
 
 /** A fully parsed, validated model ready to simulate. */

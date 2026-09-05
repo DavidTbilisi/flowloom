@@ -1,7 +1,7 @@
 {
   "name": "flowloom",
   "version": "0.2.0",
-  "description": "Text-first systems-thinking studio — stocks, flows, feedback loops, animated. AI-native by design.",
+  "description": "Text-first systems-thinking studio \u2014 stocks, flows, feedback loops, animated. AI-native by design.",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -27,7 +27,8 @@
     "test:all": "vitest run && playwright test",
     "gen:examples": "GEN_EXAMPLES=1 vite-node scripts/gen-examples.ts",
     "gen:llms": "GEN_LLMS=1 vite-node scripts/gen-llms.ts",
-    "gen:stress": "GEN_STRESS=1 vite-node scripts/gen-stress.ts"
+    "gen:stress": "GEN_STRESS=1 vite-node scripts/gen-stress.ts",
+    "gen:grammar": "GEN_GRAMMAR=1 vite-node scripts/gen-grammar.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",

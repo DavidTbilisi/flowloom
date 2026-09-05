@@ -1,0 +1,72 @@
+# The gate. Runs on every pull request and every push to main, and covers the
+# things `deploy.yml` never did: the e2e suite, and the CLI/MCP build.
+#
+# Those two omissions were not theoretical — `src/cli.ts` and `src/mcp.ts` are
+# the entire AI-facing surface and are built by a *separate* tsconfig
+# (`tsconfig.cli.json`), so a change that breaks only that build used to sail
+# past a green CI. The drifted `VERSION` constant was the evidence.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: typecheck + unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  cli:
+    name: CLI + MCP build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build:cli
+      # The built binary is what users install — smoke it, don't just compile it.
+      - name: smoke the built CLI
+        run: |
+          node dist-cli/cli.js check examples/sir-epidemic.flow
+          node dist-cli/cli.js run examples/logistic-growth.flow --json > /dev/null
+          node dist-cli/cli.js test examples/family-budget-meadows-ladder.flow
+          node dist-cli/cli.js check examples/logistic-growth.flow --numerics
+          node dist-cli/cli.js import tests/fixtures/sir.stmx > /tmp/imported.flow
+          node dist-cli/cli.js check /tmp/imported.flow
+          node dist-cli/cli.js fmt /tmp/imported.flow > /dev/null
+
+  e2e:
+    name: e2e (playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run test:e2e:install
+      - run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7

@@ -1,0 +1,4 @@
+stock Box = 5
+param rate = 0.1
+change(Box) = rate
+sim dt=1 to=5

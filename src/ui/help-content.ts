@@ -38,6 +38,7 @@ export const HELP: Record<string, HelpEntry> = {
   "ui:dt": { title: "dt — step size", body: "Integration time step. Smaller is more accurate but slower. Edits the sim line." },
   "ui:to": { title: "to — end time", body: "How far to simulate. Edits the sim line." },
   "ui:method": { title: "method — integrator", body: "RK4 is accurate; Euler is simple and fast; Map steps stock += change per step (a difference equation — for monthly/yearly models). Edits the sim line." },
+  "ui:numerics": { title: "Check numbers", body: "Re-runs the model at half the step and reports whether the answer moved. The integrator is fixed-step, so a run that looks settled can still be wrong — do this before quoting a number. Also flags a branch on a stock under RK4, noise whose size depends on dt, and a time constant the grid can't resolve." },
   "ui:copy": { title: "Copy", body: "Copy the model text to share with a person or an AI." },
   "ui:share": { title: "Share", body: "Copy a link that encodes the whole model in the URL — open it to get the exact model back." },
   "ui:download": { title: "Download", body: "Save the model as a .flow file." },

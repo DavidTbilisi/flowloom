@@ -158,3 +158,58 @@ describe("robustness", () => {
     }
   });
 });
+
+describe("non-negative stocks (`>= 0`)", () => {
+  // CONTRACT: the floor bounds the *integrated* value after each completed step
+  // — what Vensim and Stella do. It is not a constrained integration, and the
+  // difference is deliberate: the outflow is truncated, so mass is not
+  // conserved across the floor. That is reported, never hidden.
+  const draining = (floor: boolean) =>
+    simulate(parseModel(`stock Inv [u] ${floor ? ">= 0 " : ""}= 100\nparam out = 30\nparam inn = 10\nchange(Inv) = inn - out\nsim dt=0.25 to=20 method=rk4`));
+
+  it("holds the stock at zero instead of letting an outflow drain past empty", () => {
+    const ys = draining(true).series.get("Inv")!;
+    expect(Math.min(...ys)).toBe(0);
+    expect(ys.at(-1)).toBe(0);
+  });
+
+  it("leaves an undeclared stock signed — the default is unchanged", () => {
+    const ys = draining(false).series.get("Inv")!;
+    expect(ys.at(-1)).toBeCloseTo(100 - 20 * 20, 6); // 100 + (10-30)·20
+  });
+
+  it("does not touch a floored stock that never reaches zero", () => {
+    const with_ = simulate(parseModel("stock X [u] >= 0 = 100\nparam k = 0.1\nchange(X) = -k * X\nsim dt=0.1 to=20 method=rk4"));
+    const without = simulate(parseModel("stock X [u] = 100\nparam k = 0.1\nchange(X) = -k * X\nsim dt=0.1 to=20 method=rk4"));
+    expect(with_.clamped).toBeUndefined();
+    const a = with_.series.get("X")!, b = without.series.get("X")!;
+    for (let i = 0; i < a.length; i++) expect(a[i]).toBe(b[i]!);
+  });
+
+  it("reports which stocks hit the floor, so the truncated outflow is visible", () => {
+    expect(draining(true).clamped).toEqual(["Inv"]);
+  });
+
+  it("floors an initial value below zero rather than reporting a state the stock can't hold", () => {
+    const r = simulate(parseModel("stock X [u] >= 0 = -5\nchange(X) = 1\nsim dt=1 to=5 method=euler"));
+    expect(r.series.get("X")![0]).toBe(0);
+    expect(r.clamped).toEqual(["X"]);
+  });
+
+  it("applies under every integration method", () => {
+    for (const method of ["euler", "rk4", "map"] as const) {
+      const r = simulate(parseModel(`stock Inv [u] >= 0 = 10\nchange(Inv) = -3\nsim dt=1 to=10 method=${method}`));
+      expect(Math.min(...r.series.get("Inv")!), method).toBe(0);
+    }
+  });
+
+  it("floors each element of a subscripted stock independently", () => {
+    const r = simulate(parseModel(
+      "dim region = North, South\nstock Pop[region] >= 0 = 10, 100\nchange(Pop[region]) = -3\nsim dt=1 to=10 method=euler",
+    ));
+    expect(Math.min(...r.series.get("Pop.North")!)).toBe(0);
+    expect(Math.min(...r.series.get("Pop.South")!)).toBe(100 - 30);
+    expect(r.clamped).toEqual(["Pop.North"]);
+  });
+});
+

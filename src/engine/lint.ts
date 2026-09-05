@@ -10,6 +10,8 @@ import type { Model, Diagnostic, Expr, Loc } from "../lang/index.js";
 import { freeVars, declExprs } from "../lang/index.js";
 import { operatingPoint } from "./loops.js";
 import { compile } from "./compile.js";
+import { simulate, type SimResult } from "./simulator.js";
+import { paramRanges } from "./uncertainty.js";
 import { checkUnits } from "./units.js";
 import { validateModel } from "./validate.js";
 
@@ -59,8 +61,93 @@ export function lintModel(model: Model): Diagnostic[] {
   checkTimeConstants(model, out);
   checkDiscreteTime(model, out);
   checkCircularInit(model, out);
+  checkStockFloor(model, out);
+  checkDeclaredRanges(model, out);
   checkUnits(model, out);
   return out;
+}
+
+/** Runs the lint would rather not pay for: past this, the floor check is skipped
+ *  rather than making `lint` cost a full simulation of a very large model. */
+const FLOOR_CHECK_BUDGET = 2_000_000;
+
+/**
+ * Report where a `>= 0` stock actually hit its floor.
+ *
+ * The declaration is what makes this checkable at all: flowloom cannot guess
+ * that Cash may go negative (debt) while Inventory may not, so the floor is
+ * opt-in and this check follows it. When the floor engages it is doing its job —
+ * but it does that job by *truncating an outflow*, so from that moment the
+ * model's mass balance no longer holds: less left the stock than the rate
+ * asked for, and whatever was supposed to receive it received more than
+ * existed. That is worth a line, with the time it first bit.
+ *
+ * Nothing warns about an undeclared stock going negative. It would fire on
+ * every runway, budget and net-worth model, where crossing zero is the answer
+ * rather than a bug — `>= 0` (or an `expect min:X >= 0` line) is how you say
+ * which kind of stock you have.
+ */
+function checkStockFloor(model: Model, out: Diagnostic[]): void {
+  const floored = model.stocks.filter((s) => s.nonNegative);
+  if (!floored.length) return;
+  const { dt, to, start } = model.settings;
+  const steps = Math.max(1, Math.round((to - start) / dt));
+  // Cost the run the way it will actually be run: a subscripted stock becomes
+  // one state per element, so 3 stocks over a 50-element dim is 150 states, not
+  // 3. Getting this wrong lets a run 50× over budget execute inside a lint that
+  // `check`, `lint`, `flow_check` and `flow_lint` all call.
+  const states = model.stocks.reduce((n, s) => n + (s.dims?.reduce((k, d) => k * (model.dims.get(d)?.elements.length ?? 1), 1) ?? 1), 0);
+  if (states * steps > FLOOR_CHECK_BUDGET) return;
+
+  let res: SimResult;
+  try {
+    res = simulate(model);
+  } catch {
+    return; // a model that won't run has louder problems than this
+  }
+  if (!res.clamped?.length) return;
+  const hit = new Set(res.clamped);
+
+  for (const decl of floored) {
+    // A subscripted stock is scalarized on the way into the run, so one
+    // declaration can stand behind many series.
+    const names = [...hit].filter((n) => n === decl.name || n.startsWith(`${decl.name}.`));
+    if (!names.length) continue;
+    const ys = res.series.get(names[0]!);
+    const at = ys ? ys.findIndex((y) => y === 0) : -1;
+    const when = at > 0 && res.t[at] !== undefined ? ` from t=${fmtNum(res.t[at]!)}` : "";
+    out.push(
+      warn(
+        decl.loc,
+        `stock '${decl.name}' hits its \`>= 0\` floor${when}${names.length > 1 ? ` (${names.length} elements)` : ""} — the floor holds it at zero by truncating the outflow, so past that point less leaves the stock than change(${decl.name}) asks for and whatever it feeds receives more than existed. Gate the outflow on what is left (e.g. min(demand, ${decl.name} / dt)) if the downstream stock must balance`,
+      ),
+    );
+  }
+}
+
+/** A param whose own value sits outside the range it declares. Nothing else
+ *  would catch it: the model runs, and the range is only consulted by Monte
+ *  Carlo, global sensitivity and calibration — each of which would quietly move
+ *  the knob to somewhere the base run never visits. */
+function checkDeclaredRanges(model: Model, out: Diagnostic[]): void {
+  const ranges = paramRanges(model);
+  if (!ranges.size) return;
+  for (const v of model.vars) {
+    const r = ranges.get(v.name);
+    if (!r) continue;
+    if (r.base < r.lo || r.base > r.hi) {
+      out.push(warn(v.loc, `param '${v.name}' is ${fmtNum(r.base)} but declares the range ${fmtNum(r.lo)}..${fmtNum(r.hi)} — the value sits outside its own bounds, so Monte Carlo, global sensitivity and calibrate would all move it somewhere the base run never goes`));
+    }
+  }
+}
+
+/** Compact number for a diagnostic: no exponent soup, no 15-digit float dust. */
+function fmtNum(v: number): string {
+  if (!Number.isFinite(v)) return String(v);
+  if (v === 0) return "0";
+  const a = Math.abs(v);
+  if (a >= 1e6 || a < 1e-4) return v.toExponential(2);
+  return String(Math.round(v * 1e4) / 1e4);
 }
 
 /**

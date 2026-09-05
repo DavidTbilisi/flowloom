@@ -41,12 +41,12 @@ change() rate; everything else is recomputed every step.
 ## Builtin functions and reserved names
 
 ### Line keywords
-  stock NAME [unit] = EXPR                                       An accumulator (an integral). EXPR is its initial value; it then changes only through its change() rate.
+  stock NAME [unit] [>= 0] = EXPR                                An accumulator (an integral). EXPR is its initial value; it then changes only through its change() rate. Add `>= 0` for a physical quantity that cannot go negative (an inventory, a workforce) — the integrator holds it at zero instead of letting an outflow drain past empty; without it a stock is signed, which is right for cash or a net position.
   change(NAME) = EXPR                                            The net rate of change of a stock — literally dNAME/dt. This line is the engine; flowloom integrates it.
   d(NAME) = EXPR                                                 Shorthand alias of change(NAME) — the net rate of change of a stock (dNAME/dt).
   flow NAME [unit] = EXPR                                        A named rate. Same maths as aux, but drawn as a flow on the diagram.
   aux NAME [unit] = EXPR                                         An instantaneous computed value (a converter/variable) recomputed every step.
-  param NAME [unit] = EXPR                                       A constant knob — evaluated once. `const` is an alias.
+  param NAME [unit] = EXPR [± TOL | ± PCT% | in LO..HI]          A constant knob — evaluated once. `const` is an alias. The optional trailing range says how well the knob is known: Monte Carlo samples it once per run (so a deterministic model gets real bands), global sensitivity explores it instead of a made-up ±10% box, and calibrate is not allowed to fit outside it. Write ± or +/- (never +-, which is subtraction).
   const NAME [unit] = EXPR                                       A structural constant — a calendar length, a conversion factor — not a knob: no slider, and sensitivity/calibration skip it unless it is named explicitly. Same maths as param.
   switch NAME = on|off                                           A two-state policy toggle (a param that is only ever 0 or 1). Use it in if(NAME, a, b). Sensitivity tests it off→on, sliders show a toggle, and overrides/scenarios accept on/off.
   link A -> B +|-                                                A declared signed influence: + (B moves with A) or − (against). The causal-loop sketch you draw before any equation exists — a model of links alone draws and has R/B loops but does not simulate; links also mark dependencies the equations don't carry yet.
